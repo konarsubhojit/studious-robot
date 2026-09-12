@@ -22,6 +22,7 @@ jest.mock('../../src/callKeep', () => ({
 
 jest.mock('../../src/incomingCallNotification', () => ({
   consumePendingCallAction: jest.fn(() => Promise.resolve(null)),
+  dismissIncomingCallNotification: jest.fn(() => true),
 }));
 
 jest.mock('../../src/observability', () => ({
@@ -46,6 +47,7 @@ jest.mock('../../src/telemetry', () => ({
 }));
 
 const callKeep = require('../../src/callKeep');
+const incomingCallNotification = require('../../src/incomingCallNotification');
 const { sendPushReceipt } = require('../../src/pushNotifications');
 
 function TestHook({ params, resultRef }: any) {
@@ -144,6 +146,7 @@ describe('useAnswerPath', () => {
       version: 1,
       callId: 'call-1',
     });
+    expect(incomingCallNotification.dismissIncomingCallNotification).toHaveBeenCalledWith('call-1');
     expect(params.endActiveCall).toHaveBeenCalledWith('Call declined', 'info', 'declined');
   });
 

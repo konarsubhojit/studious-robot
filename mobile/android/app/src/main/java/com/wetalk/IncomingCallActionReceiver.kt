@@ -46,6 +46,10 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
     }
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     manager.cancel(IncomingCallNotificationModule.notificationId(callId))
+    if (!PendingCallStore.isRinging(context, callId)) {
+      Log.w(TAG, "Action ${intent.action} ignored for non-ringing callId=$callId")
+      return
+    }
 
     when (intent.action) {
       IncomingCallNotificationModule.ACTION_ACCEPT -> {

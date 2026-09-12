@@ -127,6 +127,10 @@ class MainActivity : ReactActivity() {
       intent.removeExtra(EXTRA_ACCEPT_CALL)
       (getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
         ?.cancel(IncomingCallNotificationModule.notificationId(callId))
+      if (!PendingCallStore.isRinging(this, callId)) {
+        Log.w(TAG, "Ignoring stale Accept tap for non-ringing callId=$callId")
+        return
+      }
       val connectionLive = CallConnections.answer(callId)
       Log.i(TAG, "Accept tapped callId=$callId connectionLive=$connectionLive")
       // Persist the tap: the JS pending-answer queue lives in a JS module and

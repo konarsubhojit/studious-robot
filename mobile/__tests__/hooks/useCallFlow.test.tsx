@@ -2078,6 +2078,60 @@ describe('useCallFlow incoming-call ringing', () => {
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
   });
 
+  test('stale CallKeep endCall after accept leaves the connected call alone', async () => {
+    const { mediaDevices } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-stale-end', callerId: 'mia', status: 'ringing' };
+    const handler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await handler({ call });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
+      if (event === 'call.accept') {
+        cb?.({ ok: true, call: { ...call, status: 'accepted' } });
+        return;
+      }
+      cb?.({ ok: true });
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const declineEmitsBefore = socketMock.emit.mock.calls.filter(
+      ([event]: any) => event === 'call.decline',
+    ).length;
+    const { onEnd } = latestCallActionHandlers();
+    await act(async () => {
+      onEnd('call-stale-end');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(
+      socketMock.emit.mock.calls.filter(([event]: any) => event === 'call.decline'),
+    ).toHaveLength(declineEmitsBefore);
+    expect(resultRef.current.activeCall).toEqual(
+      expect.objectContaining({ callId: 'call-stale-end', status: 'accepted' }),
+    );
+  });
+
   // ── Multi-device: one user, several devices ───────────────────────────────
 
   /** Drive `placeCall` with a scripted `call.initiate` ack or rejection. */
@@ -5085,6 +5139,74 @@ describe('useCallFlow answer path', () => {
     expect(acceptRequest).toBeTruthy();
     expect(acceptRequest[1].method).toBe('POST');
     expect(resultRef.current.activeCall).toMatchObject({ callId: 'call-http' });
+  });
+
+  test('in-app accept dismisses the incoming-call notification before emitting accept', async () => {
+    const { dismissIncomingCallNotification } = require('../../src/incomingCallNotification');
+    const { mediaDevices } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-dismiss-accept', callerId: 'nez', status: 'ringing' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
+      if (event === 'call.accept') {
+        cb?.({ ok: true, call: { ...call, status: 'accepted' } });
+        return;
+      }
+      cb?.({ ok: true });
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+
+    const acceptEmitIndex = socketMock.emit.mock.calls.findIndex(
+      ([event]: any) => event === 'call.accept',
+    );
+    expect(dismissIncomingCallNotification).toHaveBeenCalledWith('call-dismiss-accept');
+    expect(acceptEmitIndex).toBeGreaterThanOrEqual(0);
+    expect(
+      (dismissIncomingCallNotification as jest.Mock).mock.invocationCallOrder[0],
+    ).toBeLessThan(socketMock.emit.mock.invocationCallOrder[acceptEmitIndex]);
+    expect(resultRef.current.activeCall).toEqual(
+      expect.objectContaining({ callId: 'call-dismiss-accept' }),
+    );
+  });
+
+  test('in-app decline dismisses the incoming-call notification before declining', async () => {
+    const { dismissIncomingCallNotification } = require('../../src/incomingCallNotification');
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-dismiss-decline', callerId: 'nez', status: 'ringing' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => cb?.({ ok: true }));
+
+    await act(async () => {
+      await resultRef.current.declineIncomingCall();
+    });
+
+    expect(dismissIncomingCallNotification).toHaveBeenCalledWith('call-dismiss-decline');
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      'call.decline',
+      expect.objectContaining({ callId: 'call-dismiss-decline' }),
+      expect.any(Function),
+    );
+    const declineEmitIndex = socketMock.emit.mock.calls.findIndex(
+      ([event]: any) => event === 'call.decline',
+    );
+    expect(declineEmitIndex).toBeGreaterThanOrEqual(0);
+    expect(
+      (dismissIncomingCallNotification as jest.Mock).mock.invocationCallOrder[0],
+    ).toBeLessThan(socketMock.emit.mock.invocationCallOrder[declineEmitIndex]);
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
   });
 
   test('an Accept tapped while the app was killed is replayed on mount', async () => {
