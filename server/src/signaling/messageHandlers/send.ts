@@ -7,6 +7,7 @@ import { invalidateCache, conversationsCachePrefix, messagesCachePrefix } from '
 import { acknowledgeError, acknowledgeSuccess, parseInboundPayload } from '../ack.ts';
 import { CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS } from '../../../../shared/index.ts';
 import { describeError } from '../../lib/errors.ts';
+import { runDetached } from '../../lib/queryTiming.ts';
 import { deliverMessage } from './delivery.ts';
 import {
   isAttachmentMessageType,
@@ -36,6 +37,23 @@ function sameAcceptedSend(
   );
 }
 
+/**
+ * Evict the sender's own conversation-list cache entry, fire-and-forget.
+ *
+ * See the call site in {@link persistAcceptedMessage} for why this is the one
+ * invalidation on the send path safe to defer past the ack.
+ */
+function invalidateSenderConversationsCacheDetached(
+  state: import('../../stores/contracts.ts').ServerState,
+  senderId: string
+): void {
+  runDetached(() => invalidateCache(state, conversationsCachePrefix(senderId))).catch(
+    (error: unknown) => {
+      console.error(`[messages] sender conversations cache invalidation failed: ${describeError(error)}`);
+    }
+  );
+}
+
 async function persistAcceptedMessage(
   state: import('../../stores/contracts.ts').ServerState,
   message: import('../../messageStore.ts').StoredMessage,
@@ -52,9 +70,22 @@ async function persistAcceptedMessage(
     );
     throw new Error('messageId already belongs to a different message');
   }
+  // The sender's own conversation-list entry is evicted off the ack path
+  // (fire-and-forget): the sender's copy of this exact message is already
+  // embedded in the ack payload the caller sends once this function returns,
+  // so nothing the sender's client does *because of* the ack can observe a
+  // stale conversation list — a subsequent independent refresh racing the
+  // eviction is a sub-30ms window that self-heals via the invalidation
+  // marker `writeCachedIfNotInvalidated` already checks.
+  //
+  // The recipient's conversation-list and this conversation's message-page
+  // caches stay on the blocking path: `deliverMessage` (called by our caller
+  // right after this returns) notifies the recipient's live sockets, and a
+  // recipient client that reacts to that notification with an immediate
+  // re-fetch must never be served a cache entry that pre-dates this message.
+  invalidateSenderConversationsCacheDetached(state, message.senderId);
   await invalidateCache(
     state,
-    conversationsCachePrefix(message.senderId),
     conversationsCachePrefix(message.recipientId),
     messagesCachePrefix(message.conversationId)
   );
@@ -72,6 +103,12 @@ async function persistAcceptedMessage(
         message.conversationId
       );
     }
+    // Distinct from the invalidation above: this one reflects the delivery
+    // -status write just above it (`deliveredTo`), not the insert. It targets
+    // the same `messagesCachePrefix` key but at a later point in this
+    // function, after data the cached page includes has changed again, so it
+    // is not redundant with the first call and must stay on the blocking path
+    // for the same recipient-visibility reason.
     await invalidateCache(state, messagesCachePrefix(message.conversationId));
   }
   return result;
