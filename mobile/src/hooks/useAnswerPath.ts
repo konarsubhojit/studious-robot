@@ -74,7 +74,6 @@ type UseAnswerPathParams = {
   createOrGetSession: () => Promise<string>;
   dismissIncomingCallElsewhere: (callId: string, peerId: string) => void;
   endActiveCall: EndActiveCall;
-  endActiveCallRef: MutableRef<EndActiveCall | null>;
   ensurePeerConnection: () => Promise<PeerConnection | null | undefined>;
   incomingCall: CallRecord | null;
   incomingCallRef: MutableRef<CallRecord | null>;
@@ -125,7 +124,6 @@ export default function useAnswerPath({
   createOrGetSession,
   dismissIncomingCallElsewhere,
   endActiveCall,
-  endActiveCallRef,
   ensurePeerConnection,
   incomingCall,
   incomingCallRef,

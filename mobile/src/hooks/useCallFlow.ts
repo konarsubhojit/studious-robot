@@ -1832,7 +1832,6 @@ export default function useCallFlow({
     createOrGetSession,
     dismissIncomingCallElsewhere,
     endActiveCall,
-    endActiveCallRef,
     ensurePeerConnection,
     incomingCall,
     incomingCallRef,
