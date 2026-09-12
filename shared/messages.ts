@@ -58,6 +58,8 @@ const ATTACHMENT_MIME_ALLOWLIST: Readonly<Record<string, ReadonlyArray<string>>>
   [MESSAGE_TYPES.FILE]: Object.freeze([
     'application/pdf',
     'application/zip',
+    'application/x-zip-compressed',
+    'multipart/x-zip',
     'text/plain',
     'video/mp4',
   ]),

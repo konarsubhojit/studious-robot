@@ -9,6 +9,7 @@ import {
   validateAttachment,
 } from '../src/attachmentUpload';
 import { MESSAGE_TYPES } from '../../shared';
+import * as appLogger from '../src/appLogger';
 
 /** Minimal fake XMLHttpRequest driving `putAttachment`'s XHR usage. */
 class FakeXHR {
@@ -76,6 +77,43 @@ describe('attachmentUpload', () => {
         sizeBytes: 10,
       });
       expect(result.ok).toBe(false);
+    });
+
+    test.each(['application/x-zip-compressed', 'multipart/x-zip'])(
+      'accepts the %s ZIP MIME alias for files',
+      mimeType => {
+        expect(
+          validateAttachment({ type: MESSAGE_TYPES.FILE, mimeType, sizeBytes: 1024 }),
+        ).toEqual({ ok: true });
+      },
+    );
+
+    test('continues to reject application/octet-stream for files', () => {
+      expect(
+        validateAttachment({
+          type: MESSAGE_TYPES.FILE,
+          mimeType: 'application/octet-stream',
+          sizeBytes: 1024,
+        }),
+      ).toEqual({ ok: false, message: expect.any(String) });
+    });
+
+    test('logs the raw MIME type when rejecting an attachment', () => {
+      const logWarn = jest.spyOn(appLogger, 'logWarn').mockImplementation(() => '');
+      validateAttachment({
+        type: MESSAGE_TYPES.FILE,
+        mimeType: ' Application/Octet-Stream ',
+        sizeBytes: 1024,
+      });
+
+      expect(logWarn).toHaveBeenCalledWith(
+        '[Attachments] validation rejected',
+        expect.objectContaining({
+          rawMimeType: ' Application/Octet-Stream ',
+          mimeType: 'application/octet-stream',
+        }),
+      );
+      logWarn.mockRestore();
     });
 
     test('rejects a size over the per-type cap', () => {
@@ -343,6 +381,47 @@ describe('attachmentUpload', () => {
         height: 600,
       });
     });
+
+    test.each(['application/x-zip-compressed', 'multipart/x-zip'])(
+      'uses the validated %s ZIP alias for both presign and PUT',
+      async mimeType => {
+        const payload = {
+          conversationId: 'conv-1',
+          key: 'chatblobs/conv-1/archive.zip',
+          uploadUrl: 'https://r2.example/upload',
+          publicUrl: 'https://cdn.example/chatblobs/conv-1/archive.zip',
+          expiresAt: '2024-01-01T00:00:00.000Z',
+          headers: {
+            'Content-Type': mimeType,
+            'Content-Length': '1024',
+          },
+        };
+        const authedFetch = jest.fn((build: any) => {
+          build('session-1');
+          return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) });
+        }) as any;
+
+        const promise = uploadAttachment({
+          authedFetch,
+          signalingUrl: 'https://signal.example',
+          peerId: 'user-bob',
+          type: MESSAGE_TYPES.FILE,
+          uri: 'file:///tmp/archive.zip',
+          mimeType,
+          sizeBytes: 1024,
+        });
+        for (let i = 0; i < 5 && FakeXHR.instances.length === 0; i += 1) {
+          await Promise.resolve();
+        }
+        const [buildRequest] = authedFetch.mock.calls[0];
+        expect(JSON.parse(buildRequest('session-1').options.body).mimeType).toBe(mimeType);
+        expect(FakeXHR.instances[0].requestHeaders['Content-Type']).toBe(mimeType);
+
+        FakeXHR.instances[0].status = 200;
+        FakeXHR.instances[0].onload();
+        await expect(promise).resolves.toMatchObject({ mimeType });
+      },
+    );
 
     test('maps a 503 presign failure to the user-facing message', async () => {
       const authedFetch = (jest.fn(() =>

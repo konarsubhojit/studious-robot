@@ -214,6 +214,27 @@ test('presign returns a chatblobs URL and binds the size and MIME type', async (
   assert.ok(Date.parse(res.body.expiresAt) > Date.now());
 });
 
+test('presign accepts ZIP MIME aliases and signs their content type', async (t) => {
+  withR2Env(t);
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const session = await createSession(url, 'rich-alice');
+  await createSession(url, 'rich-bob');
+
+  for (const mimeType of ['application/x-zip-compressed', 'multipart/x-zip']) {
+    const res = await postJson(
+      url,
+      '/attachments/presign',
+      { peerId: 'rich-bob', type: 'file', mimeType, sizeBytes: 2048 },
+      session,
+    );
+    assert.equal(res.status, 200);
+    assert.match(res.body.key, /\.zip$/);
+    assert.equal(res.body.headers['Content-Type'], mimeType);
+  }
+});
+
 test('presign rejects a disallowed MIME type and an oversized upload', async (t) => {
   withR2Env(t);
   const { url, teardown } = await startServer();
