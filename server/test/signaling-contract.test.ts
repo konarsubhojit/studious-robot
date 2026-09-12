@@ -385,3 +385,45 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
     await teardown(guest, caller, callee, intruder);
   }
 });
+
+test('an offer relayed to a peer with no sockets is counted, not silently acked', async () => {
+  const server = await startServer();
+  const { url, teardown } = server;
+  const callerSession = await createSession(url, 'user-alice');
+  const calleeSession = await createSession(url, 'user-bob');
+  const [caller, callee] = await Promise.all([
+    connect(url, { sessionId: callerSession }),
+    connect(url, { sessionId: calleeSession }),
+  ]);
+
+  try {
+    const incomingPromise = waitFor(callee, 'call.incoming');
+    const initiateAck = await emitWithAck(caller, 'call.initiate', {
+      version: 1,
+      calleeId: 'user-bob',
+    });
+    const callId = initiateAck.call.callId;
+    await incomingPromise;
+    await emitWithAck(callee, 'call.accept', { version: 1, callId });
+
+    // The callee vanishes — the exact shape of the incident this counter was
+    // added for, where the relay fired into an empty room and acked `ok`.
+    callee.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const offerAck = await emitWithAck(caller, 'rtc.offer', {
+      version: 1,
+      callId,
+      sdp: { type: 'offer', sdp: 'mock-offer' },
+    });
+    // The ack is still `ok`: the server genuinely cannot fail this emit. What
+    // changes is that the drop is now visible.
+    assert.equal(offerAck.ok, true);
+
+    const { counters } = server.getMetrics();
+    assert.equal(counters.rtc_relays_offer, 1);
+    assert.equal(counters.rtc_relays_no_recipient, 1);
+  } finally {
+    await teardown(caller, callee);
+  }
+});

@@ -173,7 +173,7 @@ const CALL_STATE_REPORT_ACK_TIMEOUT_MS = 2000;
  * `startLocalPreview` (measured at ~10s on the anchor incident's handset)
  * without re-offering into a healthy answer that is merely in flight.
  */
-const OFFER_ANSWER_TIMEOUT_MS = 8000;
+export const OFFER_ANSWER_TIMEOUT_MS = 8000;
 const MAX_OFFER_ATTEMPTS = 3;
 
 // How long the answer path waits for a socket, how many times it retries over

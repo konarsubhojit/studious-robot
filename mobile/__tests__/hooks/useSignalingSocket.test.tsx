@@ -125,6 +125,7 @@ function setup(overrides: any = {}) {
     activeCallIdRef: { current: 'call-1' },
     activeCallRef: { current: null },
     beginIceRecoveryRef: { current: jest.fn() },
+    cancelOfferRetriesRef: { current: jest.fn() },
     consumeForeignDeviceCallEvent: jest.fn(() => false),
     createOrGetSession: jest.fn(() => Promise.resolve('session-2')),
     detachManagerPingRef: { current: detachManagerPing },
@@ -281,5 +282,73 @@ describe('useSignalingSocket', () => {
 
     expect(params.iceCandidateBufferRef.current).toEqual([{ candidate: 'candidate-1' }]);
     expect(peerConnection.addIceCandidate).not.toHaveBeenCalled();
+  });
+
+  describe('an offer this device drops', () => {
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+
+    async function deliverOffer(overrides: any) {
+      const { params, signaling, resultRef } = setup(overrides);
+      await act(async () => {
+        resultRef.current.connectSocket('session-1');
+        await signaling.handlers.get('rtc.offer')({
+          callId: 'call-1',
+          sdp: { type: 'offer' },
+        });
+      });
+      return { params, signaling };
+    }
+
+    test('reports an offer for a call this device is not in', async () => {
+      await deliverOffer({ activeCallIdRef: { current: 'call-other' } });
+
+      expect(sendPushReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          callId: 'call-1',
+          stage: 'answer_failed',
+          reason: 'offer_unknown_call',
+        }),
+      );
+    });
+
+    test('reports an offer that arrives mid-negotiation as glare', async () => {
+      await deliverOffer({ isNegotiatingRef: { current: true } });
+
+      expect(sendPushReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'answer_failed', reason: 'offer_glare' }),
+      );
+    });
+
+    test('reports an offer that has no peer connection to answer with', async () => {
+      // Previously a bare `return`, with no log and no receipt: the callee went
+      // silent and the caller waited out the 90s media timeout.
+      await deliverOffer({ ensurePeerConnectionRef: { current: jest.fn(() => Promise.resolve(null)) } });
+
+      expect(sendPushReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'answer_failed', reason: 'peer_connection_missing' }),
+      );
+    });
+  });
+
+  test('an arriving answer cancels the caller\'s pending offer retries', async () => {
+    const cancelOfferRetriesRef = { current: jest.fn() };
+    const peerConnection = {
+      addIceCandidate: jest.fn(),
+      setRemoteDescription: jest.fn(() => Promise.resolve()),
+    };
+    const { signaling, resultRef } = setup({
+      cancelOfferRetriesRef,
+      peerConnectionRef: { current: peerConnection },
+    });
+
+    await act(async () => {
+      resultRef.current.connectSocket('session-1');
+      await signaling.handlers.get('rtc.answer')({
+        callId: 'call-1',
+        sdp: { type: 'answer' },
+      });
+    });
+
+    expect(cancelOfferRetriesRef.current).toHaveBeenCalledWith('answer-received');
   });
 });
