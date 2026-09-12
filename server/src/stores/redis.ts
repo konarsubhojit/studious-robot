@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { STORE_NAMES } from './contracts.ts';
 import { createRedisMessageBus } from '../messageBus.ts';
 import { isRedisPermissionError, reportRedisPermissionFailure } from '../lib/redisHealth.ts';
+import { timeQuery } from '../lib/queryTiming.ts';
 import {
   SHARED_SESSION_MAX_TTL_MS,
   SHARED_CALL_MAX_TTL_MS,
@@ -215,7 +216,10 @@ async function createRedisPgStores(
   bundle.callState = {
     get: async (callId: string) => {
       if (typeof busPub.get === 'function') {
-        const raw = await busPub.get(callKey(callId));
+        const raw = await timeQuery(
+          { backend: 'redis', operation: 'get', kind: 'read', target: 'call-state' },
+          () => busPub.get(callKey(callId))
+        );
         if (!raw) return null;
         try {
           return JSON.parse(raw);
@@ -227,26 +231,36 @@ async function createRedisPgStores(
     },
     save: async (call: import('./contracts.ts').CallRecord) => {
       if (evalFn) {
-        await evalFn(SAVE_CALL_LUA, {
-          keys: [callKey(call.callId), userCallsKey(call.callerId), userCallsKey(call.calleeId)],
-          arguments: [
-            JSON.stringify(call),
-            String(SHARED_CALL_MAX_TTL_MS),
-            TERMINAL_CALL_STATES.has(call.status) ? '1' : '0',
-            call.callId,
-          ],
-        });
+        await timeQuery(
+          { backend: 'redis', operation: 'save', kind: 'write', target: 'call-state' },
+          () =>
+            evalFn(SAVE_CALL_LUA, {
+              keys: [callKey(call.callId), userCallsKey(call.callerId), userCallsKey(call.calleeId)],
+              arguments: [
+                JSON.stringify(call),
+                String(SHARED_CALL_MAX_TTL_MS),
+                TERMINAL_CALL_STATES.has(call.status) ? '1' : '0',
+                call.callId,
+              ],
+            })
+        );
         return;
       }
       if (typeof busPub.set === 'function') {
-        await busPub.set(callKey(call.callId), JSON.stringify(call), { PX: SHARED_CALL_MAX_TTL_MS });
+        await timeQuery(
+          { backend: 'redis', operation: 'save', kind: 'write', target: 'call-state' },
+          () => busPub.set(callKey(call.callId), JSON.stringify(call), { PX: SHARED_CALL_MAX_TTL_MS })
+        );
         return;
       }
       callFallback.set(call.callId, { ...call });
     },
     listActiveCallsForUser: async (userId: string) => {
       if (evalFn) {
-        const raw = await evalFn(LIST_USER_CALLS_LUA, { keys: [userCallsKey(userId)] });
+        const raw = await timeQuery(
+          { backend: 'redis', operation: 'list', kind: 'read', target: 'call-state' },
+          () => evalFn(LIST_USER_CALLS_LUA, { keys: [userCallsKey(userId)] })
+        );
         const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         return Array.isArray(parsed) ? (parsed as import('./contracts.ts').CallRecord[]) : [];
       }
@@ -273,20 +287,24 @@ async function createRedisPgStores(
       // members in the same atomic script that writes the record.
       const known = callFallback.get(callId) ?? (await bundle.callState.get(callId));
       const redisResult = evalFn
-        ? await evalFn(TRANSITION_CALL_LUA, {
-            keys: [
-              callKey(callId),
-              userCallsKey(known?.callerId ?? callId),
-              userCallsKey(known?.calleeId ?? callId),
-            ],
-            arguments: [
-              fromStatus,
-              toStatus,
-              new Date().toISOString(),
-              reason ?? '',
-              String(SHARED_CALL_MAX_TTL_MS),
-            ],
-          })
+        ? await timeQuery(
+            { backend: 'redis', operation: 'transition', kind: 'write', target: 'call-state' },
+            () =>
+              evalFn(TRANSITION_CALL_LUA, {
+                keys: [
+                  callKey(callId),
+                  userCallsKey(known?.callerId ?? callId),
+                  userCallsKey(known?.calleeId ?? callId),
+                ],
+                arguments: [
+                  fromStatus,
+                  toStatus,
+                  new Date().toISOString(),
+                  reason ?? '',
+                  String(SHARED_CALL_MAX_TTL_MS),
+                ],
+              })
+          )
         : null;
       const resolved = evalFn
         ? (typeof redisResult === 'string' ? JSON.parse(redisResult) : redisResult)
@@ -319,7 +337,10 @@ async function createRedisPgStores(
   bundle.sessionState = {
     get: async (sessionId: string) => {
       if (typeof busPub.get === 'function') {
-        const raw = await busPub.get(sessionKey(sessionId));
+        const raw = await timeQuery(
+          { backend: 'redis', operation: 'get', kind: 'read', target: 'session-state' },
+          () => busPub.get(sessionKey(sessionId))
+        );
         if (!raw) return null;
         try {
           return JSON.parse(raw);
@@ -343,14 +364,20 @@ async function createRedisPgStores(
         ? Math.min(Math.max(declared, 1), SHARED_SESSION_MAX_TTL_MS)
         : SHARED_SESSION_MAX_TTL_MS;
       if (typeof busPub.set === 'function') {
-        await busPub.set(sessionKey(session.sessionId), payload, { PX: ttlMs });
+        await timeQuery(
+          { backend: 'redis', operation: 'save', kind: 'write', target: 'session-state' },
+          () => busPub.set(sessionKey(session.sessionId), payload, { PX: ttlMs })
+        );
         return;
       }
       sessionFallback.set(session.sessionId, { ...session });
     },
     remove: async (sessionId: string) => {
       if (typeof busPub.del === 'function') {
-        await busPub.del(sessionKey(sessionId));
+        await timeQuery(
+          { backend: 'redis', operation: 'remove', kind: 'write', target: 'session-state' },
+          () => busPub.del(sessionKey(sessionId))
+        );
         return;
       }
       sessionFallback.delete(sessionId);

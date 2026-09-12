@@ -234,16 +234,21 @@ function createRedisCache({ client, ownsClient = false, keyPrefix = REDIS_KEY_PR
           { backend: 'redis', operation: 'del', kind: 'write', target: 'cache' },
           () => client.del(keys)
         );
-      let batch: string[] = [];
-      for await (const key of scanKeys(client, pattern)) {
-        batch.push(key);
-        if (batch.length >= 100) {
-          await deleteBatch(batch);
-          batch = [];
+      // The full SCAN sweep is timed as one operation (rather than per
+      // yielded key) so it shows up in `/metrics` as a single `scan` entry —
+      // matching how the equivalent `KEYS`-free sweep is billed by Redis.
+      const keys = await timeQuery(
+        { backend: 'redis', operation: 'scan', kind: 'read', target: 'cache' },
+        async () => {
+          const collected: string[] = [];
+          for await (const key of scanKeys(client, pattern)) {
+            collected.push(key);
+          }
+          return collected;
         }
-      }
-      if (batch.length > 0) {
-        await deleteBatch(batch);
+      );
+      for (let i = 0; i < keys.length; i += 100) {
+        await deleteBatch(keys.slice(i, i + 100));
       }
     },
 
