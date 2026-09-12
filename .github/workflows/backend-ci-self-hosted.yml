@@ -1,0 +1,108 @@
+name: Backend CI (self-hosted)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'server/**'
+      - 'shared/**'
+      - '.nvmrc'
+      - '.github/actions/setup-ci/**'
+      - '.github/workflows/backend-ci-self-hosted.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'server/**'
+      - 'shared/**'
+      - '.nvmrc'
+      - '.github/actions/setup-ci/**'
+      - '.github/workflows/backend-ci-self-hosted.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, build & test (self-hosted)
+    runs-on: self-hosted
+    timeout-minutes: 20
+    concurrency:
+      group: backend-test-self-hosted-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    defaults:
+      run:
+        working-directory: server
+
+    # Postgres service so the Drizzle migration + store tests run against a real
+    # database in CI.  Credentials are ephemeral and scoped to this job.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: studious_test
+        ports:
+          - '127.0.0.1::5432'
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Connection components for the ephemeral CI Postgres service. The full
+      # DATABASE_URL(s) are composed from these in a step below to avoid
+      # embedding a credential-shaped literal in the workflow.
+      PGHOST: 127.0.0.1
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: studious_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up CI dependencies
+        uses: ./.github/actions/setup-ci
+        with:
+          package: server
+          cache-scope: ci
+
+      - name: Compose database URLs
+        # App (pooled) and migration (direct) URLs point at the same CI service.
+        env:
+          PGPORT: ${{ job.services.postgres.ports[5432] }}
+        run: |
+          set -euo pipefail
+          test -n "$PGPORT"
+          echo "PGPORT=${PGPORT}" >> "$GITHUB_ENV"
+          URL="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+          echo "DATABASE_URL=${URL}" >> "$GITHUB_ENV"
+          echo "DATABASE_URL_DIRECT=${URL}" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for uncommitted schema drift
+        # Regenerating migrations from the schema must produce no changes; a
+        # non-empty diff means db/schema.ts was edited without `npm run db:generate`.
+        run: |
+          npm run db:generate
+          git diff --exit-code db/migrations
+
+      - name: Apply database migrations
+        run: npm run db:migrate
+
+      - name: Check types
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
