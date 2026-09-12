@@ -48,6 +48,8 @@ const EXTENSION_BY_MIME_TYPE = Object.freeze({
   'audio/webm': 'weba',
   'application/pdf': 'pdf',
   'application/zip': 'zip',
+  'application/x-zip-compressed': 'zip',
+  'multipart/x-zip': 'zip',
   'text/plain': 'txt',
   'video/mp4': 'mp4',
 });

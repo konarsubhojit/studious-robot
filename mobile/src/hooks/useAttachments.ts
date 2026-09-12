@@ -5,6 +5,7 @@ import {
   isAttachmentUploadKnownUnavailable,
   uploadAttachment,
 } from '../attachmentUpload';
+import { logInfo, logWarn } from '../appLogger';
 import { pickCameraPhoto, pickDocument, pickPhoto } from '../attachmentPicker';
 import { ensureAttachmentPermission } from '../permissions';
 import type { CallStatus } from '../components/StatusBanner';
@@ -67,6 +68,11 @@ export default function useAttachments({
   const sendPicked = useCallback(
     async (peerId: string, type: string, picked: any, existingMessageId?: string | null) => {
       if (!picked) return;
+      logInfo('[Attachments] picker selected attachment', {
+        type,
+        rawMimeType: picked.mimeType,
+        sizeBytes: picked.sizeBytes,
+      });
       setIsUploading(true);
       setUploadProgress(0);
       const messageId =
@@ -110,6 +116,11 @@ export default function useAttachments({
         await finishAttachmentUpload(peerId, messageId, type, attachment);
       } catch (error) {
         const failure = ((error ?? {}) as { status?: number, message?: string });
+        logWarn('[Attachments] composer upload error', {
+          type,
+          status: failure.status,
+          message: failure.message ?? 'Could not send attachment',
+        });
         failAttachmentUpload(peerId, messageId, failure.message ?? 'Could not send attachment');
         if (failure.message === ATTACHMENT_CANCELLED_MESSAGE) {
           updateStatus?.('Upload cancelled', 'info');
@@ -183,7 +194,10 @@ export default function useAttachments({
       if (kind === 'photo') picked = await pickPhoto();
       else if (kind === 'camera') picked = await pickCameraPhoto();
       else if (kind === 'file') picked = await pickDocument();
-      if (!picked) return;
+      if (!picked) {
+        logInfo('[Attachments] picker returned no attachment', { kind });
+        return;
+      }
 
       const type = kind === 'file' ? MESSAGE_TYPES.FILE : MESSAGE_TYPES.IMAGE;
       await sendPicked(peerId, type, picked);

@@ -57,21 +57,41 @@ export function isAttachmentUploadKnownUnavailable() {
  * before spending a round trip on it.
  */
 export function validateAttachment({ type, mimeType, sizeBytes }: { type?: unknown; mimeType?: unknown; sizeBytes?: unknown; } = {}): { ok: true; } | { ok: false; message: string; } {
-  if (!isAttachmentMessageType(type)) {
-    return { ok: false, message: 'Unsupported attachment type' };
-  }
   const normalisedMime = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : '';
-  if (!isAllowedAttachmentMimeType((type as string), normalisedMime)) {
-    return { ok: false, message: `File type ${normalisedMime || 'unknown'} isn't supported` };
-  }
+  const resolvedType = isAttachmentMessageType(type) ? type as string : '';
   const size = Number(sizeBytes);
-  const cap = maxAttachmentBytesFor((type as string));
+  const cap = resolvedType ? maxAttachmentBytesFor(resolvedType) : 0;
+  const reject = (message: string) => {
+    logWarn('[Attachments] validation rejected', {
+      rawMimeType: mimeType,
+      mimeType: normalisedMime,
+      type: resolvedType,
+      sizeBytes,
+      cap,
+      message,
+    });
+    return { ok: false as const, message };
+  };
+
+  if (!isAttachmentMessageType(type)) {
+    return reject('Unsupported attachment type');
+  }
+  if (!isAllowedAttachmentMimeType(resolvedType, normalisedMime)) {
+    return reject(`File type ${normalisedMime || 'unknown'} isn't supported`);
+  }
   if (!Number.isFinite(size) || size <= 0) {
-    return { ok: false, message: 'Could not determine the file size' };
+    return reject('Could not determine the file size');
   }
   if (size > cap) {
-    return { ok: false, message: `That file is larger than the ${formatBytes(cap)} limit` };
+    return reject(`That file is larger than the ${formatBytes(cap)} limit`);
   }
+  logInfo('[Attachments] validation accepted', {
+    rawMimeType: mimeType,
+    mimeType: normalisedMime,
+    type: resolvedType,
+    sizeBytes: size,
+    cap,
+  });
   return { ok: true };
 }
 
@@ -130,6 +150,7 @@ export async function presignAttachment({
     publicUrl: string; expiresAt: string; headers: Record<string, string>;
 }> {
   const trimmedUrl = (signalingUrl ?? '').trim();
+  logInfo('[Attachments] presign requested', { type, mimeType, sizeBytes });
   const response = await authedFetch(sessionId => ({
     url: `${trimmedUrl}${API_ROUTES.ATTACHMENTS_PRESIGN}`,
     options: {
@@ -140,9 +161,11 @@ export async function presignAttachment({
   }));
 
   if (!response) {
+    logWarn('[Attachments] presign response missing', { type, mimeType, sizeBytes });
     throw new AttachmentError('Could not reach the server');
   }
 
+  logInfo('[Attachments] presign response', { type, mimeType, sizeBytes, status: response.status });
   if (!response.ok) {
     if (response.status === 503) serverAttachmentsUnavailable = true;
     const body = await response.json().catch(() => ({}));
@@ -186,14 +209,22 @@ export function putAttachment({ uploadUrl, headers, body, onProgress, onAbortHan
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
+        logInfo('[Attachments] upload completed', { status: xhr.status });
         onProgress?.(1);
         resolve();
         return;
       }
+      logWarn('[Attachments] upload rejected by storage', { status: xhr.status });
       reject(new AttachmentError('Upload was rejected by storage', xhr.status));
     };
-    xhr.onerror = () => reject(new AttachmentError('Network problem during upload'));
-    xhr.onabort = () => reject(new AttachmentError(ATTACHMENT_CANCELLED_MESSAGE));
+    xhr.onerror = () => {
+      logWarn('[Attachments] upload network failure');
+      reject(new AttachmentError('Network problem during upload'));
+    };
+    xhr.onabort = () => {
+      logInfo('[Attachments] upload cancelled');
+      reject(new AttachmentError(ATTACHMENT_CANCELLED_MESSAGE));
+    };
     onAbortHandle?.(() => xhr.abort());
     xhr.send(body);
   });
@@ -245,6 +276,7 @@ export async function uploadAttachment({
   if (!validation.ok) {
     throw new AttachmentError(validation.message);
   }
+  const validatedMimeType = mimeType.trim().toLowerCase();
 
   let presigned;
   try {
@@ -253,7 +285,7 @@ export async function uploadAttachment({
       signalingUrl,
       peerId,
       type,
-      mimeType,
+      mimeType: validatedMimeType,
       sizeBytes,
     });
   } catch (error) {
@@ -269,7 +301,7 @@ export async function uploadAttachment({
     await putAttachment({
       uploadUrl: presigned.uploadUrl,
       headers: presigned.headers,
-      body: { uri, type: mimeType, name },
+      body: { uri, type: validatedMimeType, name },
       onProgress,
       onAbortHandle,
     });
@@ -287,10 +319,10 @@ export async function uploadAttachment({
     throw new AttachmentError(describeAttachmentError(failure), failure.status);
   }
 
-  logInfo('[Attachments] uploaded', { type, sizeBytes });
+  logInfo('[Attachments] uploaded', { type, mimeType: validatedMimeType, sizeBytes });
   return {
     url: presigned.publicUrl,
-    mimeType,
+    mimeType: validatedMimeType,
     sizeBytes,
     ...(name ? { name } : {}),
     ...(Number.isFinite(width) ? { width } : {}),
