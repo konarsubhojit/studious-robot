@@ -35,7 +35,10 @@ import {
   setupCallKeep,
 } from '../callKeep';
 import { errorMessage } from '../errors';
-import { consumePendingCallAction } from '../incomingCallNotification';
+import {
+  consumePendingCallAction,
+  dismissIncomingCallNotification,
+} from '../incomingCallNotification';
 import { emitEvent } from '../observability';
 import { getMissingCallPermissions } from '../permissions';
 import { installForegroundMessageHandler, sendPushReceipt } from '../pushNotifications';
@@ -384,6 +387,7 @@ export default function useAnswerPath({
     setCallSummary(null);
     logInfo('[CallFlow] Accepting incoming call', { callId: call.callId });
     acceptInFlightCallIdRef.current = call.callId;
+    dismissIncomingCallNotification(call.callId);
     // Everything from here until `rtc.answer` is sent lands inside the
     // server's `accepted -> in_call` window, so this is where its clock starts.
     beginAnswerTimeline(call.callId);
@@ -527,6 +531,7 @@ export default function useAnswerPath({
       return;
     }
 
+    dismissIncomingCallNotification(call.callId);
     await declineCallById(call.callId);
     endActiveCall('Call declined', 'info', 'declined');
   }, [declineCallById, endActiveCall, incomingCall, incomingCallRef]);
@@ -628,11 +633,12 @@ export default function useAnswerPath({
       },
       onEnd: callUUID => {
         clearPendingAnswer(callUUID, 'ended_before_answer');
-        if (incomingCallRef.current) {
+        const incoming = incomingCallRef.current;
+        if (incoming?.callId === callUUID) {
           declineIncomingCallRef.current?.();
-        } else {
-          endActiveCallRef.current?.();
+          return;
         }
+        logInfo('[CallFlow] Ignoring CallKeep endCall with no ringing call', { callUUID });
       },
     });
     const unsubscribeForegroundPush = installForegroundMessageHandler();
