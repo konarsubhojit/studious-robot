@@ -36,10 +36,10 @@
     "@types/pg": "^8.23.1",
     "dotenv": "^16.4.5",
     "drizzle-kit": "^0.31.10",
-    "eslint": "^10.9.1",
+    "eslint": "^10.10.0",
     "eslint-plugin-sonarjs": "^4.2.0",
     "socket.io-client": "^4.8.3",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.69.0"
+    "typescript-eslint": "^8.70.0"
   }
 }
