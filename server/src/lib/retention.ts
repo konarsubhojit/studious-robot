@@ -2,6 +2,7 @@ import { and, inArray, lt, sql } from 'drizzle-orm';
 import {
   auditLog as auditLogTable,
   calls as callsTable,
+  conversations as conversationsTable,
   messages as messagesTable,
 } from '../../db/schema.ts';
 import { TERMINAL_CALL_STATES, DB_RETENTION_DELETE_BATCH } from '../config.ts';
@@ -122,13 +123,72 @@ async function pruneExpiredMessages(
   cutoff: Date,
   batchSize: number
 ): Promise<number> {
-  const deleted = await db
-    .delete(messagesTable)
-    .where(
-      sql`ctid in (select ctid from ${messagesTable} where ${lt(messagesTable.createdAt, cutoff.toISOString())} limit ${batchSize})`
-    )
-    .returning({ messageId: messagesTable.messageId });
-  return deleted.length;
+  return db.transaction(async (tx) => {
+    const deleted = await tx
+      .delete(messagesTable)
+      .where(
+        sql`ctid in (select ctid from ${messagesTable} where ${lt(messagesTable.createdAt, cutoff.toISOString())} limit ${batchSize})`
+      )
+      .returning({ conversationId: messagesTable.conversationId });
+    const conversationIds = [...new Set(deleted.map(({ conversationId }) => conversationId))];
+
+    if (conversationIds.length === 0) return 0;
+
+    await tx
+      .delete(conversationsTable)
+      .where(inArray(conversationsTable.conversationId, conversationIds))
+      .returning({ conversationId: conversationsTable.conversationId });
+
+    await tx.execute(sql`
+      WITH last_messages AS (
+        SELECT DISTINCT ON (${messagesTable.conversationId})
+          ${messagesTable.conversationId} AS conversation_id,
+          ${messagesTable.messageId} AS message_id,
+          LEAST(${messagesTable.senderId} COLLATE "C", ${messagesTable.recipientId} COLLATE "C") AS participant_a,
+          GREATEST(${messagesTable.senderId} COLLATE "C", ${messagesTable.recipientId} COLLATE "C") AS participant_b,
+          ${messagesTable.createdAt} AS created_at
+        FROM ${messagesTable}
+        WHERE ${inArray(messagesTable.conversationId, conversationIds)}
+        ORDER BY ${messagesTable.conversationId}, ${messagesTable.createdAt} DESC, ${messagesTable.messageId} DESC
+      ),
+      unread_counts AS (
+        SELECT
+          ${messagesTable.conversationId} AS conversation_id,
+          ${messagesTable.recipientId} AS recipient_id,
+          count(*)::int AS unread_count
+        FROM ${messagesTable}
+        WHERE ${inArray(messagesTable.conversationId, conversationIds)}
+          AND ${messagesTable.readAt} IS NULL
+        GROUP BY ${messagesTable.conversationId}, ${messagesTable.recipientId}
+      )
+      INSERT INTO ${conversationsTable} (
+        "conversation_id",
+        "participant_a",
+        "participant_b",
+        "last_message_id",
+        "last_created_at",
+        "unread_a",
+        "unread_b"
+      )
+      SELECT
+        last_messages.conversation_id,
+        last_messages.participant_a,
+        last_messages.participant_b,
+        last_messages.message_id,
+        last_messages.created_at,
+        COALESCE(unread_a.unread_count, 0)::int,
+        COALESCE(unread_b.unread_count, 0)::int
+      FROM last_messages
+      LEFT JOIN unread_counts AS unread_a
+        ON unread_a.conversation_id = last_messages.conversation_id
+        AND unread_a.recipient_id = last_messages.participant_a
+      LEFT JOIN unread_counts AS unread_b
+        ON unread_b.conversation_id = last_messages.conversation_id
+        AND unread_b.recipient_id = last_messages.participant_b
+    `);
+
+    return deleted.length;
+  });
 }
 
 /**

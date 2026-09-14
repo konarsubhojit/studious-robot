@@ -42,6 +42,9 @@ function buildDeleteRecorder({
 
   const db = {
     calls,
+    transaction(callback: (tx: unknown) => Promise<unknown>) {
+      return callback(this);
+    },
     select() {
       return {
         from(table: unknown) {
@@ -74,11 +77,18 @@ function buildDeleteRecorder({
               }
               calls.push({ table, limit: condition?.limitValue ?? null });
               const count = deleted.get(table) ?? 0;
-              return Promise.resolve(Array.from({ length: count }, (_, i) => ({ id: i })));
+              return Promise.resolve(
+                Array.from({ length: count }, (_, i) =>
+                  table === schema.messages ? { conversationId: 'alice:bob' } : { id: i }
+                )
+              );
             },
           };
         },
       };
+    },
+    execute() {
+      return Promise.resolve();
     },
   };
 
@@ -198,10 +208,9 @@ test('an explicit message retention window prunes expired messages', async () =>
   });
 
   assert.equal(result.messages, 2, 'the delete reports the rows it removed');
-  // One bounded statement, exactly like the call and audit sweeps: the batch is
-  // limited by a `ctid` sub-select, so the composite key needs no per-row
-  // round trip and the whole batch stays a single transaction.
-  assert.deepEqual(db.calls.map((entry) => entry.table), [schema.messages]);
+  // The bounded message delete and projection refresh run in one transaction,
+  // so a conversation cannot point at a message the retention sweep removed.
+  assert.deepEqual(db.calls.map((entry) => entry.table), [schema.messages, schema.conversations]);
 });
 
 test('a message sweep that matches nothing reports nothing pruned', async () => {
