@@ -414,7 +414,8 @@ test('listConversations caps the list at MAX_CONVERSATION_LIMIT, keeping the new
       senderId: 'alice',
       recipientId: `peer-${String(i).padStart(3, '0')}`,
       body: `hi ${i}`,
-      // Strictly increasing, so `peer-104` holds the newest last message.
+      // Strictly increasing, so the highest-numbered peer holds the newest
+      // last message.
       createdAt: new Date(Date.UTC(2024, 0, 1, 0, 0, i)).toISOString(),
     });
   }
