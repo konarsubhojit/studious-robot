@@ -72,7 +72,12 @@ export type ReactToMessageOptions = {
 export type DeliveryReceiptInput = {
   messageId: string;
   userId: string;
-  conversationId?: string;
+  /**
+   * Required: it becomes the leading key column of the eventual `markDelivered`
+   * update, without which that update cannot use the primary key. See the note
+   * on `markDelivered` below.
+   */
+  conversationId: string;
 };
 
 export type SaveMessageResult = {
@@ -90,9 +95,13 @@ export type MessageStore = {
   /** Bounded export page containing every participant message, including tombstones. */
   listUserMessages?: (opts?: ListUserMessagesOptions) => Promise<StoredMessage[]>;
   /**
-   * `conversationId` is the shard key of the messages collection: supplying it
-   * keeps the update single-partition on Cosmos. It stays optional so callers
-   * that only hold a message id (and the in-memory store) still work.
+   * `conversationId` is the leading column of the Postgres primary key
+   * `(conversation_id, message_id)`: supplying it is what lets the update be an
+   * index scan. Omitting it leaves `where message_id = $1`, which no index
+   * covers, so the Postgres store logs a warning and scans the whole table.
+   * It stays optional only so the in-memory store — which looks a message up by
+   * id — keeps the same signature; every real caller must pass it, deriving it
+   * with `deriveConversationId` if it only holds the two participants.
    */
   markDelivered: (
     messageId: string,

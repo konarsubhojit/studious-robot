@@ -267,6 +267,20 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
     },
 
     async markDelivered(messageId: string, userId: string, conversationId?: string) {
+      // The primary key is `(conversation_id, message_id)` and a btree cannot
+      // serve a probe on its second column alone, so `where message_id = $1`
+      // is a sequential scan of the whole table — on a write path, once per
+      // delivery receipt, growing with total chat volume across all users.
+      // Every caller today holds the conversation id (and one that only has
+      // both participants can derive it with `deriveConversationId`), so this
+      // branch is dead; it warns rather than silently degrading, so a future
+      // caller cannot reintroduce the scan unnoticed.
+      if (!conversationId) {
+        console.warn(
+          `[messages] markDelivered without a conversationId falls back to a` +
+            ` sequential scan of "messages" messageId=${messageId}`
+        );
+      }
       // `array_append` only when the id is absent keeps the receipt idempotent
       // *in the database*, so two instances processing the same receipt cannot
       // race into a duplicate entry.

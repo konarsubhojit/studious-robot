@@ -306,6 +306,28 @@ test('markDelivered reports a miss rather than inventing a message', async () =>
   assert.equal(await store.markDelivered('missing', 'bob', 'alice:bob'), null);
 });
 
+test('markDelivered warns when a caller omits the conversation id', async () => {
+  const { store, queries } = createRecordingStore([[toTuple(messageRow({ deliveredTo: ['bob'] }))]]);
+  const original = console.warn;
+  const lines: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    lines.push(args.join(' '));
+  };
+
+  try {
+    await store.markDelivered('m-1', 'bob');
+  } finally {
+    console.warn = original;
+  }
+
+  // Without the leading primary-key column the predicate is `message_id` alone,
+  // which no index covers: a seq scan of the whole table on a write path. The
+  // update still runs — the warning is what stops it happening silently.
+  assert.match(queries[0].text, /where "messages"\."message_id" = \$\d+/);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /sequential scan/);
+});
+
 test('markRead returns how many messages it flipped', async () => {
   const { store, queries } = createRecordingStore([[['m-1'], ['m-2']]]);
 
