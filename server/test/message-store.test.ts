@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT, deriveConversationId, createMemoryMessageStore, createMessageStore } from '../src/messageStore.ts';
+import { MAX_CONVERSATION_LIMIT } from '../src/messageStore/queries.ts';
 import { asDatabase } from './helpers.ts';
 
 // ─── Conversation ids ─────────────────────────────────────────────────────────
@@ -399,6 +400,35 @@ test('listConversations counts only unread messages addressed to the requesting 
   await store.markDelivered(first?.messageId, 'bob');
   const [afterDelivery] = await store.listConversations('bob');
   assert.equal(afterDelivery.unreadCount, 2, 'delivery does not affect the unread count');
+});
+
+test('listConversations caps the list at MAX_CONVERSATION_LIMIT, keeping the newest', async () => {
+  // Parity guard: the Postgres store bounds the same query with
+  // `LIMIT MAX_CONVERSATION_LIMIT` after ordering by
+  // `created_at DESC, message_id DESC`, so the memory store must return the
+  // same conversations — not merely the same number of them.
+  const store = createMemoryMessageStore();
+  const overflow = 5;
+  for (let i = 0; i < MAX_CONVERSATION_LIMIT + overflow; i++) {
+    await store.saveMessage({
+      senderId: 'alice',
+      recipientId: `peer-${String(i).padStart(3, '0')}`,
+      body: `hi ${i}`,
+      // Strictly increasing, so the highest-numbered peer holds the newest
+      // last message.
+      createdAt: new Date(Date.UTC(2024, 0, 1, 0, 0, i)).toISOString(),
+    });
+  }
+
+  const conversations = await store.listConversations('alice');
+  assert.equal(conversations.length, MAX_CONVERSATION_LIMIT);
+  // Newest first, and the `overflow` oldest conversations are the ones dropped.
+  assert.deepEqual(
+    conversations.map((conversation) => conversation.peerId),
+    Array.from({ length: MAX_CONVERSATION_LIMIT }, (_unused, index) =>
+      `peer-${String(MAX_CONVERSATION_LIMIT + overflow - 1 - index).padStart(3, '0')}`
+    )
+  );
 });
 
 test('listConversations excludes conversations the user has no part in', async () => {

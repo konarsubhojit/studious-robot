@@ -286,7 +286,23 @@ function registerMessageHandlers(
       return;
     }
 
-    await invalidateCache(state, messagesCachePrefix(conversationId));
+    // A reaction changes `reactions` on the message, and
+    // `ConversationSummary.lastMessage` is a full `StoredMessage` — so a cached
+    // conversation list can serve a stale reaction set on the preview for up to
+    // the TTL. Both participants' lists are evicted for that reason.
+    //
+    // Unlike `persistAcceptedMessage` in `send.ts`, which deliberately defers
+    // the *sender's* conversation-list eviction off the ack path, both
+    // evictions stay on the blocking path here: a reaction ack is not
+    // latency-critical in the same way (no message delivery is waiting behind
+    // it), and the actor's own ack carries the new reaction set, so keeping the
+    // simpler awaited form avoids a detached failure mode for no real gain.
+    await invalidateCache(
+      state,
+      conversationsCachePrefix(requesterId),
+      conversationsCachePrefix(peerId),
+      messagesCachePrefix(conversationId)
+    );
 
     const envelope = {
       version: SIGNALING_VERSION,
