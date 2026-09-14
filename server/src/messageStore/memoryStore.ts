@@ -18,6 +18,7 @@ import {
   bodyMatches,
   clampExportReadLimit,
   clampLimit,
+  MAX_CONVERSATION_LIMIT,
   normaliseSearchTerm,
 } from './queries.ts';
 import type { MessageStore, StoredMessage } from './types.ts';
@@ -133,12 +134,23 @@ export function createMemoryMessageStore(): MessageStore {
     async flushDeliveryReceipts() {},
 
     async listConversations(userId) {
+      // `MAX_CONVERSATION_LIMIT` is applied here *and* in the Postgres store's
+      // query deliberately: the two backends must return the same conversations
+      // for the same history, so a caller cannot tell them apart by result
+      // count. Keep the two caps in sync if either ever changes.
+      //
+      // `summariseConversations` already orders newest-first on the same
+      // `(createdAt DESC, messageId DESC)` key the Postgres store sorts by, so
+      // truncating here retains exactly the conversations Postgres would keep.
+      //
       // The summaries reference the live records, so each is copied on the way
       // out — a caller must not be able to mutate the store through them.
-      return summariseConversations(messages, userId).map((summary) => ({
-        ...summary,
-        lastMessage: { ...summary.lastMessage },
-      }));
+      return summariseConversations(messages, userId)
+        .slice(0, MAX_CONVERSATION_LIMIT)
+        .map((summary) => ({
+          ...summary,
+          lastMessage: { ...summary.lastMessage },
+        }));
     },
 
     async markRead(conversationId, userId) {

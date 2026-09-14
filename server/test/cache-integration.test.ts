@@ -293,6 +293,52 @@ test('a new message refreshes both participants conversation lists', async (t) =
   assert.equal(aliceHistory.body.messages.length, 1);
 });
 
+test('a reaction refreshes both participants conversation lists', async (t) => {
+  // `ConversationSummary.lastMessage` is a full stored message, reactions
+  // included, so the reaction path has to evict the conversation-list cache of
+  // both participants — not just the message page.
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'cache-alice');
+  const bobSession = await createSession(url, 'cache-bob');
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  const sent = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'cache-bob',
+    body: 'react to me',
+  });
+  assert.equal(sent.ok, true);
+  const messageId = sent.message.messageId;
+
+  // Warm both lists so a missing eviction would serve the pre-reaction preview.
+  const warmAlice = await getJson(url, '/conversations', aliceSession);
+  assert.deepEqual(warmAlice.body.conversations[0].lastMessage.reactions ?? {}, {});
+  const warmBob = await getJson(url, '/conversations', bobSession);
+  assert.deepEqual(warmBob.body.conversations[0].lastMessage.reactions ?? {}, {});
+
+  const reacted = await emitWithAck(bob, 'message.react', {
+    version: VERSION,
+    peerId: 'cache-alice',
+    messageId,
+    emoji: '👍',
+    action: 'add',
+  });
+  assert.equal(reacted.ok, true);
+
+  const aliceList = await getJson(url, '/conversations', aliceSession);
+  assert.deepEqual(aliceList.body.conversations[0].lastMessage.reactions, { '👍': ['cache-bob'] });
+
+  const bobList = await getJson(url, '/conversations', bobSession);
+  assert.deepEqual(bobList.body.conversations[0].lastMessage.reactions, { '👍': ['cache-bob'] });
+});
+
 test('POST /messages/read refreshes the sender unread count', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);
