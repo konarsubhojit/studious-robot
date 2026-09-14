@@ -404,7 +404,7 @@ export default function useCallRecovery({
             describeCandidatePair(summary) ?? 'candidate-pair:unknown',
             `iceRestarts:${iceRestarts}`,
             describeLastIceServerFetch() ?? 'ice-servers:unknown',
-          ].join(' '),
+          ].join(','),
           durationMs: timing?.sinceAcceptMs ?? null,
           sessionId: sessionIdRef.current,
           signalingUrl: signalingUrl.trim(),

@@ -301,6 +301,20 @@ function ownerDeviceIdForUser(call: CallRecord, userId: string): string | null {
 }
 
 /**
+ * Whether `deviceId` is trying to act on a call another device of the same user
+ * owns. Unknown ownership is allowed for legacy records created before the
+ * fields existed; known ownership is authoritative.
+ */
+function isCallOwnedByAnotherDevice(
+  call: CallRecord,
+  userId: string,
+  deviceId: string | null | undefined,
+): boolean {
+  const owner = ownerDeviceIdForUser(call, userId);
+  return Boolean(owner && deviceId && owner !== deviceId);
+}
+
+/**
  * Whether `call` is the very ring `callerId` is now placing again.
  *
  * A user cannot be ringing the same person twice, so an open ring from this
@@ -756,6 +770,7 @@ export {
   describeActiveCallsForUser,
   callPeerId,
   ownerDeviceIdForUser,
+  isCallOwnedByAnotherDevice,
   findCallerBlockingCall,
   supersedeRedialledCalls,
   isCalleeUnreachable,

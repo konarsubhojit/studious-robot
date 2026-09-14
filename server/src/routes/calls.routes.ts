@@ -4,7 +4,11 @@ import { isBlocked } from '../security.ts';
 import { callHistoryCacheKey, readCached, writeCached } from '../cache.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
-import { describeActiveCallsForUser, ownerDeviceIdForUser } from '../domain/calls.ts';
+import {
+  describeActiveCallsForUser,
+  isCallOwnedByAnotherDevice,
+  ownerDeviceIdForUser,
+} from '../domain/calls.ts';
 import {
   hydrateCallFromShared,
   placeCallWithShared,
@@ -330,6 +334,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     const result = await transitionCallWithShared(state, call.callId, 'declined', {
       actor: session.userId,
       reason: 'declined',
+      actorDeviceId: session.deviceId ?? null,
     });
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
@@ -340,6 +345,8 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
         previousStatus,
         actor: session.userId,
         reason: 'declined',
+        actorDeviceId: session.deviceId ?? null,
+        source: 'http',
       });
     }
     // A candidate held during the ring is replayed here too: a call accepted
@@ -366,11 +373,22 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       res.status(403).json({ error: 'only the caller can cancel a call' });
       return;
     }
+    if (isCallOwnedByAnotherDevice(call, session.userId, session.deviceId)) {
+      console.log(
+        `[calls] POST /calls/cancel rejected callId=${sanitizeForLog(call.callId)}` +
+          ` actor=${sanitizeForLog(session.userId)}` +
+          ` actorDevice=${sanitizeForLog(session.deviceId)}` +
+          ` source=http reason=call_active_on_another_device`
+      );
+      res.status(403).json({ error: 'this call is active on another device' });
+      return;
+    }
 
     const previousStatus = call.status;
     const result = await transitionCallWithShared(state, call.callId, 'ended', {
       actor: session.userId,
       reason: 'cancelled',
+      actorDeviceId: session.deviceId ?? null,
     });
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
@@ -381,6 +399,8 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
         previousStatus,
         actor: session.userId,
         reason: 'cancelled',
+        actorDeviceId: session.deviceId ?? null,
+        source: 'http',
       });
     }
     // A candidate held during the ring is replayed here too: a call accepted
@@ -407,11 +427,22 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       res.status(403).json({ error: 'not a participant in this call' });
       return;
     }
+    if (isCallOwnedByAnotherDevice(call, session.userId, session.deviceId)) {
+      console.log(
+        `[calls] POST /calls/end rejected callId=${sanitizeForLog(call.callId)}` +
+          ` actor=${sanitizeForLog(session.userId)}` +
+          ` actorDevice=${sanitizeForLog(session.deviceId)}` +
+          ` source=http reason=call_active_on_another_device`
+      );
+      res.status(403).json({ error: 'this call is active on another device' });
+      return;
+    }
 
     const previousStatus = call.status;
     const result = await transitionCallWithShared(state, call.callId, 'ended', {
       actor: session.userId,
-      reason: 'ended',
+      reason: 'user_hangup',
+      actorDeviceId: session.deviceId ?? null,
     });
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
@@ -421,7 +452,9 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,
-        reason: 'ended',
+        reason: 'user_hangup',
+        actorDeviceId: session.deviceId ?? null,
+        source: 'http',
       });
     }
     // A candidate held during the ring is replayed here too: a call accepted

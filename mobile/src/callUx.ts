@@ -14,6 +14,7 @@ import type { CallMediaType } from './settingsStorage';
  */
 export const CALL_END_REASON_LABELS: Record<string, string> = {
   ended: 'Call ended',
+  user_hangup: 'Call ended',
   declined: 'Call declined',
   cancelled: 'Call cancelled',
   timeout: 'Missed call',

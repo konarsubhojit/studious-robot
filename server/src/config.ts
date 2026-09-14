@@ -73,6 +73,7 @@ const TERMINAL_CALL_STATES = new Set(['ended', 'declined', 'missed', 'busy', 'un
  */
 const CALL_END_REASONS: Record<string, string> = {
   ended: 'call_ended',
+  user_hangup: 'call_user_hangup',
   declined: 'call_declined',
   cancelled: 'call_cancelled',
   timeout: 'call_missed',

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, CALL_END_REASONS } from '../src/index.ts';
 import { DEFAULT_RINGING_TIMEOUT_MS } from '../src/config.ts';
-import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { captureConsoleLog, closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -364,7 +364,7 @@ test('end: either party can end an active call', async () => {
     const res = await postJson(url, `/calls/${callId}/end`, {}, callerSession);
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'ended');
-    assert.equal(res.body.endReason, 'ended');
+    assert.equal(res.body.endReason, 'user_hangup');
   } finally {
     await teardown();
   }
@@ -423,6 +423,36 @@ test('end: third party cannot end a call', async () => {
   }
 });
 
+test('end: another device for the same caller cannot end the owning device call', async () => {
+  const logs = captureConsoleLog();
+  const { url, getCall, teardown } = await startServer();
+  try {
+    const callerSession = await createSession(url, 'user-alice', 'device-alice-live');
+    const staleCallerSession = await createSession(url, 'user-alice', 'device-alice-stale');
+    const calleeSession = await createSession(url, 'user-bob', 'device-bob-live');
+
+    const created = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
+    const callId = created.body.callId;
+    await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
+
+    const res = await postJson(url, `/calls/${callId}/end`, {}, staleCallerSession);
+    assert.equal(res.status, 403);
+    assert.equal(res.body.error, 'this call is active on another device');
+    assert.equal(getCall(callId)?.status, 'accepted');
+    assert.ok(
+      logs.lines.some(
+        line =>
+          line.includes('POST /calls/end rejected') &&
+          line.includes(`callId=${callId}`) &&
+          line.includes('actorDevice=device-alice-stale'),
+      ),
+    );
+  } finally {
+    logs.restore();
+    await teardown();
+  }
+});
+
 // ─── Terminal-state immutability ──────────────────────────────────────────────
 
 test('terminal state: declined call cannot be accepted or ended', async () => {
@@ -464,7 +494,7 @@ test('full lifecycle: ringing → accepted → ended produces consistent event l
     assert.equal(events[0].event, 'created');
     assert.equal(events[1].event, 'accepted');
     assert.equal(events[2].event, 'ended');
-    assert.equal(events[2].reason, 'ended');
+    assert.equal(events[2].reason, 'user_hangup');
   } finally {
     await teardown();
   }
@@ -727,7 +757,16 @@ test('history: returns most-recent calls first', async () => {
 });
 
 test('CALL_END_REASONS: exported object has expected terminal reasons', () => {
-  const expected = ['ended', 'declined', 'cancelled', 'timeout', 'busy', 'unreachable', 'failed'];
+  const expected = [
+    'ended',
+    'user_hangup',
+    'declined',
+    'cancelled',
+    'timeout',
+    'busy',
+    'unreachable',
+    'failed',
+  ];
   for (const reason of expected) {
     assert.ok(
       Object.prototype.hasOwnProperty.call(CALL_END_REASONS, reason),

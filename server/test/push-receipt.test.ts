@@ -159,6 +159,29 @@ test('push receipt records answer-path stages with their failure reason', async 
   );
 });
 
+test('push receipt escapes control characters in reason before logging', async (t) => {
+  const logs = captureConsoleLog();
+  t.after(() => logs.restore());
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const res = await postJson(url, '/devices/push-receipt', {
+    deviceId: 'device-cold-start',
+    callId: 'call-media-1',
+    stage: 'media_connected',
+    reason: 'srflx-host\niceRestarts:0\tcache:1',
+  });
+
+  assert.equal(res.status, 202);
+  const line = logs.lines.find(
+    entry => entry.includes('[push] Receipt') && entry.includes('stage=media_connected'),
+  );
+  assert.ok(line, 'receipt should be logged');
+  assert.equal(line.includes('\n'), false);
+  assert.equal(line.includes('\t'), false);
+  assert.ok(line.includes('reason=srflx-host\\x0aiceRestarts:0\\x09cache:1'));
+});
+
 test('push receipt accepts every answer-path stage', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);
