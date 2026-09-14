@@ -99,7 +99,7 @@ export type MessageStore = {
    * `(conversation_id, message_id)`: supplying it is what lets the update be an
    * index scan. Omitting it leaves `where message_id = $1`, which no index
    * covers, so the Postgres store logs a warning and scans the whole table.
-   * It stays optional only so the in-memory store — which looks a message up by
+   * It stays optional only so the in-memory store — which looks up a message by
    * id — keeps the same signature; every real caller must pass it, deriving it
    * with `deriveConversationId` if it only holds the two participants.
    */
