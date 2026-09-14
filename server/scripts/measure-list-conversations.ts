@@ -33,14 +33,17 @@ import * as schema from '../db/schema.ts';
 const thisDir = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(thisDir, '..', 'db', 'migrations');
 
-const OWNER_URL = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
+const rawOwnerUrl = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
 
-if (!OWNER_URL) {
+if (!rawOwnerUrl) {
   console.error(
     'Set DATABASE_URL_DIRECT (or DATABASE_URL) to a scratch-capable Postgres owner connection.'
   );
   process.exit(1);
 }
+
+/** Owner/direct connection string, narrowed to `string` once at module scope. */
+const OWNER_URL: string = rawOwnerUrl;
 
 /** The user whose conversation list we measure throughout. */
 const MEASURED_USER = 'measured-user';
@@ -142,19 +145,16 @@ async function growHotConversation(pool: Pool, alreadySeeded: number, targetTota
        'text',
        '{}'::jsonb,
        '{}'::text[],
-       -- unread when the recipient is the measured user and the message's
-       -- *global* index (offset by what's already seeded) is odd: keeps the
-       -- read/unread oscillation continuous across growth phases instead of
-       -- restarting it every time this function is called again, so the
+       -- unread when the recipient is the measured user: since recipient is
+       -- MEASURED_USER exactly when (g + $4) is odd (per the CASE above),
+       -- that parity alone is sufficient. Offsetting by alreadySeeded keeps
+       -- the read/unread oscillation continuous across growth phases instead
+       -- of restarting it every time this function is called again, so the
        -- backlog stays a stable, large, permanent fraction of the total.
-       CASE
-         WHEN (CASE WHEN (g + $4) % 2 = 0 THEN $3 ELSE $2 END) = $5 AND (g + $4) % 2 = 1
-           THEN NULL
-         ELSE now()
-       END,
+       CASE WHEN (g + $4) % 2 = 1 THEN NULL ELSE now() END,
        now() - (g || ' seconds')::interval
-     FROM generate_series(1, $6) AS g`,
-    [conversationId, HOT_PEER, MEASURED_USER, alreadySeeded, MEASURED_USER, toAdd]
+     FROM generate_series(1, $5) AS g`,
+    [conversationId, HOT_PEER, MEASURED_USER, alreadySeeded, toAdd]
   );
 }
 
@@ -222,7 +222,7 @@ async function main() {
   if (!/^[a-z0-9_]+$/.test(tmpDb)) {
     throw new Error(`Unexpected scratch database name: ${tmpDb}`);
   }
-  const ownerUrl = new URL(OWNER_URL as string);
+  const ownerUrl = new URL(OWNER_URL);
   const admin = new Pool({ connectionString: OWNER_URL });
 
   try {
