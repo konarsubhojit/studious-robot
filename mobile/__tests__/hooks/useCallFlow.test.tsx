@@ -180,6 +180,7 @@ jest.mock('../../src/webrtcConfig', () => ({
   getIceServers: jest.fn(() => []),
   getIceServersForCall: jest.fn(async () => []),
   prefetchIceServersForCall: jest.fn(),
+  describeLastIceServerFetch: jest.fn(() => 'cache:1'),
   // The real parser: the point of these tests is that the TURN summary the
   // call logs matches the list handed to RTCPeerConnection.
   getTurnServerEndpoints: jest.requireActual('../../src/webrtcConfig').getTurnServerEndpoints,
@@ -3781,12 +3782,18 @@ describe('useCallFlow chat', () => {
 
   test('reports call.connected once media reaches the connected ICE state', async () => {
     const { peerConnection, emits } = await acceptCallWithPeerConnection('call-connected-1');
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    (sendPushReceipt as jest.Mock).mockClear();
+    peerConnection.getStats.mockResolvedValue(
+      candidatePairReport({ localType: 'host', remoteType: 'srflx' }),
+    );
 
     expect(peerConnection.oniceconnectionstatechange).toEqual(expect.any(Function));
 
     await act(async () => {
       peerConnection.iceConnectionState = 'connected';
       peerConnection.oniceconnectionstatechange?.();
+      await Promise.resolve();
     });
 
     const connectedEmits = emits.filter((entry: any) => entry.event === 'call.connected');
@@ -3796,6 +3803,11 @@ describe('useCallFlow chat', () => {
       callId: 'call-connected-1',
       iceState: 'connected',
     });
+    expect(sendPushReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      callId: 'call-connected-1',
+      stage: 'media_connected',
+      reason: 'host-srflx,iceRestarts:0,cache:1',
+    }));
 
     // Repeated state callbacks (and the connection-state callback firing for
     // the same event) must not re-report.
