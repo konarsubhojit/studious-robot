@@ -50,8 +50,8 @@ WITH "last_messages" AS (
 	SELECT DISTINCT ON ("conversation_id")
 		"conversation_id",
 		"message_id",
-		LEAST("sender_id", "recipient_id") AS "participant_a",
-		GREATEST("sender_id", "recipient_id") AS "participant_b",
+		LEAST("sender_id" COLLATE "C", "recipient_id" COLLATE "C") AS "participant_a",
+		GREATEST("sender_id" COLLATE "C", "recipient_id" COLLATE "C") AS "participant_b",
 		"created_at"
 	FROM "messages"
 	ORDER BY "conversation_id", "created_at" DESC, "message_id" DESC

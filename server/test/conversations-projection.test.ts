@@ -15,8 +15,14 @@ test('conversations rebuild SQL is extracted from migration 0013', () => {
   assert.match(sql, /ORDER BY "conversation_id", "created_at" DESC, "message_id" DESC/);
   assert.match(sql, /WHERE "read_at" IS NULL/);
   assert.match(sql, /GROUP BY "conversation_id", "recipient_id"/);
-  assert.match(sql, /LEAST\("sender_id", "recipient_id"\) AS "participant_a"/);
-  assert.match(sql, /GREATEST\("sender_id", "recipient_id"\) AS "participant_b"/);
+  assert.match(
+    sql,
+    /LEAST\("sender_id" COLLATE "C", "recipient_id" COLLATE "C"\) AS "participant_a"/
+  );
+  assert.match(
+    sql,
+    /GREATEST\("sender_id" COLLATE "C", "recipient_id" COLLATE "C"\) AS "participant_b"/
+  );
   assert.doesNotMatch(sql, /split_part|string_to_array|regexp_split_to_array/i);
 });
 

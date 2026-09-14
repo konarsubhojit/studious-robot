@@ -29,20 +29,21 @@ const DATABASE_URL: string = rawDatabaseUrl;
 
 async function main() {
   const pool = new Pool({ connectionString: DATABASE_URL, max: 1 });
+  const client = await pool.connect();
 
   try {
-    await pool.query('BEGIN');
-    await pool.query('TRUNCATE TABLE "conversations"');
-    await pool.query(getConversationsBackfillSql());
-    await pool.query('COMMIT');
+    await client.query('BEGIN');
+    await client.query('TRUNCATE TABLE "conversations"');
+    await client.query(getConversationsBackfillSql());
+    await client.query('COMMIT');
     console.log('Rebuilt conversations projection from messages.');
   } catch (error) {
-    await pool.query('ROLLBACK').catch(() => {});
+    await client.query('ROLLBACK').catch(() => {});
     throw error;
   } finally {
+    client.release();
     await pool.end();
   }
 }
 
 await main();
-
