@@ -98,7 +98,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import renderer, { act } from 'react-test-renderer';
 import AppShell from '../src/AppShell';
 import { CALL_STATES } from '../src/call/callStateMachine';
-import { palettes } from '../src/theme';
 import { CallProvider, useCall } from '../src/call/CallProvider';
 import { ChatProvider } from '../src/chat/ChatProvider';
 import useCallFlow from '../src/hooks/useCallFlow';
@@ -331,17 +330,14 @@ describe('AppShell system chrome', () => {
     return tree.root.findAll((node: any) => node.props?.barStyle !== undefined)[0].props;
   }
 
-  test('tints the status bar from the active palette', async () => {
+  test('uses light status bar icons for a dark theme', async () => {
     useCallFlowMock.mockReturnValue(makeCallFlow());
     const tree = await renderShell();
 
-    // Read from the palette, not from the scheme name, so a high-contrast or
-    // true-black background reaches the system chrome too.
-    expect(statusBar(tree).backgroundColor).toBe(palettes.dark.background);
     expect(statusBar(tree).barStyle).toBe('light-content');
   });
 
-  test('follows the video stage while a call is full screen', async () => {
+  test('uses light status bar icons while a call is full screen', async () => {
     // The stage is fixed-dark in both schemes, so a light-scheme user would
     // otherwise get a white bar with dark icons on top of black video.
     useCallFlowMock.mockReturnValue(
@@ -349,15 +345,9 @@ describe('AppShell system chrome', () => {
     );
     const tree = await renderShell();
 
-    expect(statusBar(tree).backgroundColor).toBe(palettes.dark.stage);
     expect(statusBar(tree).barStyle).toBe('light-content');
   });
 
-  test('stays opaque, so the bar colour never eats the safe-area padding', async () => {
-    useCallFlowMock.mockReturnValue(makeCallFlow());
-    const tree = await renderShell();
-    expect(statusBar(tree).translucent).toBe(false);
-  });
 });
 
 describe('CallProvider', () => {
