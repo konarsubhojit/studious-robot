@@ -706,19 +706,32 @@ up: if `DATABASE_URL` works, chat history works.
 
 One migration-time requirement: `0010_messages_table.sql` runs
 `CREATE EXTENSION IF NOT EXISTS pg_trgm`, which needs privileges the runtime
-role may not have. Run migrations with the owner connection —
-`DATABASE_URL_DIRECT`, which `drizzle.config.ts` already prefers:
+role may not have. `0012_search_extensions.sql` adds `btree_gin` for the same
+reason — it lets the participant columns (`sender_id`, `recipient_id`) live
+inside the trigram GIN index that backs `searchMessages`, so the search term
+is never probed against other users' messages. Run migrations with the owner
+connection — `DATABASE_URL_DIRECT`, which `drizzle.config.ts` already prefers:
 
 ```bash
 cd /opt/robot-signal/server && npm run db:migrate
 ```
 
-Verify the extension and the table afterwards:
+Verify the extensions and the table afterwards:
 
 ```bash
-psql "$DATABASE_URL_DIRECT" -c "select extname from pg_extension where extname = 'pg_trgm';"
+psql "$DATABASE_URL_DIRECT" -c "select extname from pg_extension where extname in ('pg_trgm','btree_gin');"
 psql "$DATABASE_URL_DIRECT" -c "\\d messages"
 ```
+
+Two index-build notes for `0012` on an already-large `messages` table:
+
+- `CREATE INDEX CONCURRENTLY` is the safe option so the build doesn't hold
+  locks against live traffic, but Drizzle's migrator wraps each migration's
+  statements in a transaction and `CONCURRENTLY` cannot run inside one — it
+  would have to be run out-of-band, directly against `DATABASE_URL_DIRECT`.
+  The migration deliberately uses a plain `CREATE INDEX` instead.
+- Neon scales compute to zero when idle; pin the compute size while the two
+  new GIN indexes build so the migration doesn't stall mid-build.
 
 Chat history is **not** pruned by default: the retention sweep skips
 `messages` unless `MESSAGE_RETENTION_MS` is set to a non-zero window. That is

@@ -249,6 +249,14 @@ const messages = pgTable(
     // the folded body; see migration 0010 for the extension it requires.
     index('idx_messages_body_trgm')
       .using('gin', sql`lower(${t.body}) gin_trgm_ops`),
+    // `searchMessages` always scopes to a participant as well as the term.
+    // `btree_gin` (migration 0012) lets the scalar participant column live in
+    // the same GIN index, so the term is never probed across other users'
+    // messages.
+    index('idx_messages_sender_body_trgm')
+      .using('gin', t.senderId, sql`lower(${t.body}) gin_trgm_ops`),
+    index('idx_messages_recipient_body_trgm')
+      .using('gin', t.recipientId, sql`lower(${t.body}) gin_trgm_ops`),
   ],
 );
 
