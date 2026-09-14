@@ -212,6 +212,13 @@ async function explain(pool: Pool, label: string, sqlText: string, params: unkno
 
 async function main() {
   const tmpDb = `listconv_measure_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  // `tmpDb` is always our own `[a-z0-9_]` literal, never external input, but
+  // asserting the shape before it's interpolated into DDL (identifiers can't
+  // be bound as query parameters) keeps that invariant enforced rather than
+  // just assumed.
+  if (!/^[a-z0-9_]+$/.test(tmpDb)) {
+    throw new Error(`Unexpected scratch database name: ${tmpDb}`);
+  }
   const ownerUrl = new URL(OWNER_URL as string);
   const admin = new Pool({ connectionString: OWNER_URL });
 
