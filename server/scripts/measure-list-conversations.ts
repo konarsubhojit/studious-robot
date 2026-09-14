@@ -19,6 +19,10 @@
  *
  * The script creates `listconv_measure_<random>`, migrates it, seeds it, runs
  * the measurements, and drops it in a `finally` — never touches app data.
+ *
+ * Delete this file once the measurements for konarsubhojit/studious-robot#391
+ * have been captured and posted — it exists to produce that one-time
+ * evidence, not to become permanent tooling.
  */
 
 import { randomUUID } from 'crypto';
