@@ -12,23 +12,31 @@
  * Prefer `DATABASE_URL_DIRECT` so the rebuild uses an unpooled connection. On
  * Neon, pin the compute size while this runs: the derivation scans `messages`
  * once and should not be stretched by scale-to-zero/autoscaling noise.
+ *
+ * The transaction takes an ACCESS EXCLUSIVE lock on `conversations` from
+ * `TRUNCATE` until commit, so reads and writes to the projection are blocked
+ * while the backfill runs.
  */
 
+import { pathToFileURL } from 'node:url';
 import { Pool } from 'pg';
 
 import { getConversationsBackfillSql } from '../db/conversationsProjectionBackfill.ts';
 
-const rawDatabaseUrl = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
+type RebuildClient = {
+  query: (sql: string) => Promise<unknown>;
+  release: () => void;
+};
 
-if (!rawDatabaseUrl) {
-  console.error('Set DATABASE_URL_DIRECT (or DATABASE_URL) before rebuilding conversations.');
-  process.exit(1);
-}
+type RebuildPool = {
+  connect: () => Promise<RebuildClient>;
+  end: () => Promise<void>;
+};
 
-const DATABASE_URL: string = rawDatabaseUrl;
-
-async function main() {
-  const pool = new Pool({ connectionString: DATABASE_URL, max: 1 });
+export async function rebuildConversations(
+  pool: RebuildPool,
+  backfillSql: string = getConversationsBackfillSql()
+) {
   const client = await pool.connect();
 
   try {
@@ -42,8 +50,26 @@ async function main() {
     throw error;
   } finally {
     client.release();
+  }
+}
+
+async function main() {
+  const rawDatabaseUrl = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
+
+  if (!rawDatabaseUrl) {
+    console.error('Set DATABASE_URL_DIRECT (or DATABASE_URL) before rebuilding conversations.');
+    process.exit(1);
+  }
+
+  const pool = new Pool({ connectionString: rawDatabaseUrl, max: 1 });
+
+  try {
+    await rebuildConversations(pool);
+  } finally {
     await pool.end();
   }
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

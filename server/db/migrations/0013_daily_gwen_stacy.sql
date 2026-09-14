@@ -36,6 +36,11 @@ CREATE INDEX "idx_conversations_b" ON "conversations" USING btree ("participant_
 -- than parsed from `conversation_id`: the id format uses ':' today, but a user
 -- id could contain that separator, while each message row already stores both
 -- participants losslessly.
+--
+-- Tombstoned messages deliberately stay visible to both halves of the
+-- projection: the latest-message pointer is just a pointer to `messages`, and
+-- unread counting matches the existing listConversations rule of
+-- `recipient_id` plus `read_at IS NULL`.
 -- conversations-backfill:start
 INSERT INTO "conversations" (
 	"conversation_id",

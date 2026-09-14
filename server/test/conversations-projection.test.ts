@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
 
 import {
   extractConversationsBackfillSql,
   getConversationsBackfillSql,
 } from '../db/conversationsProjectionBackfill.ts';
+import { rebuildConversations } from '../scripts/rebuild-conversations.ts';
 
 test('conversations rebuild SQL is extracted from migration 0013', () => {
   const sql = getConversationsBackfillSql();
@@ -40,11 +40,31 @@ test('conversations backfill extraction rejects missing or malformed blocks', ()
   );
 });
 
-test('rebuild script uses the shared migration backfill extractor', () => {
-  const script = readFileSync(
-    new URL('../scripts/rebuild-conversations.ts', import.meta.url),
-    'utf8'
-  );
+test('rebuild script runs the shared migration backfill SQL inside one transaction', async () => {
+  const queries: string[] = [];
+  const released: boolean[] = [];
+  const client = {
+    async query(sql: string) {
+      queries.push(sql);
+    },
+    release() {
+      released.push(true);
+    },
+  };
+  const pool = {
+    async connect() {
+      return client;
+    },
+    async end() {},
+  };
 
-  assert.match(script, /getConversationsBackfillSql/);
+  await rebuildConversations(pool);
+
+  assert.deepEqual(queries, [
+    'BEGIN',
+    'TRUNCATE TABLE "conversations"',
+    getConversationsBackfillSql(),
+    'COMMIT',
+  ]);
+  assert.deepEqual(released, [true]);
 });
