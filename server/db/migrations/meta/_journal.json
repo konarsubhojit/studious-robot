@@ -85,6 +85,13 @@
       "when": 1788800000000,
       "tag": "0011_account_deletions",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789356693065,
+      "tag": "0012_search_extensions",
+      "breakpoints": true
     }
   ]
 }
