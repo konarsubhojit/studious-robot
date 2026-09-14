@@ -28,8 +28,10 @@ const PUSH_RECEIPT_STAGES = new Set([
   'permissions_checked',
   'media_acquired',
   'peer_connection_ready',
+  'offer_sent',
   'answer_sent',
   'media_connected',
+  'connection_created',
 ]);
 
 /**

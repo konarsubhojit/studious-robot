@@ -1,8 +1,11 @@
 import { RTC_ACTIVE_CALL_STATES, SIGNALING_VERSION, CONNECTED_CALL_STATUS } from '../config.ts';
-import { normaliseId } from '../lib/normalize.ts';
+import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
 import { recordCallHeartbeat } from '../domain/calls.ts';
 import { notifyCallTransition, emitToUserSockets } from '../domain/notifications.ts';
 import { hydrateCallFromShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
+import { userRoom } from '../lib/state.ts';
+import { describeError } from '../lib/errors.ts';
+import { verboseLog } from '../lib/verbose.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
 import { bufferRtcSignal, countBufferedRtcSignals, flushBufferedRtcSignals, isBufferableSignal } from './rtcBuffer.ts';
 import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
@@ -219,20 +222,101 @@ function holdOrRejectRtcSignal(socket: import('socket.io').Socket, ack: Function
 /**
  * Move an accepted call to `connecting_media` on its first RTC frame, and
  * release anything buffered while it was still ringing.
+ *
+ * @param eventName - Which frame moved it. An offer and a stray trickled
+ *   candidate promote the call identically, so without this the transition
+ *   log cannot say whether the caller's SDP ever arrived — precisely the
+ *   question a call stuck in `connecting_media` raises.
  */
 async function promoteToConnectingMedia(
   state: import('../stores/contracts.ts').ServerState,
   io: any,
   callId: string,
-  userId: string
+  userId: string,
+  eventName: string
 ): Promise<void> {
   const previousStatus = 'accepted';
   const result = await transitionCallWithShared(state, callId, 'connecting_media', { actor: userId });
   if (!result.ok) return;
   if (!result.stale && previousStatus !== result.call.status) {
     notifyCallTransition(io, state, result.call, { previousStatus, actor: userId });
+    console.log(
+      `[calls] call.connecting_media callId=${callId} trigger=${eventName}` +
+        ` actor=${sanitizeForLog(userId)}`
+    );
   }
   flushBufferedRtcSignals(io, state, callId, result.call.status);
+}
+
+/**
+ * Events whose delivery is worth an adapter round trip to confirm.
+ *
+ * Counting recipients means asking the Socket.IO adapter who is in a room,
+ * which on a fleet is a Redis request. The SDP frames are one or two per call,
+ * so the cost is negligible and the answer is the one that matters: an offer
+ * relayed to nobody is a call that will sit in `connecting_media` until the
+ * media timeout. Candidates are trickled by the dozen and are deliberately
+ * left uncounted — they are still counted as *relays*, just without recipient
+ * cardinality.
+ */
+const RECIPIENT_COUNTED_EVENTS = new Set<string>([
+  CLIENT_EVENTS.RTC_OFFER,
+  CLIENT_EVENTS.RTC_ANSWER,
+]);
+
+/**
+ * How many sockets the user's room holds, across every instance.
+ *
+ * @returns the count, or `null` when it was not taken (high-rate event) or
+ *   could not be taken (the adapter failed). `null` is deliberately distinct
+ *   from `0`: "nobody was there" is a finding, "we did not look" is not.
+ */
+async function countRoomRecipients(io: any, userId: string, eventName: string): Promise<number | null> {
+  if (!RECIPIENT_COUNTED_EVENTS.has(eventName)) return null;
+  try {
+    const sockets = await io.in(userRoom(userId)).fetchSockets();
+    return Array.isArray(sockets) ? sockets.length : null;
+  } catch (error: unknown) {
+    // Never gate the relay on the diagnostic: a frame that cannot be counted
+    // must still be forwarded.
+    console.error(`[signaling] rtc.relay recipient lookup failed: ${describeError(error)}`);
+    return null;
+  }
+}
+
+/**
+ * Record and log one relay.
+ *
+ * The SDP frames are logged at normal level rather than behind
+ * `VERBOSE_LOGGING`, because the absence of this line is the only evidence
+ * that an offer or answer never reached the server — and verbose logging is
+ * never on when the incident happens. Candidates are trickled by the dozen, so
+ * they are counted at normal level but logged only when verbose logging is on:
+ * a per-candidate line would bury the two lines that matter.
+ */
+function logRtcRelay(state: import('../stores/contracts.ts').ServerState, options: {
+        eventName: string;
+        callId: string;
+        fromUserId: string;
+        toUserId: string;
+        recipients: number | null;
+    }): void {
+  state.telemetry?.recordRtcRelay(options.eventName, options.recipients);
+  const line =
+    `[signaling] rtc.relay event=${options.eventName} callId=${options.callId}` +
+    ` from=${sanitizeForLog(options.fromUserId)} to=${sanitizeForLog(options.toUserId)}` +
+    ` instance=${sanitizeForLog(state.instanceId ?? 'unknown')}` +
+    ` recipients=${options.recipients ?? 'unmeasured'}`;
+  if (RECIPIENT_COUNTED_EVENTS.has(options.eventName)) {
+    console.log(line);
+    return;
+  }
+  verboseLog('signaling', 'rtc.relay', {
+    event: options.eventName,
+    callId: options.callId,
+    fromUserId: options.fromUserId,
+    toUserId: options.toUserId,
+  });
 }
 
 async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
@@ -318,7 +402,7 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
   }
 
   if (current.status === 'accepted') {
-    await promoteToConnectingMedia(options.state, options.io, callId, userId);
+    await promoteToConnectingMedia(options.state, options.io, callId, userId, options.eventName);
   }
 
   // A connected client relays its liveness over this channel every 30s, which
@@ -341,7 +425,18 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
     fromUserId: userId,
     [options.dataKey]: value,
   };
+  // Taken *before* the emit so the count describes the room the frame was
+  // about to be broadcast into, and awaited only for the SDP frames — see
+  // `countRoomRecipients`.
+  const recipients = await countRoomRecipients(options.io, peerUserId, options.eventName);
   emitToUserSockets(options.io, peerUserId, options.eventName, relayPayload);
+  logRtcRelay(options.state, {
+    eventName: options.eventName,
+    callId,
+    fromUserId: userId,
+    toUserId: peerUserId,
+    recipients,
+  });
   acknowledgeSuccess(socket, ack, options.eventName, { callId });
 }
 

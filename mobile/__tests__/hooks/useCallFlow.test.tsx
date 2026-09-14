@@ -5,6 +5,7 @@ import useCallFlow, {
   CALL_PHASES,
   CALL_END_REASON_LABELS,
   MEDIA_STATE_RELAY_DEBOUNCE_MS,
+  OFFER_ANSWER_TIMEOUT_MS,
 } from '../../src/hooks/useCallFlow';
 import type { PeerTrackEvent, WebrtcMediaStream } from '../../src/hooks/useCallFlow';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
@@ -3503,6 +3504,101 @@ describe('useCallFlow chat', () => {
         mediaState: { isScreenSharing: true, isVideoEnabled: false },
       },
     ]);
+  });
+
+  test('an unanswered offer is re-sent, and each attempt reports an offer_sent receipt', async () => {
+    // The incident this guards against: the server relays the offer into the
+    // callee's user room and acks `ok` whether or not a socket is there, so a
+    // one-shot offer that is never delivered leaves the call in
+    // `connecting_media` until the server's 90s media timeout.
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    const { resultRef, tree } = await renderWithSocket();
+
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+    (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
+      addTrack: jest.fn(),
+      addIceCandidate: jest.fn(),
+      close: jest.fn(),
+      createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: '' }),
+      setLocalDescription: jest.fn().mockResolvedValue(undefined),
+      localDescription: { type: 'offer', sdp: '' },
+      getSenders: jest.fn(() => []),
+    }));
+
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+    const offerEmits: any[] = [];
+    socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
+      if (event === 'call.initiate') {
+        cb?.({
+          ok: true,
+          call: { callId: 'call-offer-retry', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
+        });
+        return;
+      }
+      if (event === 'rtc.offer') offerEmits.push(payload);
+      cb?.({ ok: true });
+    });
+
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'accepted',
+        call: {
+          callId: 'call-offer-retry',
+          callerId: 'alice',
+          calleeId: 'bob',
+          status: 'accepted',
+        },
+      });
+    });
+    await act(async () => {});
+
+    expect(offerEmits).toHaveLength(1);
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-offer-retry',
+        stage: 'offer_sent',
+        reason: 'attempt:1',
+      }),
+    );
+
+    // No answer arrives, so the offer is re-sent rather than waiting out the
+    // server-side timeout.
+    await act(async () => {
+      jest.advanceTimersByTime(OFFER_ANSWER_TIMEOUT_MS);
+      await Promise.resolve();
+    });
+    await act(async () => {});
+
+    expect(offerEmits).toHaveLength(2);
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'offer_sent', reason: 'attempt:2' }),
+    );
+
+    // Retrying is bounded: the third attempt is the last, and the call is left
+    // to the server's media timeout rather than re-offered forever.
+    await act(async () => {
+      jest.advanceTimersByTime(OFFER_ANSWER_TIMEOUT_MS * 3);
+      await Promise.resolve();
+    });
+    await act(async () => {});
+    expect(offerEmits).toHaveLength(3);
   });
 
   test('holds the media-state snapshot until the call leaves ringing, then relays it once', async () => {
