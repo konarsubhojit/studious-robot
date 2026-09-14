@@ -15,6 +15,8 @@ test('conversations rebuild SQL is extracted from migration 0013', () => {
   assert.match(sql, /ORDER BY "conversation_id", "created_at" DESC, "message_id" DESC/);
   assert.match(sql, /WHERE "read_at" IS NULL/);
   assert.match(sql, /GROUP BY "conversation_id", "recipient_id"/);
+  assert.match(sql, /LEFT JOIN "unread_counts" AS "unread_a"/);
+  assert.match(sql, /LEFT JOIN "unread_counts" AS "unread_b"/);
   assert.match(
     sql,
     /LEAST\("sender_id" COLLATE "C", "recipient_id" COLLATE "C"\) AS "participant_a"/
@@ -29,7 +31,7 @@ test('conversations rebuild SQL is extracted from migration 0013', () => {
 test('conversations backfill extraction rejects missing or malformed blocks', () => {
   assert.throws(
     () => extractConversationsBackfillSql('SELECT 1;'),
-    /Could not find conversations backfill block/
+    /Missing "-- conversations-backfill:start" marker/
   );
   assert.throws(
     () =>
@@ -58,12 +60,14 @@ test('rebuild script runs the shared migration backfill SQL inside one transacti
     async end() {},
   };
 
-  await rebuildConversations(pool);
+  const backfillSql = 'INSERT INTO "conversations" SELECT injected';
+
+  await rebuildConversations(pool, backfillSql);
 
   assert.deepEqual(queries, [
     'BEGIN',
     'TRUNCATE TABLE "conversations"',
-    getConversationsBackfillSql(),
+    backfillSql,
     'COMMIT',
   ]);
   assert.deepEqual(released, [true]);

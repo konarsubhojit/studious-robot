@@ -42,7 +42,7 @@ export async function rebuildConversations(
   try {
     await client.query('BEGIN');
     await client.query('TRUNCATE TABLE "conversations"');
-    await client.query(getConversationsBackfillSql());
+    await client.query(backfillSql);
     await client.query('COMMIT');
     console.log('Rebuilt conversations projection from messages.');
   } catch (error) {

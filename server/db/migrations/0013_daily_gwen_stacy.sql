@@ -77,22 +77,18 @@ SELECT
 	"last_messages"."message_id",
 	"last_messages"."created_at",
 	COALESCE(
-		SUM("unread_counts"."unread_count")
-			FILTER (WHERE "unread_counts"."recipient_id" = "last_messages"."participant_a"),
+		"unread_a"."unread_count",
 		0
 	)::int AS "unread_a",
 	COALESCE(
-		SUM("unread_counts"."unread_count")
-			FILTER (WHERE "unread_counts"."recipient_id" = "last_messages"."participant_b"),
+		"unread_b"."unread_count",
 		0
 	)::int AS "unread_b"
 FROM "last_messages"
-LEFT JOIN "unread_counts"
-	ON "unread_counts"."conversation_id" = "last_messages"."conversation_id"
-GROUP BY
-	"last_messages"."conversation_id",
-	"last_messages"."participant_a",
-	"last_messages"."participant_b",
-	"last_messages"."message_id",
-	"last_messages"."created_at";
+LEFT JOIN "unread_counts" AS "unread_a"
+	ON "unread_a"."conversation_id" = "last_messages"."conversation_id"
+	AND "unread_a"."recipient_id" = "last_messages"."participant_a"
+LEFT JOIN "unread_counts" AS "unread_b"
+	ON "unread_b"."conversation_id" = "last_messages"."conversation_id"
+	AND "unread_b"."recipient_id" = "last_messages"."participant_b";
 -- conversations-backfill:end

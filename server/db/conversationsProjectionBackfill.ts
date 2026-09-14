@@ -19,8 +19,16 @@ export function extractConversationsBackfillSql(migrationSql: string): string {
   const start = migrationSql.indexOf(CONVERSATIONS_BACKFILL_START);
   const end = migrationSql.indexOf(CONVERSATIONS_BACKFILL_END);
 
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error('Could not find conversations backfill block in migration 0013');
+  if (start === -1) {
+    throw new Error(`Missing "${CONVERSATIONS_BACKFILL_START}" marker in migration 0013`);
+  }
+
+  if (end === -1) {
+    throw new Error(`Missing "${CONVERSATIONS_BACKFILL_END}" marker in migration 0013`);
+  }
+
+  if (end <= start) {
+    throw new Error('Conversations backfill end marker appears before start marker in migration 0013');
   }
 
   const sql = migrationSql
