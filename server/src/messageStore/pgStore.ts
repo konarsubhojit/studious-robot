@@ -25,7 +25,7 @@
  */
 
 import { and, asc, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
-import { messages as messagesTable } from '../../db/schema.ts';
+import { conversations as conversationsTable, messages as messagesTable } from '../../db/schema.ts';
 import {
   clampExportReadLimit,
   clampLimit,
