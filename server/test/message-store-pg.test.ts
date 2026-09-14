@@ -6,9 +6,10 @@
  * rolled builder double that would happily agree with a query the database
  * would reject. That matters here because the store's whole reason to exist is
  * that it pushes work into the database: if `listConversations` silently stops
- * emitting `DISTINCT ON`, or the search predicate stops matching the shape of
- * the trigram index, the queries still *run* and still return plausible rows —
- * they just do so by scanning the table. Only the statement text catches that.
+ * reading its bounded projection, or the search predicate stops matching the
+ * shape of the trigram index, the queries still *run* and still return plausible
+ * rows — they just do so by scanning the table. Only the statement text catches
+ * that.
  *
  * Behaviour that is identical across backends (page bounds, reaction merging,
  * tombstones, conversation grouping) is covered once, over plain data, in
@@ -205,7 +206,7 @@ test('listUserMessages refuses an unscoped export', async () => {
 
 // ─── listConversations ────────────────────────────────────────────────────────
 
-test('listConversations resolves the whole summary in one statement', async () => {
+test('listConversations reads a bounded projection page and joins its message pointers', async () => {
   const { store, queries } = createRecordingStore([
     [
       toTuple(messageRow({ conversationId: 'alice:bob', senderId: 'bob', recipientId: 'alice' }), 3),
@@ -225,12 +226,21 @@ test('listConversations resolves the whole summary in one statement', async () =
 
   assert.equal(queries.length, 1, 'a conversation list must not fan out into per-conversation reads');
   const [query] = queries;
-  assert.match(query.text, /select distinct on \("messages"\."conversation_id"\)/);
-  assert.match(query.text, /count\(\*\)::int/);
-  assert.match(query.text, /"messages"\."read_at" is null/);
-  assert.match(query.text, /left join/);
-  // Bounded: the previous implementation read every message the user had ever
-  // exchanged and grouped them in application code.
+  assert.doesNotMatch(query.text, /select distinct on|count\(\*\)::int/);
+  assert.match(query.text, /from "conversations"/);
+  assert.match(query.text, /"conversations"\."participant_a" = \$\d+ or "conversations"\."participant_b" = \$\d+/);
+  assert.match(
+    query.text,
+    /order by "conversations"\."last_created_at" desc, "conversations"\."last_message_id" desc limit \$\d+/
+  );
+  assert.match(
+    query.text,
+    /inner join "messages" on \("messages"\."conversation_id" = "selected_conversations"\."conversation_id" and "messages"\."message_id" = "selected_conversations"\."last_message_id"\)/
+  );
+  assert.match(
+    query.text,
+    /case when "participant_a" = \$\d+\s+then "unread_a" else "unread_b" end/
+  );
   assert.equal(query.params.at(-1), 100);
 
   assert.deepEqual(

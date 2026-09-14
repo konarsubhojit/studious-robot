@@ -7,10 +7,8 @@
  *
  * What moving to Postgres buys, beyond one fewer database:
  *
- *   - `listConversations` is a single `DISTINCT ON` query with the unread count
- *     joined in, instead of a fan-out read followed by `summariseConversations`
- *     grouping in application code — which had no bound at all on the number of
- *     rows it pulled back.
+ *   - `listConversations` reads a bounded page from its one-row-per-conversation
+ *     projection, then joins those message pointers back to the source table.
  *   - `searchMessages` filters and pages *in the database*, instead of fetching
  *     every candidate and slicing.
  *   - There is no `conversation_index` collection to keep consistent by hand,
@@ -24,7 +22,7 @@
  * escaped for a regex before.
  */
 
-import { and, asc, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import { conversations as conversationsTable, messages as messagesTable } from '../../db/schema.ts';
 import {
   clampExportReadLimit,
@@ -394,52 +392,62 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
     },
 
     async listConversations(userId: string): Promise<ConversationSummary[]> {
-      // One query: `DISTINCT ON` picks each conversation's newest message, and
-      // the unread count is a correlated aggregate over the partial index.
-      // Previously this read every message the user had ever exchanged and
-      // grouped them in application code.
-      const lastMessages = db
-        .selectDistinctOn([messagesTable.conversationId])
-        .from(messagesTable)
-        .where(byParticipant(userId))
-        .orderBy(
-          asc(messagesTable.conversationId),
-          desc(messagesTable.createdAt),
-          desc(messagesTable.messageId)
-        )
-        .as('last_messages');
-
-      const unreadCounts = db
+      // Bound the projection scan before touching `messages`: its participant
+      // indexes supply this ordering directly, and the join below is therefore
+      // at most MAX_CONVERSATION_LIMIT primary-key lookups.
+      const selectedConversations = db
         .select({
-          conversationId: messagesTable.conversationId,
-          unreadCount: sql<number>`count(*)::int`.as('unread_count'),
+          conversationId: conversationsTable.conversationId,
+          lastMessageId: conversationsTable.lastMessageId,
+          lastCreatedAt: conversationsTable.lastCreatedAt,
+          unreadCount: sql<number>`case when ${conversationsTable.participantA} = ${userId}
+            then ${conversationsTable.unreadA} else ${conversationsTable.unreadB} end`.as(
+            'unread_count'
+          ),
         })
-        .from(messagesTable)
-        .where(and(eq(messagesTable.recipientId, userId), isNull(messagesTable.readAt)))
-        .groupBy(messagesTable.conversationId)
-        .as('unread_counts');
+        .from(conversationsTable)
+        .where(
+          or(
+            eq(conversationsTable.participantA, userId),
+            eq(conversationsTable.participantB, userId)
+          )
+        )
+        .orderBy(
+          desc(conversationsTable.lastCreatedAt),
+          desc(conversationsTable.lastMessageId)
+        )
+        .limit(MAX_CONVERSATION_LIMIT)
+        .as('selected_conversations');
 
       const rows = await db
         .select({
-          conversationId: lastMessages.conversationId,
-          messageId: lastMessages.messageId,
-          senderId: lastMessages.senderId,
-          recipientId: lastMessages.recipientId,
-          body: lastMessages.body,
-          type: lastMessages.type,
-          attachment: lastMessages.attachment,
-          replyTo: lastMessages.replyTo,
-          reactions: lastMessages.reactions,
-          deliveredTo: lastMessages.deliveredTo,
-          readAt: lastMessages.readAt,
-          deletedAt: lastMessages.deletedAt,
-          createdAt: lastMessages.createdAt,
-          unreadCount: unreadCounts.unreadCount,
+          conversationId: messagesTable.conversationId,
+          messageId: messagesTable.messageId,
+          senderId: messagesTable.senderId,
+          recipientId: messagesTable.recipientId,
+          body: messagesTable.body,
+          type: messagesTable.type,
+          attachment: messagesTable.attachment,
+          replyTo: messagesTable.replyTo,
+          reactions: messagesTable.reactions,
+          deliveredTo: messagesTable.deliveredTo,
+          readAt: messagesTable.readAt,
+          deletedAt: messagesTable.deletedAt,
+          createdAt: messagesTable.createdAt,
+          unreadCount: selectedConversations.unreadCount,
         })
-        .from(lastMessages)
-        .leftJoin(unreadCounts, eq(lastMessages.conversationId, unreadCounts.conversationId))
-        .orderBy(desc(lastMessages.createdAt), desc(lastMessages.messageId))
-        .limit(MAX_CONVERSATION_LIMIT);
+        .from(selectedConversations)
+        .innerJoin(
+          messagesTable,
+          and(
+            eq(messagesTable.conversationId, selectedConversations.conversationId),
+            eq(messagesTable.messageId, selectedConversations.lastMessageId)
+          )
+        )
+        .orderBy(
+          desc(selectedConversations.lastCreatedAt),
+          desc(selectedConversations.lastMessageId)
+        );
 
       return rows.map((row) => {
         const lastMessage = toStoredMessage(row as MessageRow);
