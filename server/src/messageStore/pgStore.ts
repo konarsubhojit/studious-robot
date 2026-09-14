@@ -46,6 +46,13 @@ import type {
 type MessageRow = typeof messagesTable.$inferSelect;
 
 /**
+ * The handle passed into `db.transaction(...)`. Derived rather than imported
+ * from `drizzle-orm/pg-core` directly, so it always matches whatever
+ * generics `Database` is instantiated with.
+ */
+type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+/**
  * Escape the `LIKE` metacharacters in a user-supplied search term.
  *
  * Without this, a term containing `%` matches everything and one containing `_`
@@ -130,6 +137,79 @@ function byParticipant(userId: string) {
 }
 
 /**
+ * Sort two participant ids the same way `deriveConversationId` does.
+ *
+ * The projection's `participant_a`/`participant_b` columns exist so a
+ * participant's unread counter is addressable by a plain string comparison
+ * ("am I A or B?") rather than another lookup; that only holds if every writer
+ * sorts the pair identically.
+ */
+function sortedParticipants(userA: string, userB: string): [string, string] {
+  return userA < userB ? [userA, userB] : [userB, userA];
+}
+
+/**
+ * Advance the conversation-list projection for one newly-inserted message, in
+ * the same transaction as the insert.
+ *
+ * Two invariants, enforced by two separate statements rather than folded into
+ * one `ON CONFLICT DO UPDATE`, because they have different guards:
+ *
+ *   - The last-message pointer is order-sensitive: an out-of-order arrival or
+ *     a concurrent writer must not let an older message overwrite a newer
+ *     preview. The row-value comparison mirrors the `(created_at, message_id)`
+ *     tie-break used throughout this module. Gating the whole conflict action
+ *     on that guard (`setWhere`) is exactly what a single upsert can express.
+ *   - The unread bump is *not* order-sensitive: an older message that loses
+ *     the pointer race is still unread, so it must count regardless of
+ *     whether the guard above fired. That cannot share the guarded statement —
+ *     a `setWhere` that is false skips the whole `DO UPDATE`, unread column
+ *     included — so it is a second, unconditional statement.
+ *
+ * Both run only when this call performed the insert (see `saveMessageWithStatus`):
+ * a replay of an already-stored message must not double-count unread.
+ */
+async function advanceConversationProjection(tx: Tx, record: StoredMessage): Promise<void> {
+  const [participantA, participantB] = sortedParticipants(record.senderId, record.recipientId);
+  const recipientIsA = record.recipientId === participantA;
+
+  // Ensure the row exists, and move the last-message pointer forward only if
+  // this message is newer than whatever it currently points at. The unread
+  // counters are seeded at zero here — even for a brand-new row — because the
+  // increment below always accounts for this message; seeding one at 1 would
+  // double-count it for a fresh conversation.
+  await tx
+    .insert(conversationsTable)
+    .values({
+      conversationId: record.conversationId,
+      participantA,
+      participantB,
+      lastMessageId: record.messageId,
+      lastCreatedAt: record.createdAt,
+      unreadA: 0,
+      unreadB: 0,
+    })
+    .onConflictDoUpdate({
+      target: conversationsTable.conversationId,
+      set: {
+        lastMessageId: sql`excluded.last_message_id`,
+        lastCreatedAt: sql`excluded.last_created_at`,
+      },
+      setWhere: sql`(${conversationsTable.lastCreatedAt}, ${conversationsTable.lastMessageId})
+        < (excluded.last_created_at, excluded.last_message_id)`,
+    });
+
+  await tx
+    .update(conversationsTable)
+    .set(
+      recipientIsA
+        ? { unreadA: sql`${conversationsTable.unreadA} + 1` }
+        : { unreadB: sql`${conversationsTable.unreadB} + 1` }
+    )
+    .where(eq(conversationsTable.conversationId, record.conversationId));
+}
+
+/**
  * Build the Postgres-backed message store.
  *
  * @param db - Drizzle handle. Required: the caller decides whether Postgres is
@@ -139,26 +219,38 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
   const saveMessageWithStatus: MessageStore['saveMessageWithStatus'] = async (message) => {
     const record = createMessageRecord(message);
 
-    // Idempotent on `(conversationId, messageId)` — the primary key, and the
-    // pair a client replays from its durable outbox. `DO NOTHING` rather than
-    // an update: a replay must not overwrite the reactions, receipts or
-    // tombstone the original has accumulated since.
-    const inserted = await db
-      .insert(messagesTable)
-      .values(toInsertValues(record))
-      .onConflictDoNothing()
-      .returning();
+    // The insert and the projection update must land together: a crash or a
+    // concurrent instance between them would let the two disagree about
+    // whether a message counts as unread. `db.transaction` is Postgres
+    // `BEGIN`/`COMMIT` around both statements, not two independent ones.
+    return db.transaction(async (tx) => {
+      // Idempotent on `(conversationId, messageId)` — the primary key, and the
+      // pair a client replays from its durable outbox. `DO NOTHING` rather than
+      // an update: a replay must not overwrite the reactions, receipts or
+      // tombstone the original has accumulated since.
+      const inserted = await tx
+        .insert(messagesTable)
+        .values(toInsertValues(record))
+        .onConflictDoNothing()
+        .returning();
 
-    if (inserted.length > 0) return { message: toStoredMessage(inserted[0]), inserted: true };
+      if (inserted.length > 0) {
+        // Gated on an actual insert: a replay from the client's durable
+        // outbox resends the same `(conversationId, messageId)` and must not
+        // bump the unread counter a second time.
+        await advanceConversationProjection(tx, record);
+        return { message: toStoredMessage(inserted[0]), inserted: true };
+      }
 
-    // The insert was a no-op, so the message already exists; return the
-    // stored copy rather than the one that was just rejected.
-    const [existing] = await db
-      .select()
-      .from(messagesTable)
-      .where(byPrimaryKey(record.conversationId, record.messageId))
-      .limit(1);
-    return { message: existing ? toStoredMessage(existing) : record, inserted: false };
+      // The insert was a no-op, so the message already exists; return the
+      // stored copy rather than the one that was just rejected.
+      const [existing] = await tx
+        .select()
+        .from(messagesTable)
+        .where(byPrimaryKey(record.conversationId, record.messageId))
+        .limit(1);
+      return { message: existing ? toStoredMessage(existing) : record, inserted: false };
+    });
   };
 
   return {
@@ -364,18 +456,41 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
     },
 
     async markRead(conversationId: string, userId: string) {
-      const updated = await db
-        .update(messagesTable)
-        .set({ readAt: nextTimestamp() })
-        .where(
-          and(
-            eq(messagesTable.conversationId, conversationId),
-            eq(messagesTable.recipientId, userId),
-            isNull(messagesTable.readAt)
+      // Flipping the messages and zeroing the reader's counter must land
+      // together, or a crash between them leaves the counter stale until the
+      // next message re-derives it.
+      return db.transaction(async (tx) => {
+        const updated = await tx
+          .update(messagesTable)
+          .set({ readAt: nextTimestamp() })
+          .where(
+            and(
+              eq(messagesTable.conversationId, conversationId),
+              eq(messagesTable.recipientId, userId),
+              isNull(messagesTable.readAt)
+            )
           )
-        )
-        .returning({ messageId: messagesTable.messageId });
-      return updated.length;
+          .returning({ messageId: messagesTable.messageId });
+
+        // Set to zero rather than decrementing by `updated.length`: the
+        // predicate above is already "every unread message addressed to this
+        // user in this conversation", so zero is exactly right and, unlike a
+        // decrement, is self-healing against any drift concurrency caused.
+        // Which column depends on whether this reader sorts before or after
+        // their peer, so it is a string comparison against the stored
+        // participant columns rather than another lookup.
+        await tx
+          .update(conversationsTable)
+          .set({
+            unreadA: sql`case when ${conversationsTable.participantA} = ${userId}
+              then 0 else ${conversationsTable.unreadA} end`,
+            unreadB: sql`case when ${conversationsTable.participantB} = ${userId}
+              then 0 else ${conversationsTable.unreadB} end`,
+          })
+          .where(eq(conversationsTable.conversationId, conversationId));
+
+        return updated.length;
+      });
     },
 
     async deleteMessage(conversationId: string, messageId: string, userId: string) {

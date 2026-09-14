@@ -246,20 +246,38 @@ test('listConversations resolves the whole summary in one statement', async () =
 
 // ─── saveMessage ──────────────────────────────────────────────────────────────
 
-test('saveMessage inserts once and returns the stored row', async () => {
+test('saveMessage inserts once, updates the projection once, all inside one transaction', async () => {
   const stored = messageRow({ messageId: 'm-9', body: 'hi' });
-  const { store, queries } = createRecordingStore([[toTuple(stored)]]);
+  // [begin, insert into messages, insert into conversations, unread bump, commit]
+  const { store, queries } = createRecordingStore([[], [toTuple(stored)]]);
 
   const saved = await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
 
-  assert.equal(queries.length, 1, 'a fresh insert needs no follow-up read');
-  assert.match(queries[0].text, /insert into "messages"/);
-  assert.match(queries[0].text, /on conflict do nothing/);
+  assert.equal(queries.length, 5, 'the insert and the projection update share one transaction');
+  assert.equal(queries[0].text, 'begin');
+  assert.match(queries[1].text, /insert into "messages"/);
+  assert.match(queries[1].text, /on conflict do nothing/);
+  // The pointer update is guarded by the same row-value ordering tie-break
+  // used everywhere else in this module, so an out-of-order write can never
+  // clobber a newer preview.
+  assert.match(queries[2].text, /insert into "conversations"/);
+  assert.match(
+    queries[2].text,
+    /on conflict \("conversation_id"\) do update set "last_message_id" = excluded\.last_message_id, "last_created_at" = excluded\.last_created_at/
+  );
+  assert.match(
+    queries[2].text,
+    /where \("conversations"\."last_created_at", "conversations"\."last_message_id"\)\s*< \(excluded\.last_created_at, excluded\.last_message_id\)/
+  );
+  // Bob is the recipient and sorts after alice, so he is participant B and his
+  // half of the projection is the one that is bumped.
+  assert.match(queries[3].text, /update "conversations" set "unread_b" = "conversations"\."unread_b" \+ 1/);
+  assert.equal(queries[4].text, 'commit');
   assert.equal(saved.messageId, 'm-9');
   assert.equal(saved.conversationId, 'alice:bob');
 });
 
-test('a replayed message is not overwritten by the replay', async () => {
+test('a replayed message is not overwritten by the replay, and does not touch the projection', async () => {
   // A client resending from its durable outbox must not clobber the reactions
   // and receipts the original has accumulated since — hence DO NOTHING plus a
   // re-read, rather than an upsert.
@@ -269,7 +287,8 @@ test('a replayed message is not overwritten by the replay', async () => {
     deliveredTo: ['bob'],
     readAt: '2024-01-02T00:00:00.000Z',
   });
-  const { store, queries } = createRecordingStore([[], [toTuple(existing)]]);
+  // [begin, insert into messages (rejected), select the winner, commit]
+  const { store, queries } = createRecordingStore([[], [], [toTuple(existing)]]);
 
   const saved = await store.saveMessage({
     messageId: 'm-1',
@@ -278,11 +297,43 @@ test('a replayed message is not overwritten by the replay', async () => {
     body: 'hi',
   });
 
-  assert.equal(queries.length, 2, 'a rejected insert is followed by a read of the winner');
-  assert.match(queries[1].text, /select .* from "messages" where/s);
+  assert.equal(
+    queries.length,
+    4,
+    'a rejected insert is followed by a read of the winner, and no projection write'
+  );
+  assert.equal(queries[0].text, 'begin');
+  assert.match(queries[2].text, /select .* from "messages" where/s);
+  assert.equal(queries[3].text, 'commit');
+  // Idempotent replay must not double-count unread: no statement here touches
+  // "conversations" at all.
+  assert.ok(queries.every((query) => !query.text.includes('"conversations"')));
   assert.deepEqual(saved.reactions, { '👍': ['bob'] });
   assert.deepEqual(saved.deliveredTo, ['bob']);
   assert.equal(saved.readAt, '2024-01-02T00:00:00.000Z');
+});
+
+test('saveMessage bumps unread_a, not unread_b, when the recipient sorts first', async () => {
+  // "bob" < "carol", so bob is participant A regardless of who sent the
+  // message; sending to bob must bump unread_a.
+  const stored = messageRow({
+    conversationId: 'bob:carol',
+    senderId: 'carol',
+    recipientId: 'bob',
+    messageId: 'm-1',
+  });
+  const { store, queries } = createRecordingStore([[], [toTuple(stored)]]);
+
+  await store.saveMessage({
+    conversationId: 'bob:carol',
+    messageId: 'm-1',
+    senderId: 'carol',
+    recipientId: 'bob',
+    body: 'hi',
+  });
+
+  assert.deepEqual(queries[2].params.slice(0, 3), ['bob:carol', 'bob', 'carol']);
+  assert.match(queries[3].text, /update "conversations" set "unread_a" = "conversations"\."unread_a" \+ 1/);
 });
 
 // ─── Receipts ─────────────────────────────────────────────────────────────────
@@ -328,14 +379,31 @@ test('markDelivered warns when a caller omits the conversation id', async () => 
   assert.match(lines[0], /sequential scan/);
 });
 
-test('markRead returns how many messages it flipped', async () => {
-  const { store, queries } = createRecordingStore([[['m-1'], ['m-2']]]);
+test('markRead returns how many messages it flipped, and zeroes the reader\'s counter in the same transaction', async () => {
+  // [begin, update messages returning, update conversations, commit]
+  const { store, queries } = createRecordingStore([[], [['m-1'], ['m-2']]]);
 
   const count = await store.markRead('alice:bob', 'bob');
 
+  assert.equal(queries.length, 4, 'the flip and the counter reset share one transaction');
+  assert.equal(queries[0].text, 'begin');
   // Only the recipient's still-unread messages, which is exactly the partial
   // index `idx_messages_unread` covers.
-  assert.match(queries[0].text, /"messages"\."recipient_id" = \$\d+ and "messages"\."read_at" is null/);
+  assert.match(queries[1].text, /"messages"\."recipient_id" = \$\d+ and "messages"\."read_at" is null/);
+  // Zero, not a decrement by the flipped count: self-healing against any
+  // drift, and gated by a string comparison against the stored participant
+  // columns rather than another lookup for which side "bob" is on.
+  assert.match(queries[2].text, /update "conversations" set/);
+  assert.match(
+    queries[2].text,
+    /"unread_a" = case when "conversations"\."participant_a" = \$\d+\s*then 0 else "conversations"\."unread_a" end/
+  );
+  assert.match(
+    queries[2].text,
+    /"unread_b" = case when "conversations"\."participant_b" = \$\d+\s*then 0 else "conversations"\."unread_b" end/
+  );
+  assert.deepEqual(queries[2].params, ['bob', 'bob', 'alice:bob']);
+  assert.equal(queries[3].text, 'commit');
   assert.equal(count, 2);
 });
 
