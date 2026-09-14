@@ -136,16 +136,19 @@ async function growHotConversation(pool: Pool, alreadySeeded: number, targetTota
      SELECT
        $1,
        gen_random_uuid()::text,
-       CASE WHEN g % 2 = 0 THEN $2 ELSE $3 END,
-       CASE WHEN g % 2 = 0 THEN $3 ELSE $2 END,
+       CASE WHEN (g + $4) % 2 = 0 THEN $2 ELSE $3 END,
+       CASE WHEN (g + $4) % 2 = 0 THEN $3 ELSE $2 END,
        'hot conversation message ' || (g + $4),
        'text',
        '{}'::jsonb,
        '{}'::text[],
-       -- unread when the recipient is the measured user and g is odd: a
-       -- large, permanent unread backlog rather than one that clears itself.
+       -- unread when the recipient is the measured user and the message's
+       -- *global* index (offset by what's already seeded) is odd: keeps the
+       -- read/unread oscillation continuous across growth phases instead of
+       -- restarting it every time this function is called again, so the
+       -- backlog stays a stable, large, permanent fraction of the total.
        CASE
-         WHEN (CASE WHEN g % 2 = 0 THEN $3 ELSE $2 END) = $5 AND g % 2 = 1
+         WHEN (CASE WHEN (g + $4) % 2 = 0 THEN $3 ELSE $2 END) = $5 AND (g + $4) % 2 = 1
            THEN NULL
          ELSE now()
        END,
