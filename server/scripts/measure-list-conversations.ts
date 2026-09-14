@@ -222,54 +222,64 @@ async function main() {
   const ownerUrl = new URL(OWNER_URL as string);
   const admin = new Pool({ connectionString: OWNER_URL });
 
-  console.log(`Creating scratch database ${tmpDb}...`);
-  await admin.query(`CREATE DATABASE "${tmpDb}"`);
-
-  const tmpUrl = new URL(ownerUrl.toString());
-  tmpUrl.pathname = `/${tmpDb}`;
-  const pool = new Pool({ connectionString: tmpUrl.toString() });
-
   try {
-    const db = drizzle(pool, { schema });
-    console.log('Applying migrations...');
-    await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+    console.log(`Creating scratch database ${tmpDb}...`);
+    await admin.query(`CREATE DATABASE "${tmpDb}"`);
 
-    console.log('Seeding sparse conversations (exceeds MAX_CONVERSATION_LIMIT)...');
-    await seedSparseConversations(pool);
+    const tmpUrl = new URL(ownerUrl.toString());
+    tmpUrl.pathname = `/${tmpDb}`;
+    const pool = new Pool({ connectionString: tmpUrl.toString() });
 
-    console.log('Seeding background noise from unrelated users...');
-    await seedBackgroundNoise(pool);
+    try {
+      const db = drizzle(pool, { schema });
+      console.log('Applying migrations...');
+      await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
 
-    let seededHotMessages = 0;
-    for (const targetSize of HISTORY_SIZES) {
-      console.log(`\nGrowing hot conversation to ${targetSize} messages...`);
-      await growHotConversation(pool, seededHotMessages, targetSize);
-      seededHotMessages = targetSize;
+      console.log('Seeding sparse conversations (exceeds MAX_CONVERSATION_LIMIT)...');
+      await seedSparseConversations(pool);
 
-      // Refresh planner statistics: without this, a freshly bulk-loaded table
-      // still carries the old (or default) row-count estimate and the plan
-      // reflects that stale estimate rather than the data actually seeded.
-      await pool.query('VACUUM ANALYZE messages');
+      console.log('Seeding background noise from unrelated users...');
+      await seedBackgroundNoise(pool);
 
-      await explain(
-        pool,
-        `listConversations @ ${targetSize} hot messages`,
-        LIST_CONVERSATIONS_SQL,
-        [MEASURED_USER]
-      );
-      await explain(
-        pool,
-        `unreadCounts alone @ ${targetSize} hot messages`,
-        UNREAD_COUNTS_SQL,
-        [MEASURED_USER]
-      );
+      let seededHotMessages = 0;
+      for (const targetSize of HISTORY_SIZES) {
+        console.log(`\nGrowing hot conversation to ${targetSize} messages...`);
+        await growHotConversation(pool, seededHotMessages, targetSize);
+        seededHotMessages = targetSize;
+
+        // Refresh planner statistics: without this, a freshly bulk-loaded
+        // table still carries the old (or default) row-count estimate and the
+        // plan reflects that stale estimate rather than the data actually
+        // seeded.
+        await pool.query('VACUUM ANALYZE messages');
+
+        await explain(
+          pool,
+          `listConversations @ ${targetSize} hot messages`,
+          LIST_CONVERSATIONS_SQL,
+          [MEASURED_USER]
+        );
+        await explain(
+          pool,
+          `unreadCounts alone @ ${targetSize} hot messages`,
+          UNREAD_COUNTS_SQL,
+          [MEASURED_USER]
+        );
+      }
+
+      const { rows: countRows } = await pool.query('SELECT count(*)::int AS n FROM messages');
+      console.log(`\nTotal rows in messages table at end of run: ${countRows[0].n}`);
+    } finally {
+      await pool.end();
+      // Only reached once CREATE DATABASE above succeeded, so the database
+      // exists and there's something to drop; logged rather than swallowed so
+      // a failed cleanup (e.g. a lingering connection holding it open) leaves
+      // a visible trail instead of a silently orphaned scratch database.
+      await admin
+        .query(`DROP DATABASE IF EXISTS "${tmpDb}"`)
+        .catch((err) => console.error(`Failed to drop scratch database ${tmpDb}:`, err));
     }
-
-    const { rows: countRows } = await pool.query('SELECT count(*)::int AS n FROM messages');
-    console.log(`\nTotal rows in messages table at end of run: ${countRows[0].n}`);
   } finally {
-    await pool.end();
-    await admin.query(`DROP DATABASE IF EXISTS "${tmpDb}"`).catch(() => {});
     await admin.end();
   }
 }
