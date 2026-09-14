@@ -164,51 +164,6 @@ test('the merged timeline is served from the same message cache', async (t) => {
     body: 'hello',
   });
 
-  test('an in-flight first-page fill cannot survive a write invalidation', async (t) => {
-    const inner = createMemoryMessageStore();
-    const delayed = createDeferred<void>();
-    let delayFirstList = true;
-    const store = {
-      ...inner,
-      async listMessages(query: any) {
-        const snapshot = await inner.listMessages(query);
-        if (delayFirstList) {
-          delayFirstList = false;
-          await delayed.promise;
-        }
-        return snapshot;
-      },
-    };
-    const { url, teardown } = await startServer({ messageStore: store });
-    t.after(teardown);
-
-    const aliceSession = await createSession(url, 'cache-race-alice');
-    await createSession(url, 'cache-race-bob');
-    const alice = await connectSocket(url, aliceSession);
-    t.after(() => alice.disconnect());
-
-    const staleFill = getJson(url, '/messages?peerId=cache-race-bob', aliceSession);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    const ack = await emitWithAck(alice, 'message.send', {
-      version: VERSION,
-      recipientId: 'cache-race-bob',
-      body: 'committed while fetch was in flight',
-    });
-    assert.equal(ack.ok, true);
-
-    delayed.resolve();
-    const stale = await staleFill;
-    assert.equal(stale.status, 200);
-    assert.deepEqual(stale.body.messages, []);
-
-    const fresh = await getJson(url, '/messages?peerId=cache-race-bob', aliceSession);
-    assert.equal(fresh.status, 200);
-    assert.deepEqual(fresh.body.messages.map((message: any) => message.body), [
-      'committed while fetch was in flight',
-    ]);
-  });
-
   // The app always asks for the merged timeline, so this is the only shape of
   // request the cache will ever see in production. It used to opt the request
   // out of the cache entirely, which made the entry unreachable.
@@ -225,6 +180,51 @@ test('the merged timeline is served from the same message cache', async (t) => {
   const plain = await getJson(url, '/messages?peerId=cache-bob', aliceSession);
   assert.equal(plain.status, 200);
   assert.equal(counts.listMessages, afterFirst, 'both shapes read one cached message page');
+});
+
+test('an in-flight first-page fill cannot survive a write invalidation', async (t) => {
+  const inner = createMemoryMessageStore();
+  const delayed = createDeferred<void>();
+  let delayFirstList = true;
+  const store = {
+    ...inner,
+    async listMessages(query: any) {
+      const snapshot = await inner.listMessages(query);
+      if (delayFirstList) {
+        delayFirstList = false;
+        await delayed.promise;
+      }
+      return snapshot;
+    },
+  };
+  const { url, teardown } = await startServer({ messageStore: store });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'cache-race-alice');
+  await createSession(url, 'cache-race-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const staleFill = getJson(url, '/messages?peerId=cache-race-bob', aliceSession);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const ack = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'cache-race-bob',
+    body: 'committed while fetch was in flight',
+  });
+  assert.equal(ack.ok, true);
+
+  delayed.resolve();
+  const stale = await staleFill;
+  assert.equal(stale.status, 200);
+  assert.deepEqual(stale.body.messages, []);
+
+  const fresh = await getJson(url, '/messages?peerId=cache-race-bob', aliceSession);
+  assert.equal(fresh.status, 200);
+  assert.deepEqual(fresh.body.messages.map((message: any) => message.body), [
+    'committed while fetch was in flight',
+  ]);
 });
 
 test('cache hits and misses are exposed through the telemetry counters', async (t) => {

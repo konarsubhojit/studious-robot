@@ -61,6 +61,12 @@ const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:417
 // which runs entirely inside the server's `accepted -> in_call` window and was
 // previously unmeasured (`docs/media-connect-latency-diagnosis.md` §6).
 // `media_connected` closes that window and carries the ICE outcome (§4).
+// `offer_sent` is the caller's counterpart to `answer_sent`: without it a call
+// that stalls in `connecting_media` cannot be told apart from one whose offer
+// was never sent, because the caller reports nothing at all on that leg.
+// `connection_created` reports that Telecom actually built the CallKeep
+// connection, which happens asynchronously after `ui_displayed` and so cannot
+// be read from that receipt's reason.
 const RECEIPT_STAGES = new Set([
   'received',
   'ui_displayed',
@@ -74,12 +80,22 @@ const RECEIPT_STAGES = new Set([
   'permissions_checked',
   'media_acquired',
   'peer_connection_ready',
+  'offer_sent',
   'answer_sent',
   'media_connected',
+  'connection_created',
 ]);
 // Message pushes report the same `received` stage plus what the device did
 // with it, so "the provider accepted it" (which proves nothing about the
 // handset) is no longer the only server-side evidence a message push exists.
+/**
+ * How long to wait for Telecom to create the CallKeep `Connection` before
+ * concluding none appeared. Kept short: this runs inside the background push
+ * handler, whose total budget is small, and a connection that takes longer
+ * than this to appear is of no use to the ring it was meant to back.
+ */
+const CONNECTION_PROBE_ATTEMPTS = 4;
+const CONNECTION_PROBE_INTERVAL_MS = 250;
 const MESSAGE_RECEIPT_STAGES = new Set([
   'received',
   'notification_shown',
@@ -768,13 +784,6 @@ export async function handleBackgroundPushMessage(remoteMessage: { data?: Record
     callId: incoming.callId,
     ...displayResult,
   });
-  // The branded notification is posted independently of whether Telecom ever
-  // created a CallKeep connection, so record which of the two happened: a ring
-  // with no live connection is answerable only through the app's own
-  // connection-independent accept path.
-  const connectionLive = await isCallConnectionLive(incoming.callId);
-  const livenessReason =
-    connectionLive === null ? null : connectionLive ? 'connection_live' : 'connection_missing';
   await sendPushReceipt({
     remoteMessage,
     callId: incoming.callId,
@@ -784,10 +793,26 @@ export async function handleBackgroundPushMessage(remoteMessage: { data?: Record
     // says nothing about the missing UI and reads as though the push path
     // suppressed it on purpose — the actual cause (`telecom_threw`,
     // `phone_account_not_registered`, `duplicate_callId_deduped`, …) was lost.
-    reason: displayResult.shown
-      ? livenessReason
-      : (displayResult.reason ?? livenessReason),
+    // Liveness is deliberately *not* reported here: Telecom creates the
+    // Connection asynchronously, so sampling it the instant `displayIncoming`
+    // resolves reported `connection_missing` for calls whose connection
+    // appeared milliseconds later — contradicting the `accept_tapped
+    // reason=connection_live` that the same call later produced. One receipt,
+    // one fact: connection liveness is reported by `connection_created` below.
+    reason: displayResult.shown ? null : (displayResult.reason ?? null),
   });
+  // The branded notification is posted independently of whether Telecom ever
+  // created a CallKeep connection, so record whether one appeared: a ring with
+  // no live connection is answerable only through the app's own
+  // connection-independent accept path.
+  const connectionLive = await waitForCallConnection(incoming.callId);
+  if (connectionLive) {
+    await sendPushReceipt({
+      remoteMessage,
+      callId: incoming.callId,
+      stage: 'connection_created',
+    });
+  }
   await logBackgroundInfo('[Push] Background message handler exit', {
     callId: incoming.callId,
     uiStage: displayResult.shown ? 'ui_displayed' : 'ui_failed',
@@ -796,6 +821,24 @@ export async function handleBackgroundPushMessage(remoteMessage: { data?: Record
   await flushDurableLogs();
 
   return incoming;
+}
+
+/**
+ * Poll for the Telecom/CallKeep `Connection` that `displayIncomingCall` asks
+ * for, since Telecom creates it asynchronously after that call resolves.
+ *
+ * Returns `true` as soon as a live connection is seen, `false` if none appears
+ * within the budget, and `null` when the platform cannot answer the question
+ * at all (iOS, or the native module missing).
+ */
+async function waitForCallConnection(callId: string): Promise<boolean | null> {
+  let last: boolean | null = null;
+  for (let attempt = 0; attempt < CONNECTION_PROBE_ATTEMPTS; attempt += 1) {
+    last = await isCallConnectionLive(callId);
+    if (last === null || last) return last;
+    await new Promise<void>(resolve => setTimeout(resolve, CONNECTION_PROBE_INTERVAL_MS));
+  }
+  return last;
 }
 
 /**

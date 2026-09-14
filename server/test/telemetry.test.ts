@@ -707,3 +707,60 @@ test('recordRtcBufferOutcome keeps same-instance and cross-instance losses apart
   assert.equal(counters.rtc_signals_stranded_local, 3);
   assert.equal(counters.rtc_signals_stranded_remote, 4);
 });
+
+test('recordRtcRelay separates SDP relays from candidates and flags empty rooms', () => {
+  const telemetry = createTelemetry();
+
+  telemetry.recordRtcRelay('rtc.offer', 1);
+  telemetry.recordRtcRelay('rtc.answer', 2);
+  // The silent drop this counter exists for: an SDP frame relayed into a room
+  // that no socket in the fleet is a member of.
+  telemetry.recordRtcRelay('rtc.offer', 0);
+  // Candidates are counted but never looked up, so their cardinality is
+  // unknown — which must not be mistaken for "nobody was listening".
+  telemetry.recordRtcRelay('rtc.candidate', null);
+  telemetry.recordRtcRelay('call.media-state', null);
+
+  const { counters } = telemetry.getSnapshot();
+  assert.equal(counters.rtc_relays_offer, 2);
+  assert.equal(counters.rtc_relays_answer, 1);
+  assert.equal(counters.rtc_relays_candidate, 1);
+  assert.equal(counters.rtc_relays_other, 1);
+  assert.equal(counters.rtc_relays_no_recipient, 1, 'only a known zero counts as a drop');
+});
+
+test('call_ring_duration_ms is measured from the record, not this process', () => {
+  const telemetry = createTelemetry();
+  const createdAt = new Date(Date.now() - 5_000).toISOString();
+
+  // A call this process never saw created: no local ring start exists, but the
+  // record's own createdAt does.
+  telemetry.recordCallCreated(callRecord({ createdAt }));
+  telemetry.recordCallTransition(callRecord({ status: 'missed', createdAt }), 'ringing');
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_ring_duration_ms.count, 1);
+  assert.equal(snap.counters.call_ring_duration_shared, 1);
+  assert.equal(snap.counters.calls_missed, 1);
+});
+
+test('an answered call ending elsewhere is never charged to call_ring_duration_ms', () => {
+  const telemetry = createTelemetry();
+  const createdAt = new Date(Date.now() - 20_000).toISOString();
+  const answeredAt = new Date(Date.now() - 19_000).toISOString();
+
+  telemetry.recordCallCreated(callRecord({ createdAt }));
+  // `in_call` was handled by the other instance, so `inCallMs` is unset here.
+  // Without the answeredAt check the whole conversation lands in the ring
+  // histogram — the twenty-minute "ring" this guards against.
+  telemetry.recordCallTransition(
+    callRecord({ status: 'ended', createdAt, answeredAt, endReason: 'hangup' }),
+    'in_call'
+  );
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_ring_duration_ms.count, 0);
+  assert.equal(snap.histograms.call_duration_ms.count, 0);
+  assert.equal(snap.counters.call_ring_duration_answered_elsewhere, 1);
+  assert.equal(snap.counters.calls_ended, 1);
+});

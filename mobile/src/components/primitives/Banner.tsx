@@ -87,7 +87,7 @@ export default function Banner({
   }[tone];
   // Tinting from the resolved text colour rather than naming a palette entry
   // keeps the glyph and the sentence the same colour by construction.
-  const foreground = StyleSheet.flatten(textStyle).color as string;
+  const foreground = StyleSheet.flatten(textStyle)?.color as string;
 
   return (
     <View

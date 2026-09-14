@@ -192,7 +192,7 @@ export default function AppShell() {
     isConnectionLost,
   } = useCallSelector(selectShellSlice);
   const insets = useSafeAreaInsets();
-  const { colors, scheme } = useTheme();
+  const { scheme } = useTheme();
   const styles = useThemedStyles(createStyles);
   const startupIssues = getDegradations();
   const { isPrimerVisible, acceptPrimer, skipPrimer } = usePermissionsPrimer(
@@ -278,19 +278,11 @@ export default function AppShell() {
       {isCallMinimizedInShell ? <MinimizedCallBanner /> : null}
       {screenContent}
       {isBubbleVisible ? <MinimizedCallBubble /> : null}
-      {/* System chrome follows the palette, including the variants: a
-          high-contrast or true-black background reaches the status bar too,
-          because the colour is read from the active palette rather than from
-          the scheme name. A full-screen call is the exception — the video stage
-          is fixed-dark in *both* schemes (see `stage`), so a light-scheme user
-          would otherwise get a white status bar with dark icons sitting on top
-          of black video. This changes only the bar's colour, never the layout:
-          `translucent={false}` keeps it out of the safe-area inset this view
-          already pads for. */}
+      {/* A full-screen call uses light icons because its video stage is fixed-dark
+          in both schemes. Android 15+ draws the app behind a transparent status
+          bar, so the surrounding view supplies the system chrome background. */}
       <StatusBar
         barStyle={isCallFullScreen || scheme !== 'light' ? 'light-content' : 'dark-content'}
-        backgroundColor={isCallFullScreen ? colors.stage : colors.background}
-        translucent={false}
       />
     </View>
   );
