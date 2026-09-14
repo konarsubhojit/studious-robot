@@ -40,6 +40,7 @@ import {
   auditLog as auditLogTable,
   blocks as blocksTable,
   calls as callsTable,
+  conversations as conversationsTable,
   devices as devicesTable,
   users as usersTable,
 } from '../../db/schema.ts';
@@ -428,6 +429,18 @@ async function eraseAccount(
 
   const { tombstoned, attachmentUrls, conversationIds } = await eraseSentMessages(state, userId);
   const attachmentsDeleted = await eraseAttachments(attachmentUrls, { r2Config, fetchImpl });
+  if (state.db) {
+    // A projection row names both participants even after message bodies are
+    // tombstoned, so account erasure must remove every row that names the user.
+    await state.db
+      .delete(conversationsTable)
+      .where(
+        or(
+          eq(conversationsTable.participantA, userId),
+          eq(conversationsTable.participantB, userId)
+        )
+      );
+  }
   const callsDeleted = await eraseCalls(state, userId);
   const blocksRemoved = await eraseBlocks(state, userId);
   await pseudonymiseAuditLog(state, userId, pseudonym);
