@@ -812,6 +812,10 @@ type TypographyToken =
   | 'emphasis'
   | 'hint';
 
+type MutableTextStyle = {
+  -readonly [Property in keyof TextStyle]: TextStyle[Property];
+};
+
 const BASE_TYPOGRAPHY: Record<TypographyToken, TextStyle> = {
   /** M3 `headlineMedium`: large-title header ("Chats", "Calls"). */
   display: { fontSize: 28, lineHeight: 36, fontWeight: '700' },
@@ -859,16 +863,19 @@ const BASE_TYPOGRAPHY: Record<TypographyToken, TextStyle> = {
  * The sizes are always recomputed from {@link BASE_TYPOGRAPHY}, never from the
  * current values, so repeated changes cannot drift.
  */
-export const typography: Record<TypographyToken, TextStyle> = cloneTypography(BASE_TYPOGRAPHY);
+export const typography: Record<TypographyToken, MutableTextStyle> =
+  cloneTypography(BASE_TYPOGRAPHY);
 
 let activeTextScale: TextScale = TEXT_SCALES.DEFAULT;
 let typographyRevision = 0;
 
 /** Shallow-copy the token table so callers cannot alias `BASE_TYPOGRAPHY`. */
-function cloneTypography(source: Record<TypographyToken, TextStyle>): Record<TypographyToken, TextStyle> {
+function cloneTypography(
+  source: Record<TypographyToken, TextStyle>,
+): Record<TypographyToken, MutableTextStyle> {
   return Object.fromEntries(
     Object.entries(source).map(([token, style]) => [token, { ...style }]),
-  ) as Record<TypographyToken, TextStyle>;
+  ) as Record<TypographyToken, MutableTextStyle>;
 }
 
 /**
@@ -941,4 +948,3 @@ export const fontScaleCaps = {
   /** Row timestamps, which sit beside a growing title. */
   meta: 1.6,
 };
-

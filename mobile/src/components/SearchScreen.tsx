@@ -16,6 +16,7 @@ import { radius, spacing, touchSlop, typography } from '../theme';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
 import type { ThemeColors } from '../theme';
 import type { ContactRow, ConversationRow } from '../types/directory';
+import type { ReactElement } from 'react';
 
 /**
  * How long the input must be idle before a server request is issued. Long
@@ -37,6 +38,12 @@ export type MessageResult = { messageId: string; peerId: string; body?: string; 
 export type { ConversationRow };
 
 export type CallRow = CallHistoryEntry;
+
+type SearchSection = {
+  key: 'contacts' | 'conversations' | 'messages' | 'calls';
+  title: string;
+  data: any[];
+};
 
 /**
  * Index of `term` inside `text`, case-insensitively, or -1.
@@ -256,8 +263,8 @@ function SearchScreen({
       .map(entry => entry.entry);
   }, [callHistory, currentUserId, term]);
 
-  const sections = useMemo(() => {
-    const built = [
+  const sections = useMemo<SearchSection[]>(() => {
+    const built: SearchSection[] = [
       { key: 'contacts', title: 'Contacts', data: contacts.slice(0, MAX_ROWS_PER_SECTION) },
       { key: 'conversations', title: 'Conversations', data: matchedConversations },
       { key: 'messages', title: 'Messages', data: messages.slice(0, MAX_ROWS_PER_SECTION) },
@@ -267,7 +274,7 @@ function SearchScreen({
   }, [contacts, matchedCalls, matchedConversations, messages]);
 
   const renderItem = useCallback(
-    ({ item, section }: { item: any; section: { key?: string; }; }) => {
+    ({ item, section }: { item: any; section: SearchSection; }) => {
       if (section.key === 'contacts') {
         return (
           <Pressable
@@ -362,7 +369,7 @@ function SearchScreen({
     [],
   );
 
-  let emptyComponent = null;
+  let emptyComponent: ReactElement | undefined;
   if (!term) {
     emptyComponent = (
       <View style={styles.emptyState} testID="search-empty-prompt">
@@ -445,7 +452,7 @@ function SearchScreen({
         />
       ) : null}
 
-      <SectionList
+      <SectionList<any, SearchSection>
         testID="search-results"
         sections={sections}
         keyExtractor={keyExtractor}
