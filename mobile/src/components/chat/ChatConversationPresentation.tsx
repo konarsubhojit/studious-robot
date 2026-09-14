@@ -1642,7 +1642,7 @@ function ConversationTimeline({
             <RefreshControl refreshing={isRefreshingMessages} onRefresh={onRefreshMessages} />
           ) : undefined
         }
-        ListEmptyComponent={isLoadingMessages ? <MessageSkeleton /> : null}
+        ListEmptyComponent={isLoadingMessages ? <MessageSkeleton /> : undefined}
       />
       {stickyDateLabel ? (
         <View style={styles.stickyDate} pointerEvents="none" testID="chat-sticky-date">

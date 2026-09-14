@@ -13,7 +13,14 @@ const BLUETOOTH_CONNECT_PERMISSION = PermissionsAndroid?.PERMISSIONS?.BLUETOOTH_
 // permissions rather than left until the OS silently drops notifications.
 const POST_NOTIFICATIONS_PERMISSION = PermissionsAndroid?.PERMISSIONS?.POST_NOTIFICATIONS;
 
-const REQUIRED_CALL_PERMISSIONS = [CAMERA_PERMISSION, MICROPHONE_PERMISSION].filter(Boolean);
+function isPermission(permission: Permission | undefined): permission is Permission {
+  return Boolean(permission);
+}
+
+const REQUIRED_CALL_PERMISSIONS: Permission[] = [
+  CAMERA_PERMISSION,
+  MICROPHONE_PERMISSION,
+].filter(isPermission);
 
 export function requiresBluetoothConnectPermission(androidApiLevel = Platform.Version) {
   return (
@@ -36,11 +43,11 @@ export function getCallRuntimePermissions(androidApiLevel = Platform.Version) {
     return [];
   }
 
-  const permissions = [...REQUIRED_CALL_PERMISSIONS];
-  if (requiresBluetoothConnectPermission(androidApiLevel)) {
+  const permissions: Permission[] = [...REQUIRED_CALL_PERMISSIONS];
+  if (requiresBluetoothConnectPermission(androidApiLevel) && BLUETOOTH_CONNECT_PERMISSION) {
     permissions.push(BLUETOOTH_CONNECT_PERMISSION);
   }
-  if (requiresPostNotificationsPermission(androidApiLevel)) {
+  if (requiresPostNotificationsPermission(androidApiLevel) && POST_NOTIFICATIONS_PERMISSION) {
     permissions.push(POST_NOTIFICATIONS_PERMISSION);
   }
   return permissions;

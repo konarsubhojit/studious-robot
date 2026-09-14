@@ -38,10 +38,14 @@ import {
 } from '../src/permissions';
 
 describe('permissions helpers', () => {
+  function setAndroidApiLevel(version: number) {
+    Object.defineProperty(Platform, 'Version', { value: version, configurable: true });
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
     Platform.OS = 'android';
-    Platform.Version = 31;
+    setAndroidApiLevel(31);
   });
 
   test('returns the expected Android runtime permission list', () => {
@@ -112,18 +116,18 @@ describe('permissions helpers', () => {
   });
 
   test('does not require Bluetooth runtime permission before Android 12', () => {
-    Platform.Version = 30;
+    setAndroidApiLevel(30);
     expect(requiresBluetoothConnectPermission()).toBe(false);
   });
 
   test('does not require the notifications runtime permission before Android 13', () => {
-    Platform.Version = 32;
+    setAndroidApiLevel(32);
     expect(requiresPostNotificationsPermission()).toBe(false);
     expect(getCallRuntimePermissions()).not.toContain('android.permission.POST_NOTIFICATIONS');
   });
 
   test('requests notifications permission from Android 13 onward, alongside the rest', async () => {
-    Platform.Version = 33;
+    setAndroidApiLevel(33);
     expect(requiresPostNotificationsPermission()).toBe(true);
     expect(getCallRuntimePermissions()).toEqual([
       'android.permission.CAMERA',
@@ -218,10 +222,14 @@ describe('permissions helpers', () => {
 });
 
 describe('ensureAttachmentPermission', () => {
+  function setAndroidApiLevel(version: number) {
+    Object.defineProperty(Platform, 'Version', { value: version, configurable: true });
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
     Platform.OS = 'android';
-    Platform.Version = 31;
+    setAndroidApiLevel(31);
   });
 
   test('resolves the API-33+ photo permission to READ_MEDIA_IMAGES', () => {
@@ -267,7 +275,7 @@ describe('ensureAttachmentPermission', () => {
   });
 
   test('requests and reports the granted photo permission', async () => {
-    Platform.Version = 33;
+    setAndroidApiLevel(33);
     mockCheck.mockResolvedValue(false);
     mockRequestMultiple.mockResolvedValue({ 'android.permission.READ_MEDIA_IMAGES': 'granted' });
     await expect(ensureAttachmentPermission('photo')).resolves.toEqual({
