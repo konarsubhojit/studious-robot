@@ -3,7 +3,12 @@ import { normaliseId, sanitizeForLog } from '../../lib/normalize.ts';
 import { isBlocked } from '../../security.ts';
 import { resolveSocketIdentityAsync } from '../../lib/auth.ts';
 import { ensurePresenceRecord, upsertDevice, addConnection, removeConnection, userRoom } from '../../lib/state.ts';
-import { reconcileClientCallState, describeActiveCallsForUser, ownerDeviceIdForUser } from '../../domain/calls.ts';
+import {
+  reconcileClientCallState,
+  describeActiveCallsForUser,
+  isCallOwnedByAnotherDevice,
+  ownerDeviceIdForUser,
+} from '../../domain/calls.ts';
 import { placeCallWithShared } from '../../domain/sharedCalls.ts';
 import { notifyCallCreated, notifyIncomingCallAcknowledged, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice, notifyCallTransition } from '../../domain/notifications.ts';
 import { handleSocketCallTransition, handleRtcRelay, handleCallConnected } from '../callHandlers.ts';
@@ -334,8 +339,12 @@ function registerSocketHandlers(
         eventName: CLIENT_EVENTS.CALL_CANCEL,
         nextStatus: 'ended',
         reason: 'cancelled',
-        authorize: (call, userId) =>
-          call.callerId === userId ? null : 'only the caller can cancel a call',
+        authorize: (call, userId, { deviceId }) => {
+          if (call.callerId !== userId) return 'only the caller can cancel a call';
+          return isCallOwnedByAnotherDevice(call, userId, deviceId)
+            ? 'this call is active on another device'
+            : null;
+        },
       }).catch((error) => {
         console.error('[signaling] call.cancel handler failed:', (error as any)?.message);
       });
@@ -347,11 +356,15 @@ function registerSocketHandlers(
         io,
         eventName: CLIENT_EVENTS.CALL_END,
         nextStatus: 'ended',
-        reason: 'ended',
-        authorize: (call, userId) =>
-          call.callerId === userId || call.calleeId === userId
-            ? null
-            : 'not a participant in this call',
+        reason: 'user_hangup',
+        authorize: (call, userId, { deviceId }) => {
+          if (call.callerId !== userId && call.calleeId !== userId) {
+            return 'not a participant in this call';
+          }
+          return isCallOwnedByAnotherDevice(call, userId, deviceId)
+            ? 'this call is active on another device'
+            : null;
+        },
       }).catch((error) => {
         console.error('[signaling] call.end handler failed:', (error as any)?.message);
       });

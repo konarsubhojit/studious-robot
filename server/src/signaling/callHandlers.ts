@@ -1,6 +1,6 @@
 import { RTC_ACTIVE_CALL_STATES, SIGNALING_VERSION, CONNECTED_CALL_STATUS } from '../config.ts';
-import { normaliseId } from '../lib/normalize.ts';
-import { recordCallHeartbeat } from '../domain/calls.ts';
+import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
+import { isCallOwnedByAnotherDevice, recordCallHeartbeat } from '../domain/calls.ts';
 import { notifyCallTransition, emitToUserSockets } from '../domain/notifications.ts';
 import { hydrateCallFromShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
@@ -52,7 +52,8 @@ type SocketCallTransitionBase = {
   ) => string | { code: string; message: string } | null;
   onSuccess?: (
     call: import('../stores/contracts.ts').CallRecord,
-    transition: CallTransition
+    transition: CallTransition,
+    context: { actorDeviceId: string | null; actorSocketId: string }
   ) => void;
 };
 
@@ -125,6 +126,13 @@ async function handleSocketCallTransition(socket: import('socket.io').Socket, ac
         ? { code: ERROR_CODES.FORBIDDEN, message: authorizationError }
         : authorizationError;
     acknowledgeError(socket, ack, options.eventName, code, message, options.state);
+    console.log(
+      `[signaling] ${sanitizeForLog(options.eventName)} rejected callId=${sanitizeForLog(callId)}` +
+        ` actor=${sanitizeForLog(socket.data.identity.userId)}` +
+        (actorDeviceId ? ` actorDevice=${sanitizeForLog(actorDeviceId)}` : '') +
+        ` actorSocket=${sanitizeForLog(socket.id)}` +
+        ` reason=${sanitizeForLog(message)}`
+    );
     return;
   }
 
@@ -156,13 +164,16 @@ async function handleSocketCallTransition(socket: import('socket.io').Socket, ac
       previousStatus,
       actor: socket.data.identity.userId,
       reason: transition.reason ?? null,
+      actorDeviceId,
+      actorSocketId: socket.id,
+      source: 'socket',
     });
   }
   // Candidates that arrived during the ring are replayed here — the accept that
   // makes the call media-ready is exactly what they were waiting for — and
   // discarded when the transition was into a terminal state instead.
   flushBufferedRtcSignals(options.io, options.state, callId, result.call.status);
-  options.onSuccess?.(result.call, transition);
+  options.onSuccess?.(result.call, transition, { actorDeviceId, actorSocketId: socket.id });
   acknowledgeSuccess(socket, ack, options.eventName, { call: result.call });
 }
 
@@ -372,17 +383,25 @@ async function handleCallConnected(socket: import('socket.io').Socket, ack: Func
         ? { nextStatus: 'ended', reason: 'media_failed', iceState }
         : { nextStatus: CONNECTED_CALL_STATUS, reason: null, iceState };
     },
-    authorize: (call, userId) =>
-      call.callerId === userId || call.calleeId === userId
-        ? null
-        : 'not a participant in this call',
-    onSuccess: (call, transition) => {
+    authorize: (call, userId) => {
+      if (call.callerId !== userId && call.calleeId !== userId) {
+        return 'not a participant in this call';
+      }
+      return isCallOwnedByAnotherDevice(call, userId, socket.data.identity.deviceId ?? null)
+        ? 'this call is active on another device'
+        : null;
+    },
+    onSuccess: (call, transition, context) => {
       if (transition.reason !== 'media_failed') {
         recordCallHeartbeat(options.state, call.callId);
       }
       console.log(
-        `[calls] call.connected callId=${call.callId} iceState=${transition.iceState ?? 'connected'}` +
-          ` status=${call.status} actor=${socket.data.identity.userId}`
+        `[calls] call.connected callId=${sanitizeForLog(call.callId)}` +
+          ` iceState=${sanitizeForLog(transition.iceState ?? 'connected')}` +
+          ` status=${sanitizeForLog(call.status)}` +
+          ` actor=${sanitizeForLog(socket.data.identity.userId)}` +
+          (context.actorDeviceId ? ` actorDevice=${sanitizeForLog(context.actorDeviceId)}` : '') +
+          ` actorSocket=${sanitizeForLog(context.actorSocketId)}`
       );
     },
   });

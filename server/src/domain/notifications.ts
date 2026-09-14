@@ -1,6 +1,7 @@
 import { pushSenders } from '../push.ts';
 import { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL, CONNECTED_CALL_STATUS, TERMINAL_CALL_STATES } from '../config.ts';
 import { measureSinceAnswered } from '../lib/callLatency.ts';
+import { sanitizeForLog } from '../lib/normalize.ts';
 import { resolveReachableChannels, userRoom } from '../lib/state.ts';
 import { describeActiveCallsForUser } from './calls.ts';
 import { pruneDeadDevice } from '../lib/persistence.ts';
@@ -452,10 +453,55 @@ function describeMediaSetupElapsed(call: CallRecord, nowMs: number): string {
   return elapsed.ok ? ` sinceAcceptedMs=${elapsed.elapsedMs}` : '';
 }
 
+type CallTransitionContext = {
+  previousStatus: string | null;
+  actor?: string | null;
+  reason?: string | null;
+  actorDeviceId?: string | null;
+  actorSocketId?: string | null;
+  source?: string | null;
+};
+
+function logField(name: string, value: string | null | undefined): string {
+  return value ? ` ${name}=${sanitizeForLog(value)}` : '';
+}
+
+function formatCallTransitionLog(
+  state: ServerState,
+  call: CallRecord,
+  context: CallTransitionContext
+): string {
+  return (
+    `[signaling] call.transition callId=${sanitizeForLog(call.callId)}` +
+    ` ${context.previousStatus}->${call.status}` +
+    logField('reason', context.reason) +
+    logField('actor', context.actor) +
+    logField('actorDevice', context.actorDeviceId) +
+    logField('actorSocket', context.actorSocketId) +
+    logField('source', context.source) +
+    logField('instance', state.instanceId) +
+    describeMediaSetupElapsed(call, Date.now())
+  );
+}
+
 /**
  * @param io Socket.IO server.
  */
-function notifyCallTransition(io: any, state: ServerState, call: CallRecord, { previousStatus, actor = null, reason = null }: { previousStatus: string | null; actor?: string | null; reason?: string | null; }): void {
+function notifyCallTransition(io: any, state: ServerState, call: CallRecord, {
+  previousStatus,
+  actor = null,
+  reason = null,
+  actorDeviceId = null,
+  actorSocketId = null,
+  source = null,
+}: {
+  previousStatus: string | null;
+  actor?: string | null;
+  reason?: string | null;
+  actorDeviceId?: string | null;
+  actorSocketId?: string | null;
+  source?: string | null;
+}): void {
   if (call.status !== 'ringing') {
     if (previousStatus === 'ringing' && TERMINAL_CALL_STATES.has(call.status)) {
       dispatchCallCancelledPushes(state, call, reason ?? call.endReason ?? null);
@@ -464,13 +510,14 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, { p
   }
   if (previousStatus !== null) {
     state.telemetry.recordCallTransition(call, previousStatus);
-    console.log(
-      `[signaling] call.transition callId=${call.callId} ${previousStatus}->${call.status}` +
-        (reason ? ` reason=${reason}` : '') +
-        (actor ? ` actor=${actor}` : '') +
-        (state.instanceId ? ` instance=${state.instanceId}` : '') +
-        describeMediaSetupElapsed(call, Date.now())
-    );
+    console.log(formatCallTransitionLog(state, call, {
+      previousStatus,
+      actor,
+      reason,
+      actorDeviceId,
+      actorSocketId,
+      source,
+    }));
     verboseLog('calls', 'transition', {
       callId: call.callId,
       previousStatus,

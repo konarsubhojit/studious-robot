@@ -609,6 +609,29 @@ test('heartbeat: a connected call is aged out only once its liveness reports sto
   }
 });
 
+test('heartbeat: a connected call with a fresh heartbeat survives the early-drop window', async () => {
+  const { url, getCall, tickRingingTimeouts, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+    await emitWithAck(caller, 'call.media-state', {
+      version: 1,
+      callId,
+      mediaState: { isScreenSharing: false, heartbeat: true },
+    });
+
+    assert.equal(tickRingingTimeouts(Date.now() + 6_000), 0);
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
+  } finally {
+    await teardown(caller);
+  }
+});
+
 test('heartbeat: only an explicit liveness report refreshes a connected call', async () => {
   const { url, getCall, teardown } = await startServer();
   let caller;
@@ -886,6 +909,86 @@ test('call.state.report: an idle second device does not end the call held by the
     assert.equal(getCall(callId)?.status, 'accepted');
   } finally {
     await teardown(idleDevice);
+  }
+});
+
+test('call.end: an idle second device does not end the call held by the first', async () => {
+  const logs = captureConsoleLog();
+  const { url, getCall, teardown } = await startServer();
+  let ownerDevice;
+  let idleDevice;
+  try {
+    const callerSession = await createSession(url, 'user-alice', 'device-alice-live');
+    const idleSession = await createSession(url, 'user-alice', 'device-alice-idle');
+    const calleeSession = await createSession(url, 'user-bob', 'device-bob-live');
+    ownerDevice = await connect(url, { sessionId: callerSession });
+    idleDevice = await connect(url, { sessionId: idleSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    await emitWithAck(ownerDevice, 'call.connected', {
+      version: 1,
+      callId,
+      iceState: 'connected',
+    });
+
+    const rejected = await emitWithAck(idleDevice, 'call.end', { version: 1, callId });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, 'forbidden');
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
+    assert.ok(
+      logs.lines.some(
+        line =>
+          line.includes('call.end rejected') &&
+          line.includes(`callId=${callId}`) &&
+          line.includes('actorDevice=device-alice-idle') &&
+          line.includes('reason=this call is active on another device'),
+      ),
+    );
+
+    const ended = await emitWithAck(ownerDevice, 'call.end', { version: 1, callId });
+    assert.equal(ended.ok, true);
+    assert.equal(getCall(callId)?.endReason, 'user_hangup');
+    assert.ok(
+      logs.lines.some(
+        line =>
+          line.includes(`[signaling] call.transition callId=${callId} in_call->ended`) &&
+          line.includes('reason=user_hangup') &&
+          line.includes('actorDevice=device-alice-live') &&
+          line.includes('source=socket'),
+      ),
+    );
+  } finally {
+    logs.restore();
+    await teardown(ownerDevice, idleDevice);
+  }
+});
+
+test('disconnect: a reconnecting owning device keeps an active call alive', async () => {
+  const { url, getCall, teardown } = await startServer({ participantDisconnectGraceMs: 20 });
+  let ownerDevice;
+  let reconnectedDevice;
+  try {
+    const callerSession = await createSession(url, 'user-alice', 'device-alice-live');
+    const calleeSession = await createSession(url, 'user-bob', 'device-bob-live');
+    ownerDevice = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    await emitWithAck(ownerDevice, 'call.connected', {
+      version: 1,
+      callId,
+      iceState: 'connected',
+    });
+    ownerDevice.disconnect();
+    ownerDevice = undefined;
+
+    reconnectedDevice = await connect(url, { sessionId: callerSession });
+    await sleep(30);
+
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
+    const ended = await emitWithAck(reconnectedDevice, 'call.end', { version: 1, callId });
+    assert.equal(ended.ok, true);
+  } finally {
+    await teardown(ownerDevice, reconnectedDevice);
   }
 });
 

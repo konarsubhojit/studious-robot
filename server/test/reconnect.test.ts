@@ -393,7 +393,7 @@ test('network handoff: call completes cleanly after callee switches networks mid
 
     const finalCall = getCall(callId);
     assert.equal(finalCall?.status, 'ended');
-    assert.equal(finalCall?.endReason, 'ended');
+    assert.equal(finalCall?.endReason, 'user_hangup');
   } finally {
     await teardown(caller, calleeNew);
   }

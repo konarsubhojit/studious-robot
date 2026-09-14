@@ -1765,10 +1765,14 @@ export default function useCallFlow({
     async (callId: string, action: Extract<CallAction, 'cancel' | 'end'>): Promise<boolean> => {
       if (!callId) return false;
       const event = action === 'cancel' ? CLIENT_EVENTS.CALL_CANCEL : CLIENT_EVENTS.CALL_END;
+      const payload =
+        action === 'end'
+          ? { version: SIGNALING_VERSION, callId, reason: 'user_hangup' }
+          : { version: SIGNALING_VERSION, callId };
 
       if (socketRef.current?.connected) {
         try {
-          await signalingRef.current?.request(event, { version: SIGNALING_VERSION, callId });
+          await signalingRef.current?.request(event, payload);
           return true;
         } catch (error) {
           // The server may already have transitioned the call; log and fall
@@ -1790,7 +1794,7 @@ export default function useCallFlow({
           options: {
             method: 'POST',
             headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
-            body: '{}',
+            body: JSON.stringify(action === 'end' ? { reason: 'user_hangup' } : {}),
           },
         }));
         if (response?.ok) return true;

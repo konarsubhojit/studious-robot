@@ -601,6 +601,7 @@ describe('useCallFlow', () => {
   test('CALL_END_REASON_LABELS exports string labels for all expected reason codes', () => {
     const expectedReasons = [
       'ended',
+      'user_hangup',
       'declined',
       'cancelled',
       'timeout',
@@ -4064,6 +4065,10 @@ describe('useCallFlow chat', () => {
 
       await act(async () => {
         await resultRef.current.handleEndCall();
+      });
+      expect(emits).toContainEqual({
+        event: 'call.end',
+        payload: { version: 1, callId: 'call-hb-end-1', reason: 'user_hangup' },
       });
       act(() => {
         tree.update(<TestHook resultRef={resultRef} />);
