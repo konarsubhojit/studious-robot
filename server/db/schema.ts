@@ -16,6 +16,7 @@
  * retention sweep in `src/lib/retention.ts`, not by anything in the schema.
  *   - blocks       per-user call blocklist
  *   - messages     durable chat history
+ *   - conversations  projection of one row per 1:1 message conversation
  */
 
 import { pgTable, uuid, integer, text, timestamp, jsonb, index, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
@@ -261,6 +262,40 @@ const messages = pgTable(
 );
 
 /**
+ * One-row-per-thread projection over `messages`.
+ *
+ * `messages` remains the source of truth; this table exists so a conversation
+ * list page can read the latest-message pointer and unread counters directly.
+ * Participant columns preserve `deriveConversationId`'s sorted ordering, which
+ * lets app code decide whether to touch `unreadA` or `unreadB` with a string
+ * comparison rather than another lookup.
+ */
+const conversations = pgTable(
+  'conversations',
+  {
+    conversationId: text('conversation_id').primaryKey(),
+    participantA: text('participant_a').notNull(),
+    participantB: text('participant_b').notNull(),
+    lastMessageId: text('last_message_id').notNull(),
+    lastCreatedAt: timestamp('last_created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    unreadA: integer('unread_a').notNull().default(0),
+    unreadB: integer('unread_b').notNull().default(0),
+  },
+  (t) => [
+    index('idx_conversations_a').on(
+      t.participantA,
+      desc(t.lastCreatedAt),
+      desc(t.lastMessageId)
+    ),
+    index('idx_conversations_b').on(
+      t.participantB,
+      desc(t.lastCreatedAt),
+      desc(t.lastMessageId)
+    ),
+  ],
+);
+
+/**
  * Queued account erasures (right to erasure).
  *
  * A deletion request is not carried out inside the request that made it: the
@@ -286,4 +321,4 @@ const accountDeletions = pgTable(
   (t) => [index('idx_account_deletions_due').on(t.status, t.scheduledFor)],
 );
 
-export { users, calls, callEvents, devices, auditLog, blocks, messages, accountDeletions };
+export { users, calls, callEvents, devices, auditLog, blocks, messages, conversations, accountDeletions };

@@ -40,6 +40,9 @@ test('schema module exports all tables', () => {
     'devices',
     'auditLog',
     'blocks',
+    'messages',
+    'conversations',
+    'accountDeletions',
   ] as const)) {
     assert.ok(schema[name], `schema.${name} should be defined`);
   }
@@ -77,7 +80,17 @@ test('migrations apply and the Drizzle client round-trips', { skip: !HAS_DB }, a
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`
     );
     const tableNames = rows.map((r) => r.table_name);
-    for (const expected of ['users', 'calls', 'call_events', 'devices', 'audit_log', 'blocks']) {
+    for (const expected of [
+      'users',
+      'calls',
+      'call_events',
+      'devices',
+      'audit_log',
+      'blocks',
+      'messages',
+      'conversations',
+      'account_deletions',
+    ]) {
       assert.ok(tableNames.includes(expected), `missing table ${expected}`);
     }
 
