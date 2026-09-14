@@ -23,6 +23,7 @@ import {
 } from '../src/messageStore.ts';
 import { createMemoryStores } from '../src/stores/index.ts';
 import { createServer } from '../src/index.ts';
+import { runRetentionSweep } from '../src/lib/retention.ts';
 
 const HAS_DB = Boolean(process.env.DATABASE_URL);
 const MIGRATIONS_DIR = path.join(
@@ -204,6 +205,42 @@ test('Postgres conversation projection invariants', { skip: !HAS_DB }, async (t)
         'SELECT unread_a, unread_b FROM conversations'
       );
       assert.deepEqual(row, { unread_a: 1, unread_b: 0 });
+    });
+
+    await t.test('retention refreshes a conversation whose projected message was pruned', async () => {
+      await resetProjection();
+      const conversationId = deriveConversationId('alice', 'bob');
+      await store.saveMessage({
+        conversationId,
+        messageId: 'newest-expired',
+        senderId: 'alice',
+        recipientId: 'bob',
+        body: 'newest',
+        createdAt: '2024-01-02T00:00:00.000Z',
+      });
+      await store.saveMessage({
+        conversationId,
+        messageId: 'older-expired',
+        senderId: 'alice',
+        recipientId: 'bob',
+        body: 'older',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      });
+
+      assert.equal(
+        await runRetentionSweep(db, {
+          now: Date.parse('2025-01-01T00:00:00.000Z'),
+          callRetentionMs: 0,
+          auditRetentionMs: 0,
+          messageRetentionMs: 30 * 24 * 60 * 60 * 1000,
+          batchSize: 1,
+        }).then((result) => result.messages),
+        1
+      );
+
+      const [summary] = await store.listConversations('bob');
+      assert.equal(summary.lastMessage.messageId, 'older-expired');
+      assert.equal(summary.unreadCount, 1);
     });
 
     await t.test('Postgres and memory agree on cap, ties, peers, and unread counts', async () => {
