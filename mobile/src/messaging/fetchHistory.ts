@@ -2,8 +2,15 @@ import { API_ROUTES } from '../../../shared';
 import { bearerAuthHeaders } from '../authHeaders';
 import type { ChatMessage, TimelineCursor } from './types';
 
+const FIRST_PAGE_MESSAGE_LIMIT = 20;
+const BACKFILL_MESSAGE_LIMIT = 50;
+
 function historyParams(peerId: string, cursor: TimelineCursor | null): URLSearchParams {
-  const params = new URLSearchParams({ peerId, include: 'calls', limit: '100' });
+  const params = new URLSearchParams({
+    peerId,
+    include: 'calls',
+    limit: String(cursor ? BACKFILL_MESSAGE_LIMIT : FIRST_PAGE_MESSAGE_LIMIT),
+  });
   if (cursor?.before) params.set('before', cursor.before);
   if (cursor?.beforeType) params.set('beforeType', cursor.beforeType);
   if (cursor?.beforeMessageId) params.set('beforeMessageId', cursor.beforeMessageId);
@@ -11,26 +18,19 @@ function historyParams(peerId: string, cursor: TimelineCursor | null): URLSearch
   return params;
 }
 
-/** Revalidate the bounded cached window, not just the first page's messages. */
+/** Fetch one screen-first page; wider revalidation must not block first paint. */
 export async function fetchHistory(
   authedFetch: Function | null, server: string, peerId: string,
   cursor: TimelineCursor | null, cachedCount: number,
 ): Promise<ChatMessage[] | null> {
-  const pageCount = cursor ? 1 : Math.max(1, Math.ceil(Math.min(cachedCount, 200) / 100));
-  const messages: ChatMessage[] = [];
-  let next = cursor;
-  for (let page = 0; page < pageCount; page += 1) {
-    const params = historyParams(peerId, next);
-    const response = await authedFetch?.((sid: string) => ({
-      url: `${server}${API_ROUTES.MESSAGES}?${params.toString()}`,
-      options: { headers: bearerAuthHeaders(sid) },
-    }));
-    if (!response?.ok) return null;
-    const data = await response.json();
-    if (!Array.isArray(data.messages)) return null;
-    messages.push(...data.messages);
-    if (!data.nextCursor?.before || !data.messages.length) break;
-    next = data.nextCursor;
-  }
-  return messages;
+  void cachedCount;
+  const params = historyParams(peerId, cursor);
+  const response = await authedFetch?.((sid: string) => ({
+    url: `${server}${API_ROUTES.MESSAGES}?${params.toString()}`,
+    options: { headers: bearerAuthHeaders(sid) },
+  }));
+  if (!response?.ok) return null;
+  const data = await response.json();
+  if (!Array.isArray(data.messages)) return null;
+  return data.messages;
 }

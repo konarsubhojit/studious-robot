@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT, deriveConversationId, createMemoryMessageStore, createMessageStore } from '../src/messageStore.ts';
+import { DEFAULT_FIRST_MESSAGE_LIMIT, DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT, deriveConversationId, createMemoryMessageStore, createMessageStore } from '../src/messageStore.ts';
 import { MAX_CONVERSATION_LIMIT } from '../src/messageStore/queries.ts';
 import { asDatabase } from './helpers.ts';
 
@@ -115,6 +115,11 @@ test('listMessages clamps the limit between 1 and 100', async () => {
   await seed(store, conversationId, 5);
 
   assert.equal((await store.listMessages({ conversationId, limit: 2 })).length, 2);
+  assert.equal(
+    (await store.listMessages({ conversationId, limit: DEFAULT_FIRST_MESSAGE_LIMIT })).length,
+    5,
+    'the memory store accepts the screen-sized first-page limit'
+  );
   assert.equal(
     (await store.listMessages({ conversationId, limit: 0 })).length,
     1,

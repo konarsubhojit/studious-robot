@@ -257,25 +257,25 @@ function isSameCallRun(previous: CallActivity, entry: CallActivity): boolean {
  * Calls are skipped: an unread count counts messages, so including call rows
  * would place the divider too early.
  *
- * @param orderedEntries oldest-first
+ * @param newestFirstEntries newest-first
  * @param unreadCount conversation unread count, captured when the screen opened
  * @param currentUserId so the reader's own messages are never counted
  * @returns the anchor entry's key, or null when there is nothing to divide
  */
 export function findUnreadAnchorKey(
-  orderedEntries: TimelineEntry[],
+  newestFirstEntries: TimelineEntry[],
   unreadCount: number,
   currentUserId: string | null | undefined,
 ): string | null {
-  if (!Array.isArray(orderedEntries) || !(unreadCount > 0)) return null;
-  const incoming = orderedEntries.filter(
+  if (!Array.isArray(newestFirstEntries) || !(unreadCount > 0)) return null;
+  const incoming = newestFirstEntries.filter(
     entry => !isCallEntry(entry) && entry.senderId !== currentUserId,
   );
   if (!incoming.length) return null;
   // A count larger than what is loaded anchors at the oldest loaded message
   // rather than dropping the divider: "some of this is new" still beats
   // showing nothing.
-  const anchor = incoming[Math.max(0, incoming.length - unreadCount)];
+  const anchor = incoming[Math.min(unreadCount, incoming.length) - 1];
   return anchor ? entryKey(anchor) : null;
 }
 
@@ -342,7 +342,7 @@ function isMessageGroupEnd(entry: ChatMessage, next: TimelineEntry | undefined):
  * @param orderedEntries oldest-first
  * @param unread where to place the "N new messages" divider, if anywhere
  */
-function buildListItems(
+function buildOldestFirstListItems(
   orderedEntries: TimelineEntry[],
   unread: { anchorId: string | null; count: number } = { anchorId: null, count: 0 },
 ): ListItem[] {
@@ -378,6 +378,23 @@ function buildListItems(
     });
   }
   return items;
+}
+
+/**
+ * Turn the server's newest-first timeline into the newest-first render data an
+ * inverted FlatList expects. Reversing only the already-built row model keeps
+ * the visual order identical to the old non-inverted list: date separators stay
+ * above their day, the unread divider stays below that separator, and grouping
+ * still uses chronological neighbours.
+ *
+ * @param newestFirstEntries server/hook timeline order, newest first
+ * @param unread where to place the "N new messages" divider, if anywhere
+ */
+export function buildListItems(
+  newestFirstEntries: TimelineEntry[],
+  unread: { anchorId: string | null; count: number } = { anchorId: null, count: 0 },
+): ListItem[] {
+  return buildOldestFirstListItems([...newestFirstEntries].reverse(), unread).reverse();
 }
 
 /**
@@ -1582,7 +1599,7 @@ function ConversationTimeline({
   renderItem,
   handleScrollToIndexFailed,
   handleViewableItemsChanged,
-  handleContentSizeChange,
+  handleEndReached,
   isLoadingMessages,
   isRefreshingMessages,
   onRefreshMessages,
@@ -1600,7 +1617,7 @@ function ConversationTimeline({
   renderItem: ({ item }: { item: ListItem }) => ReactElement | null;
   handleScrollToIndexFailed: (info: { index: number }) => void;
   handleViewableItemsChanged: (info: { viewableItems: Array<{ item?: ListItem }> }) => void;
-  handleContentSizeChange: () => void;
+  handleEndReached: () => void;
   isLoadingMessages: boolean;
   isRefreshingMessages: boolean;
   onRefreshMessages?: () => void;
@@ -1626,17 +1643,20 @@ function ConversationTimeline({
         scrollEventThrottle={32}
         keyboardShouldPersistTaps="handled"
         renderItem={renderItem}
+        inverted
         // NOTE: removeClippedSubviews is deliberately omitted: Android clips
         // transformed swipe trays and breaks their touch dispatch.
-        initialNumToRender={15}
-        maxToRenderPerBatch={10}
-        updateCellsBatchingPeriod={50}
-        windowSize={11}
+        // getItemLayout is intentionally absent: text wrapping, media,
+        // attachments, separators and call rows make row heights data-dependent.
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        updateCellsBatchingPeriod={40}
+        windowSize={7}
+        onEndReached={handleEndReached}
+        onEndReachedThreshold={0.2}
         onScrollToIndexFailed={handleScrollToIndexFailed}
         viewabilityConfig={VIEWABILITY_CONFIG}
         onViewableItemsChanged={handleViewableItemsChanged}
-        onContentSizeChange={handleContentSizeChange}
-        onLayout={handleContentSizeChange}
         refreshControl={
           onRefreshMessages ? (
             <RefreshControl refreshing={isRefreshingMessages} onRefresh={onRefreshMessages} />
@@ -1945,29 +1965,25 @@ function ChatConversationScreen({
   // Abort handles for in-flight downloads, keyed by message id, so a cancel
   // tap reaches the right (and only the right) request.
   const downloadAbortRefs = useRef<Record<string, (() => void) | undefined>>({});
-  const hasReachedTopRef = useRef(false);
   const typingIdleTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
   const draftPersistTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
   const didMountDraftPersistRef = useRef(false);
-  const autoScrollFrameRef = useRef((null as number | null));
   const isMountedRef = useRef(true);
   const listRef = useRef((null as FlatList | null));
-  // Tracks the newest message's id so the auto-scroll-to-bottom effect below
-  // only fires for a genuinely new/sent message, not when older history is
-  // paged in at the top (which must not yank the scroll position).
-  const newestMessageIdRef = useRef((null as string | null));
   // Follow intent survives virtualized layout batches and attachment reflows:
   // their scroll events can report a temporary gap below the viewport even
   // though the user never left the bottom. Only manual navigation opts out.
   const shouldFollowLatestRef = useRef(!highlightMessageId);
+  const observedLatestKeyRef = useRef((null as string | null));
   const isUserScrollingRef = useRef(false);
 
-  // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
-  // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
+  // Data arrives newest-first, which is exactly what an inverted FlatList
+  // consumes: index 0 is the visual bottom, so first paint starts at the latest
+  // entry without a layout-driven scroll jump.
   // Frozen on mount: opening the conversation marks it read, so reading the
   // live count would make the divider vanish the moment it appeared.
   const initialUnreadCountRef = useRef(unreadCount);
-  const orderedEntries = useMemo(() => [...messages].reverse(), [messages]);
+  const orderedEntries = messages;
   const unreadAnchorKey = useMemo(
     () =>
       findUnreadAnchorKey(orderedEntries, initialUnreadCountRef.current, currentUserId),
@@ -2047,28 +2063,13 @@ function ChatConversationScreen({
 
   const stopFollowingLatest = useCallback(() => {
     shouldFollowLatestRef.current = false;
-    if (autoScrollFrameRef.current !== null) {
-      cancelAnimationFrame(autoScrollFrameRef.current);
-      autoScrollFrameRef.current = null;
-    }
   }, []);
 
-  const scheduleScrollToEnd = useCallback(() => {
+  const scrollToBottom = useCallback((animated = false) => {
     shouldFollowLatestRef.current = true;
-    if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
-    autoScrollFrameRef.current = requestAnimationFrame(() => {
-      autoScrollFrameRef.current = null;
-      if (!isMountedRef.current || !shouldFollowLatestRef.current) return;
-      // Animated retries chase an estimated end while FlatList is still
-      // measuring. Snap each layout pass, without a fixed retry budget.
-      listRef.current?.scrollToEnd({ animated: false });
-    });
+    if (!isMountedRef.current) return;
+    listRef.current?.scrollToOffset({ offset: 0, animated });
   }, []);
-
-  const handleContentSizeChange = useCallback(() => {
-    if (!shouldFollowLatestRef.current || isUserScrollingRef.current) return;
-    scheduleScrollToEnd();
-  }, [scheduleScrollToEnd]);
 
   // Speak the outcome of the user's own sends. Delivery is otherwise conveyed
   // only by a tick glyph in the bubble footer, which a screen-reader user has
@@ -2096,12 +2097,9 @@ function ChatConversationScreen({
     });
   }, [messages, currentUserId]);
 
-  // Keep the newest message in view: scroll to the bottom whenever the
-  // newest message changes (a message was sent or received) and the user is
-  // already near the bottom, or the new message is the current user's own
-  // (e.g. just sent). Otherwise (user is reading older history and a peer
-  // message arrives) leave the scroll position alone and surface the
-  // "scroll to bottom" FAB instead of yanking the view.
+  // Keep the newest message in view after the first page has painted: index 0
+  // is already the bottom in an inverted list, so the initial history load
+  // needs no scroll. Later newest-entry changes are live sends/receives.
   useEffect(() => {
     const newestMessage = messages[0] ?? null;
     const newestId = newestMessage
@@ -2109,26 +2107,27 @@ function ChatConversationScreen({
         ? newestMessage.callId
         : newestMessage.messageId
       : null;
-    if (newestId !== newestMessageIdRef.current) {
-      newestMessageIdRef.current = newestId;
-      const isOwnMessage =
-        Boolean(newestMessage) &&
-        !isCallEntry((newestMessage as TimelineEntry)) &&
-        (newestMessage as ChatMessage).senderId === currentUserId;
-      if (shouldFollowLatestRef.current || isOwnMessage) {
-        scheduleScrollToEnd();
-        setShowScrollToBottom(false);
-        setNewMessageCount(0);
-      } else {
-        setShowScrollToBottom(true);
-        setNewMessageCount(count => count + 1);
-      }
+    if (newestId === observedLatestKeyRef.current) return;
+    const hadObservedLatest = observedLatestKeyRef.current !== null;
+    observedLatestKeyRef.current = newestId;
+    if (!newestId || !hadObservedLatest) return;
+    const isOwnMessage =
+      Boolean(newestMessage) &&
+      !isCallEntry((newestMessage as TimelineEntry)) &&
+      (newestMessage as ChatMessage).senderId === currentUserId;
+    if (shouldFollowLatestRef.current || isOwnMessage) {
+      scrollToBottom();
+      setShowScrollToBottom(false);
+      setNewMessageCount(0);
+    } else {
+      setShowScrollToBottom(true);
+      setNewMessageCount(count => count + 1);
     }
-  }, [messages, currentUserId, scheduleScrollToEnd]);
+  }, [messages, currentUserId, scrollToBottom]);
 
   // Deep link from a search result: scroll to the message the conversation was
   // opened at, once it is present in the loaded page. `scrollToIndex` is used
-  // rather than `scrollToEnd` because the target is usually mid-history, and a
+  // rather than bottom scrolling because the target is usually mid-history, and a
   // missing index (the message is older than the loaded page) is simply left
   // alone until more history is paged in.
   useEffect(() => {
@@ -2169,10 +2168,10 @@ function ChatConversationScreen({
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const subscription = Keyboard.addListener(showEvent, () => {
-      scheduleScrollToEnd();
+      scrollToBottom();
     });
     return () => subscription.remove();
-  }, [scheduleScrollToEnd]);
+  }, [scrollToBottom]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -2180,7 +2179,6 @@ function ChatConversationScreen({
       isMountedRef.current = false;
       clearTimeout(typingIdleTimerRef.current);
       clearTimeout(draftPersistTimerRef.current);
-      if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
     };
   }, []);
 
@@ -2480,16 +2478,8 @@ function ChatConversationScreen({
   const handleScroll = useCallback(
       (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-      if (isUserScrollingRef.current && contentOffset.y <= 0 && !hasReachedTopRef.current) {
-        hasReachedTopRef.current = true;
-        onLoadOlder?.();
-      } else if (contentOffset.y > 0) {
-        hasReachedTopRef.current = false;
-      }
-
       if (contentSize && layoutMeasurement) {
-        const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
-        const isNearBottom = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD;
+        const isNearBottom = contentOffset.y <= NEAR_BOTTOM_THRESHOLD;
         if (isUserScrollingRef.current) shouldFollowLatestRef.current = isNearBottom;
         if (isNearBottom) {
           setShowScrollToBottom(false);
@@ -2497,8 +2487,12 @@ function ChatConversationScreen({
         }
       }
     },
-    [onLoadOlder],
+    [],
   );
+
+  const handleEndReached = useCallback(() => {
+    onLoadOlder?.();
+  }, [onLoadOlder]);
 
   const handleScrollBeginDrag = useCallback(() => {
     isUserScrollingRef.current = true;
@@ -2510,12 +2504,11 @@ function ChatConversationScreen({
     isUserScrollingRef.current = false;
   }, [handleScroll]);
 
-  // Pin the day of the topmost visible message: FlatList reports viewable
-  // items in render order, so the first message item in that list is the one
-  // at the top of the viewport.
+  // Pin the day of the topmost visible message: in an inverted list, the
+  // topmost visible row is the oldest among the reported newest-first items.
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<{ item?: ListItem; }>; }) => {
-      const topItem = viewableItems.find(
+      const topItem = [...viewableItems].reverse().find(
         entry => entry.item?.type === 'message' || entry.item?.type === 'call',
       );
       const item = topItem?.item;
@@ -2630,10 +2623,10 @@ function ChatConversationScreen({
   }, []);
 
   const handleScrollToBottomPress = useCallback(() => {
-    scheduleScrollToEnd();
+    scrollToBottom(true);
     setShowScrollToBottom(false);
     setNewMessageCount(0);
-  }, [scheduleScrollToEnd]);
+  }, [scrollToBottom]);
 
   return (
     <KeyboardAvoidingView
@@ -2659,10 +2652,10 @@ function ChatConversationScreen({
           handleScroll={handleScroll}
           handleScrollBeginDrag={handleScrollBeginDrag}
           handleScrollEndDrag={handleScrollEndDrag}
+          handleEndReached={handleEndReached}
           renderItem={renderItem}
           handleScrollToIndexFailed={handleScrollToIndexFailed}
           handleViewableItemsChanged={handleViewableItemsChanged}
-          handleContentSizeChange={handleContentSizeChange}
           isLoadingMessages={isLoadingMessages}
           isRefreshingMessages={isRefreshingMessages}
           onRefreshMessages={onRefreshMessages}

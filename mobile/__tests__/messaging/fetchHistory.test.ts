@@ -6,24 +6,32 @@ const message = (messageId: string, extra: Partial<ChatMessage> = {}) => ({
   messageId, createdAt: '2026-01-01T00:00:00.000Z', body: 'cached', ...extra,
 } as ChatMessage);
 
-test('revalidates both pages of a cached window with the full call cursor', async () => {
+test('fetches one screen-sized page before first paint regardless of cached window size', async () => {
   const cursor = { before: '2026-01-01T00:00:00.000Z', beforeType: 'call', beforeCallId: 'call-1' };
   const fetch = jest.fn()
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [message('first')], nextCursor: cursor }) })
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [message('older', { deletedAt: 'now', body: '' })] }) });
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [message('first')], nextCursor: cursor }) });
   const page = await fetchHistory(fetch, 'https://example.test', 'bob', null, 200);
-  expect(page?.map(row => row.messageId)).toEqual(['first', 'older']);
-  const request = fetch.mock.calls[1][0]('token');
-  expect(request.url).toContain('beforeType=call');
-  expect(request.url).toContain('beforeCallId=call-1');
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(page?.map(row => row.messageId)).toEqual(['first']);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const request = fetch.mock.calls[0][0]('token');
+  expect(request.url).toContain('limit=20');
 });
 
-test('partial refresh failure leaves the existing cache authoritative rather than deleting rows', async () => {
+test('backfill fetches one larger page with the full call cursor', async () => {
+  const cursor = { before: '2026-01-01T00:00:00.000Z', beforeType: 'call', beforeCallId: 'call-1' };
   const fetch = jest.fn()
-    .mockResolvedValueOnce({
-      ok: true, json: async () => ({ messages: [message('first')], nextCursor: { before: '2026-01-01' } }),
-    })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [message('older')] }) });
+  const page = await fetchHistory(fetch, 'https://example.test', 'bob', cursor, 200);
+  expect(page?.map(row => row.messageId)).toEqual(['older']);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const request = fetch.mock.calls[0][0]('token');
+  expect(request.url).toContain('limit=50');
+  expect(request.url).toContain('beforeType=call');
+  expect(request.url).toContain('beforeCallId=call-1');
+});
+
+test('refresh failure leaves the existing cache authoritative rather than deleting rows', async () => {
+  const fetch = jest.fn()
     .mockResolvedValueOnce({ ok: false, status: 503 });
   expect(await fetchHistory(fetch, 'https://example.test', 'bob', null, 200)).toBeNull();
 });

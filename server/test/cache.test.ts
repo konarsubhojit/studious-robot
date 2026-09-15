@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createCache, createMemoryCache, createRedisCache, invalidateCache, subscribeToCacheInvalidations, CACHE_INVALIDATE_CHANNEL, conversationsCacheKey, messagesCacheKey, messagesCachePrefix, callHistoryCacheKey, callHistoryCachePrefix } from '../src/cache.ts';
+import { createCache, createMemoryCache, createRedisCache, invalidateCache, subscribeToCacheInvalidations, CACHE_INVALIDATE_CHANNEL, conversationsCacheKey, messagesCacheKey, messagesFirstPageCacheKey, messagesCachePrefix, callHistoryCacheKey, callHistoryCachePrefix } from '../src/cache.ts';
 import { createMemoryMessageBus } from '../src/messageBus.ts';
 
 /** Resolve after pending `setImmediate`/microtasks so async delivery lands. */
@@ -72,6 +72,7 @@ function createFakeRedisClient() {
 test('cache keys follow the documented namespaced scheme', () => {
   assert.equal(conversationsCacheKey('alice'), 'conv::alice');
   assert.equal(messagesCacheKey('alice:bob', 50), 'msg::alice:bob::50');
+  assert.equal(messagesFirstPageCacheKey('alice:bob'), 'msg::alice:bob::first');
   assert.equal(messagesCachePrefix('alice:bob'), 'msg::alice:bob::');
   assert.equal(callHistoryCacheKey('alice', null, 20), 'callhist::alice::*::20');
   assert.equal(callHistoryCacheKey('alice', 'missed', 20), 'callhist::alice::missed::20');
