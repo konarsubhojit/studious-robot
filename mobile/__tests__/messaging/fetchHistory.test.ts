@@ -7,7 +7,7 @@ const message = (messageId: string, extra: Partial<ChatMessage> = {}) => ({
 } as ChatMessage);
 
 test('fetches one screen-sized page before first paint regardless of cached window size', async () => {
-  const cursor = { before: '2026-01-01T00:00:00.000Z', beforeType: 'call', beforeCallId: 'call-1' };
+  const cursor = { before: '2026-01-01T00:00:00.000Z', beforeType: 'call' as const, beforeCallId: 'call-1' };
   const fetch = jest.fn()
     .mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [message('first')], nextCursor: cursor }) });
   const page = await fetchHistory(fetch, 'https://example.test', 'bob', null, 200);
@@ -18,7 +18,7 @@ test('fetches one screen-sized page before first paint regardless of cached wind
 });
 
 test('backfill fetches one larger page with the full call cursor', async () => {
-  const cursor = { before: '2026-01-01T00:00:00.000Z', beforeType: 'call', beforeCallId: 'call-1' };
+  const cursor = { before: '2026-01-01T00:00:00.000Z', beforeType: 'call' as const, beforeCallId: 'call-1' };
   const fetch = jest.fn()
     .mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [message('older')] }) });
   const page = await fetchHistory(fetch, 'https://example.test', 'bob', cursor, 200);

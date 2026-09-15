@@ -1137,7 +1137,6 @@ describe('ChatConversationScreen', () => {
       const message = makeMessage();
       const tree = render({ ...props, messages: [message] });
       act(() => { jest.runOnlyPendingTimers(); });
-      const list = findByTestId(tree, 'chat-message-list');
       const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToOffset');
       act(() => {
         tree.update(<ChatConversationScreen {...props} messages={[{ ...message, readAt: message.createdAt }]} />);

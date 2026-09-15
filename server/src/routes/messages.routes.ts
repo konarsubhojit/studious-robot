@@ -118,7 +118,7 @@ async function readMessagePage({
       : messagesCacheKey(conversationId, readLimit);
   const cacheStartedAt = Date.now();
   const cached = cacheKey ? await readCached(state, cacheKey) : undefined;
-  if (Array.isArray(cached) && cached.length >= readLimit) return cached.slice(0, readLimit);
+  if (Array.isArray(cached)) return cached.slice(0, readLimit);
   const messages = (await state.messageStore.listMessages({
     conversationId,
     limit: readLimit,
