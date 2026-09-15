@@ -16,6 +16,7 @@ import { summariseConversations } from '../src/messageStore/conversations.ts';
 import { escapeLikePattern } from '../src/messageStore/pgStore.ts';
 import {
   DEFAULT_MESSAGE_LIMIT,
+  DEFAULT_FIRST_MESSAGE_LIMIT,
   MAX_MESSAGE_LIMIT,
   bodyMatches,
   clampLimit,
@@ -56,6 +57,8 @@ test('a requested page size is clamped into the supported range', () => {
   assert.equal(clampLimit(-10), 1);
   assert.equal(clampLimit(10.7), 10);
   assert.equal(clampLimit(MAX_MESSAGE_LIMIT + 1), MAX_MESSAGE_LIMIT);
+  assert.equal(clampLimit(DEFAULT_FIRST_MESSAGE_LIMIT), DEFAULT_FIRST_MESSAGE_LIMIT);
+  assert.ok(DEFAULT_FIRST_MESSAGE_LIMIT < DEFAULT_MESSAGE_LIMIT);
 });
 
 test('a search term is trimmed and matched literally', () => {

@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Text } from 'react-native';
 import ChatConversationScreen, {
+  buildListItems,
   findUnreadAnchorKey,
 } from '../../src/components/ChatConversationScreen';
 import { mergeHistoryPage } from '../../src/messaging/messageHistory';
@@ -146,7 +147,7 @@ describe('ChatConversationScreen', () => {
 
     const list = findByTestId(tree, 'chat-message-list');
     const messageItems = list.props.data.filter((item: any) => item.type === 'message');
-    expect(messageItems.map((item: any) => item.message.messageId)).toEqual(['m1', 'm2']);
+    expect(messageItems.map((item: any) => item.message.messageId)).toEqual(['m2', 'm1']);
   });
 
   test('renders calls and messages as one chronological timeline', () => {
@@ -167,7 +168,7 @@ describe('ChatConversationScreen', () => {
       list.props.data
         .filter((item: any) => item.type === 'message' || item.type === 'call')
         .map((item: any) => item.message?.messageId ?? item.entries?.[0]?.callId),
-    ).toEqual(['m1', 'c1', 'm3']);
+    ).toEqual(['m3', 'c1', 'm1']);
   });
 
   test('renders a newly sent message after older messages and newer call entries', () => {
@@ -196,7 +197,7 @@ describe('ChatConversationScreen', () => {
       (item: any) => item.type === 'message' || item.type === 'call',
     );
     expect(timelineItems.map((item: any) => item.message?.messageId ?? item.entries?.[0]?.callId))
-      .toEqual(['old-message', 'call-513', 'new-outgoing']);
+      .toEqual(['new-outgoing', 'call-513', 'old-message']);
     expect(timelineItems[1].entries.map((entry: any) => entry.callId)).toEqual([
       'call-513',
       'call-520',
@@ -236,7 +237,7 @@ describe('ChatConversationScreen', () => {
       list.props.data
         .filter((item: any) => item.type === 'message' || item.type === 'call')
         .map((item: any) => item.message?.messageId ?? item.entries?.[0]?.callId),
-    ).toEqual(['before-call', 'call-520', 'after-call']);
+    ).toEqual(['after-call', 'call-520', 'before-call']);
 
     // The day separator and the bubble times both come from parsing these
     // timestamps, so they are silently lost — not errored on — when a value is
@@ -626,8 +627,7 @@ describe('ChatConversationScreen', () => {
     });
     const list = findByTestId(tree, 'chat-message-list');
     act(() => {
-      list.props.onScrollBeginDrag();
-      list.props.onScroll({ nativeEvent: { contentOffset: { y: 0 } } });
+      list.props.onEndReached();
     });
     expect(onLoadOlder).toHaveBeenCalled();
   });
@@ -670,7 +670,7 @@ describe('ChatConversationScreen', () => {
 
     const list = findByTestId(tree, 'chat-message-list');
     const messageItems = list.props.data.filter((item: any) => item.type === 'message');
-    expect(messageItems.map((item: any) => item.isGroupEnd)).toEqual([false, true]);
+    expect(messageItems.map((item: any) => item.isGroupEnd)).toEqual([true, false]);
 
     const ticks = findAllByTestId(tree, 'chat-message-tick');
     expect(ticks).toHaveLength(1);
@@ -927,6 +927,48 @@ describe('ChatConversationScreen', () => {
     expect(onRefreshMessages).toHaveBeenCalled();
   });
 
+  test('message list is inverted and consumes newest-first data unreversed', () => {
+    const newest = makeMessage({ messageId: 'm2', createdAt: '2026-01-01T00:01:00.000Z' });
+    const older = makeMessage({ messageId: 'm1', createdAt: '2026-01-01T00:00:00.000Z' });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [newest, older],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    const list = findByTestId(tree, 'chat-message-list');
+    expect(list.props.inverted).toBe(true);
+    const messageItems = list.props.data.filter((item: any) => item.type === 'message');
+    expect(messageItems.map((item: any) => item.message.messageId)).toEqual(['m2', 'm1']);
+  });
+
+  test('buildListItems preserves the old visual separator, divider and group order', () => {
+    const oldest = makeMessage({
+      messageId: 'm1',
+      senderId: 'user-bob',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    const unread = makeMessage({
+      messageId: 'm2',
+      senderId: 'user-bob',
+      createdAt: '2026-01-02T00:00:00.000Z',
+    });
+    const newest = makeMessage({
+      messageId: 'm3',
+      senderId: 'user-bob',
+      createdAt: '2026-01-02T00:01:00.000Z',
+    });
+    const items = buildListItems([newest, unread, oldest] as any, {
+      anchorId: 'm2',
+      count: 2,
+    });
+    expect(items.map((item: any) => item.type === 'message' ? item.message.messageId : item.type))
+      .toEqual(['m3', 'm2', 'unread', 'date', 'm1', 'date']);
+    expect(items.filter((item: any) => item.type === 'message').map((item: any) => item.isGroupEnd))
+      .toEqual([true, false, true]);
+  });
+
   test('auto-scrolls to the newest message when it changes (new message sent/received)', () => {
     const tree = render({
       peerId: 'user-bob',
@@ -940,7 +982,7 @@ describe('ChatConversationScreen', () => {
     });
 
     const flatList = tree.root.findByType(FlatList).instance;
-    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    const scrollSpy = jest.spyOn(flatList, 'scrollToOffset');
 
     act(() => {
       tree.update(
@@ -957,10 +999,10 @@ describe('ChatConversationScreen', () => {
       jest.runOnlyPendingTimers();
     });
 
-    expect(scrollSpy).toHaveBeenCalled();
+    expect(scrollSpy).toHaveBeenCalledWith({ offset: 0, animated: false });
   });
 
-  test('retries latest scroll after delayed content-size changes while near bottom', () => {
+  test('does not chase delayed content-size changes after the inverted first paint', () => {
     const tree = render({
       peerId: 'user-bob',
       messages: [makeMessage({ messageId: 'm1' })],
@@ -973,7 +1015,7 @@ describe('ChatConversationScreen', () => {
     });
 
     const flatList = tree.root.findByType(FlatList).instance;
-    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    const scrollSpy = jest.spyOn(flatList, 'scrollToOffset');
     const list = findByTestId(tree, 'chat-message-list');
 
     act(() => {
@@ -992,14 +1034,10 @@ describe('ChatConversationScreen', () => {
     });
     scrollSpy.mockClear();
 
-    act(() => {
-      list.props.onContentSizeChange();
-    });
-    act(() => {
-      jest.runOnlyPendingTimers();
-    });
+    expect(list.props.onContentSizeChange).toBeUndefined();
+    expect(list.props.onLayout).toBeUndefined();
 
-    expect(scrollSpy).toHaveBeenCalled();
+    expect(scrollSpy).not.toHaveBeenCalled();
   });
 
   describe('following the latest timeline entry', () => {
@@ -1017,7 +1055,7 @@ describe('ChatConversationScreen', () => {
       },
     });
 
-    test('follows every layout batch of a long mixed history, even when the newest entry is unchanged', () => {
+    test('keeps newest-first render data stable across a long mixed history', () => {
       const onLoadOlder = jest.fn();
       const page = Array.from({ length: 80 }, (_, index) => {
         const createdAt = new Date(Date.UTC(2026, 8, 11, 10, index)).toISOString();
@@ -1029,7 +1067,7 @@ describe('ChatConversationScreen', () => {
       const history = mergeHistoryPage([], page as any);
       const tree = render({ ...props, messages: [], isLoadingMessages: true, onLoadOlder });
       const list = findByTestId(tree, 'chat-message-list');
-      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToOffset');
 
       act(() => {
         list.props.onScroll(scrollEvent(0));
@@ -1044,16 +1082,15 @@ describe('ChatConversationScreen', () => {
         scrollSpy.mockClear();
         act(() => {
           list.props.onScroll(scrollEvent(500, 2000 + batch * 300));
-          list.props.onContentSizeChange(400, 2000 + batch * 300);
         });
         act(() => { jest.runOnlyPendingTimers(); });
-        expect(scrollSpy).toHaveBeenCalledWith({ animated: false });
+        expect(scrollSpy).not.toHaveBeenCalled();
       }
 
       const entries = list.props.data.filter((item: any) => item.type === 'call' || item.type === 'message');
       expect(entries.map((item: any) => item.message?.messageId ?? item.entries[0].callId))
-        .toEqual(page.map(entry => 'callId' in entry ? entry.callId : entry.messageId));
-      expect(entries[entries.length - 1].message.messageId).toBe('m79');
+        .toEqual([...page].reverse().map(entry => 'callId' in entry ? entry.callId : entry.messageId));
+      expect(entries[0].message.messageId).toBe('m79');
       expect(onLoadOlder).not.toHaveBeenCalled();
     });
 
@@ -1061,7 +1098,7 @@ describe('ChatConversationScreen', () => {
       const newest = makeMessage({ messageId: 'm2' });
       const tree = render({ ...props, messages: [newest] });
       const list = findByTestId(tree, 'chat-message-list');
-      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToOffset');
       act(() => {
         list.props.onScrollBeginDrag();
         list.props.onScroll(scrollEvent(200));
@@ -1072,47 +1109,40 @@ describe('ChatConversationScreen', () => {
         tree.update(<ChatConversationScreen {...props} messages={[newest, makeMessage({ messageId: 'm1' })]} />);
       });
       act(() => {
-        list.props.onContentSizeChange(400, 2500);
-        list.props.onLayout();
         jest.runOnlyPendingTimers();
       });
       expect(scrollSpy).not.toHaveBeenCalled();
     });
 
-    test('returning to the bottom resumes following late content and viewport changes', () => {
+    test('returning to the bottom resumes following genuinely new messages', () => {
       const tree = render({ ...props, messages: [makeMessage()] });
       const list = findByTestId(tree, 'chat-message-list');
       act(() => {
         list.props.onScrollBeginDrag();
-        list.props.onScroll(scrollEvent(100));
-        list.props.onScrollEndDrag(scrollEvent(100));
-        list.props.onScrollBeginDrag();
         list.props.onScroll(scrollEvent(1500));
         list.props.onScrollEndDrag(scrollEvent(1500));
+        list.props.onScrollBeginDrag();
+        list.props.onScroll(scrollEvent(0));
+        list.props.onScrollEndDrag(scrollEvent(0));
         jest.runOnlyPendingTimers();
       });
-      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
-      act(() => { list.props.onContentSizeChange(400, 2400); });
-      act(() => { jest.runOnlyPendingTimers(); });
-      expect(scrollSpy).toHaveBeenCalledWith({ animated: false });
-      scrollSpy.mockClear();
-      act(() => { list.props.onLayout(); });
-      act(() => { jest.runOnlyPendingTimers(); });
-      expect(scrollSpy).toHaveBeenCalledWith({ animated: false });
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToOffset');
+      act(() => {
+        tree.update(<ChatConversationScreen {...props} messages={[makeMessage({ messageId: 'm2' }), makeMessage()]} />);
+      });
+      expect(scrollSpy).toHaveBeenCalledWith({ offset: 0, animated: false });
     });
 
-    test('receipt updates do not cancel a pending layout scroll', () => {
+    test('receipt updates do not trigger an inverted-bottom scroll', () => {
       const message = makeMessage();
       const tree = render({ ...props, messages: [message] });
       act(() => { jest.runOnlyPendingTimers(); });
-      const list = findByTestId(tree, 'chat-message-list');
-      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToOffset');
       act(() => {
-        list.props.onContentSizeChange(400, 2000);
         tree.update(<ChatConversationScreen {...props} messages={[{ ...message, readAt: message.createdAt }]} />);
       });
       act(() => { jest.runOnlyPendingTimers(); });
-      expect(scrollSpy).toHaveBeenCalled();
+      expect(scrollSpy).not.toHaveBeenCalled();
     });
 
     test('opening a search result does not follow later layout changes to the bottom', () => {
@@ -1121,11 +1151,10 @@ describe('ChatConversationScreen', () => {
         messages: [makeMessage({ messageId: 'm2' }), makeMessage({ messageId: 'm1' })],
         highlightMessageId: 'm1',
       });
-      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToOffset');
       const list = findByTestId(tree, 'chat-message-list');
       act(() => { jest.runOnlyPendingTimers(); });
-      act(() => { list.props.onContentSizeChange(400, 2200); });
-      act(() => { jest.runOnlyPendingTimers(); });
+      expect(list.props.onContentSizeChange).toBeUndefined();
       expect(scrollSpy).not.toHaveBeenCalled();
     });
   });
@@ -1144,7 +1173,7 @@ describe('ChatConversationScreen', () => {
     });
 
     const flatList = tree.root.findByType(FlatList).instance;
-    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    const scrollSpy = jest.spyOn(flatList, 'scrollToOffset');
     scrollSpy.mockClear();
 
     act(() => {
@@ -1185,7 +1214,7 @@ describe('ChatConversationScreen', () => {
     const [, showListener] = (showListenerCall as any[]);
 
     const flatList = tree.root.findByType(FlatList).instance;
-    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    const scrollSpy = jest.spyOn(flatList, 'scrollToOffset');
     scrollSpy.mockClear();
 
     act(() => {
@@ -1195,7 +1224,7 @@ describe('ChatConversationScreen', () => {
       jest.runOnlyPendingTimers();
     });
 
-    expect(scrollSpy).toHaveBeenCalled();
+    expect(scrollSpy).toHaveBeenCalledWith({ offset: 0, animated: false });
   });
 
   test('unsubscribes the keyboard listener on unmount', () => {
@@ -1295,7 +1324,7 @@ describe('ChatConversationScreen', () => {
     expect(fab).not.toBeNull();
 
     const flatList = tree.root.findByType(FlatList).instance;
-    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    const scrollSpy = jest.spyOn(flatList, 'scrollToOffset');
 
     act(() => {
       fab.props.onPress();
@@ -1304,7 +1333,7 @@ describe('ChatConversationScreen', () => {
       jest.runOnlyPendingTimers();
     });
 
-    expect(scrollSpy).toHaveBeenCalled();
+    expect(scrollSpy).toHaveBeenCalledWith({ offset: 0, animated: true });
     expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
   });
 
@@ -1399,7 +1428,7 @@ describe('ChatConversationScreen', () => {
     act(() => {
       list.props.onScroll({
         nativeEvent: {
-          contentOffset: { y: 490 },
+          contentOffset: { y: 0 },
           contentSize: { height: 1000 },
           layoutMeasurement: { height: 500 },
         },
@@ -2348,7 +2377,7 @@ describe('ChatConversationScreen attachments', () => {
 
     const toggles = findAllPressableByTestId(tree, 'chat-audio-player-toggle');
     await act(async () => {
-      await toggles[0].props.onPress();
+      await toggles[1].props.onPress();
     });
     expect(mockSound.startPlayer).toHaveBeenLastCalledWith(
       'https://media.test/chatblobs/c/first.m4a',
@@ -2716,10 +2745,10 @@ describe('findUnreadAnchorKey', () => {
 
   test('anchors N incoming messages back from the end', () => {
     const ordered: any = [
-      msg('m1', 'user-bob'),
-      msg('m2', 'user-alice'),
-      msg('m3', 'user-bob'),
       msg('m4', 'user-bob'),
+      msg('m3', 'user-bob'),
+      msg('m2', 'user-alice'),
+      msg('m1', 'user-bob'),
     ];
     expect(findUnreadAnchorKey(ordered, 2, 'user-alice')).toBe('m3');
   });
@@ -2730,7 +2759,7 @@ describe('findUnreadAnchorKey', () => {
   });
 
   test('anchors at the oldest loaded message when the count exceeds the page', () => {
-    const ordered: any = [msg('m1', 'user-bob'), msg('m2', 'user-bob')];
+    const ordered: any = [msg('m2', 'user-bob'), msg('m1', 'user-bob')];
     expect(findUnreadAnchorKey(ordered, 50, 'user-alice')).toBe('m1');
   });
 
