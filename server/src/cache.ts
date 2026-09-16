@@ -65,6 +65,13 @@ function messagesCacheKey(conversationId: string, limit: number): string {
 }
 
 /**
+ * @returns Cache key for the screen-sized first page, independent of its size.
+ */
+function messagesFirstPageCacheKey(conversationId: string): string {
+  return `msg::${conversationId}::first`;
+}
+
+/**
  * @returns Prefix matching every page-size variant for a conversation.
  */
 function messagesCachePrefix(conversationId: string): string {
@@ -427,6 +434,7 @@ export {
   conversationsCacheKey,
   conversationsCachePrefix,
   messagesCacheKey,
+  messagesFirstPageCacheKey,
   messagesCachePrefix,
   callHistoryCacheKey,
   callHistoryCachePrefix,

@@ -8,7 +8,9 @@
  * between the Postgres store and the in-memory one.
  */
 
-/** Default page size for `listMessages`. */
+/** First chat-open page size; enough for a screen without pre-rendering history. */
+export const DEFAULT_FIRST_MESSAGE_LIMIT = 20;
+/** Default backfill page size for `listMessages`. */
 export const DEFAULT_MESSAGE_LIMIT = 50;
 /** Maximum page size for `listMessages`. */
 export const MAX_MESSAGE_LIMIT = 100;

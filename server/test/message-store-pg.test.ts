@@ -22,6 +22,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 
 import * as schema from '../db/schema.ts';
 import { createPgMessageStore } from '../src/messageStore/pgStore.ts';
+import { DEFAULT_FIRST_MESSAGE_LIMIT } from '../src/messageStore.ts';
 import type { StoredMessage } from '../src/messageStore/types.ts';
 
 /** One statement as the driver received it. */
@@ -134,6 +135,13 @@ test('listMessages clamps the page size rather than trusting the caller', async 
   await store.listMessages({ conversationId: 'alice:bob', limit: 10_000 });
 
   assert.equal(queries[0].params.at(-1), 100);
+
+  await store.listMessages({ conversationId: 'alice:bob', limit: DEFAULT_FIRST_MESSAGE_LIMIT });
+  assert.equal(
+    queries[1].params.at(-1),
+    DEFAULT_FIRST_MESSAGE_LIMIT,
+    'the Postgres store accepts the same screen-sized first-page limit'
+  );
 });
 
 // ─── searchMessages ───────────────────────────────────────────────────────────

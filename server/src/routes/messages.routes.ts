@@ -2,9 +2,9 @@ import express from 'express';
 import { isBlocked } from '../security.ts';
 import { getSessionFromRequest } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
-import { deriveConversationId, clampMessageLimit } from '../messageStore.ts';
+import { DEFAULT_FIRST_MESSAGE_LIMIT, deriveConversationId, clampMessageLimit } from '../messageStore.ts';
 import { toCallTimelineEntry, readCallsBetween, augmentConversationsWithCalls, markMissedCallsRead, mergeTimeline } from '../domain/callTimeline.ts';
-import { readCached, writeCached, writeCachedIfNotInvalidated, invalidateCache, conversationsCacheKey, conversationsCachePrefix, messagesCacheKey, messagesCachePrefix } from '../cache.ts';
+import { readCached, writeCached, writeCachedIfNotInvalidated, invalidateCache, conversationsCacheKey, conversationsCachePrefix, messagesCacheKey, messagesFirstPageCacheKey, messagesCachePrefix } from '../cache.ts';
 import { emitToUserSockets } from '../domain/notifications.ts';
 import { getPresenceSnapshot } from '../lib/state.ts';
 import { SIGNALING_VERSION } from '../config.ts';
@@ -110,10 +110,15 @@ async function readMessagePage({
   cursor: TimelineCursor | null;
   readLimit: number;
 }): Promise<MessageRecord[]> {
-  const cacheKey = cursor ? null : messagesCacheKey(conversationId, readLimit);
+  const firstPageReadLimit = DEFAULT_FIRST_MESSAGE_LIMIT + 1;
+  const cacheKey = cursor
+    ? null
+    : readLimit <= firstPageReadLimit
+      ? messagesFirstPageCacheKey(conversationId)
+      : messagesCacheKey(conversationId, readLimit);
   const cacheStartedAt = Date.now();
   const cached = cacheKey ? await readCached(state, cacheKey) : undefined;
-  if (cached !== undefined) return cached;
+  if (Array.isArray(cached)) return cached.slice(0, readLimit);
   const messages = (await state.messageStore.listMessages({
     conversationId,
     limit: readLimit,
