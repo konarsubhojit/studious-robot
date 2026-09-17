@@ -469,7 +469,20 @@ export function getTurnDiagnostics(): { configured: boolean; provider: 'none' | 
  * `getParameters` / `setParameters` (e.g. older react-native-webrtc builds)
  * are silently skipped.  The function never throws.
  */
-export async function applyBitrateConstraints(pc: RTCPeerConnection, opts: { videoMaxBps?: number; audioMaxBps?: number; } = {}): Promise<void> {
+export type VideoSenderConstraints = {
+  videoMaxBps?: number;
+  videoMaxFramerate?: number;
+  videoResolutionScale?: number;
+  audioMaxBps?: number;
+};
+
+export const VIDEO_ADAPTATION_CONSTRAINTS = {
+  standard: { videoMaxBps: VIDEO_MAX_BITRATE_BPS },
+  constrained: { videoMaxBps: 600_000, videoMaxFramerate: 15, videoResolutionScale: 2 },
+  minimal: { videoMaxBps: 250_000, videoMaxFramerate: 10, videoResolutionScale: 4 },
+} as const;
+
+export async function applyBitrateConstraints(pc: RTCPeerConnection, opts: VideoSenderConstraints = {}): Promise<void> {
   const videoMaxBps = opts.videoMaxBps ?? VIDEO_MAX_BITRATE_BPS;
   const audioMaxBps = opts.audioMaxBps ?? AUDIO_MAX_BITRATE_BPS;
 
@@ -482,8 +495,14 @@ export async function applyBitrateConstraints(pc: RTCPeerConnection, opts: { vid
         if (!Array.isArray(params.encodings) || params.encodings.length === 0) {
           params.encodings = [({} as (typeof params.encodings)[number])];
         }
-        const maxBitrate = sender.track?.kind === 'audio' ? audioMaxBps : videoMaxBps;
-        params.encodings[0] = { ...params.encodings[0], maxBitrate };
+        const isAudio = sender.track?.kind === 'audio';
+        const maxBitrate = isAudio ? audioMaxBps : videoMaxBps;
+        params.encodings[0] = {
+          ...params.encodings[0],
+          maxBitrate,
+          ...(!isAudio && opts.videoMaxFramerate ? { maxFramerate: opts.videoMaxFramerate } : {}),
+          ...(!isAudio && opts.videoResolutionScale ? { scaleResolutionDownBy: opts.videoResolutionScale } : {}),
+        };
         await sender.setParameters(params);
       } catch {
         // setParameters is best-effort; silently skip unsupported senders.

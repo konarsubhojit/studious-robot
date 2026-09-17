@@ -82,6 +82,10 @@ export type SettingsScreenProps = {
   hapticsEnabled?: boolean;
   /** Toggle haptic feedback. */
   onToggleHaptics?: () => void;
+  /** Reduce video use and adapt it to sustained poor call quality. */
+  dataSaverEnabled?: boolean;
+  /** Toggle the opt-in data saver policy. */
+  onToggleDataSaver?: () => void;
   /** Current WebRTC ICE transport policy. */
   iceTransportPolicy?: string;
   /** Persist the WebRTC ICE transport policy used for new calls. */
@@ -548,6 +552,8 @@ function SettingsScreen({
   onToggleAutoLighting,
   hapticsEnabled = true,
   onToggleHaptics,
+  dataSaverEnabled = false,
+  onToggleDataSaver,
   iceTransportPolicy = ICE_TRANSPORT_POLICIES.ALL,
   onChangeIceTransportPolicy,
   messageNotificationsEnabled = true,
@@ -702,6 +708,24 @@ function SettingsScreen({
           autoLightingEnabled={autoLightingEnabled}
           hapticsEnabled={hapticsEnabled}
         />
+        {onToggleDataSaver ? (
+          <>
+            <SectionHeader title="Data policy" icon="settingsStorage" />
+            <Switch
+              label="Data saver"
+              hint="Uses lower video quality and only steps down after sustained poor connection. Audio stays prioritized."
+              value={dataSaverEnabled}
+              onValueChange={onToggleDataSaver}
+              testID="settings-data-saver"
+            />
+            <ListItem
+              title="Audio-only calls"
+              subtitle="Choose Audio call when starting a call to send no camera video."
+              icon="micOn"
+              testID="settings-audio-only-policy"
+            />
+          </>
+        ) : null}
 
         {/* ── Appearance ──────────────────────────────────────────────────── */}
         <SectionHeader title="Appearance" icon="settingsAppearance" />
