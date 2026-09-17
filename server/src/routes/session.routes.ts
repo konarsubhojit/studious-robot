@@ -30,6 +30,33 @@ function issueSessionTimestamps(sessionTtlMs: number): {
   };
 }
 
+type VerifiedIdentity = {
+  authUid: string;
+  email?: string | null;
+  authProvider?: string | null;
+  authTime?: string | null;
+};
+
+async function reauthenticationRequiredForDevice({
+  state,
+  userId,
+  deviceId,
+  authTime,
+}: {
+  state: import('../stores/contracts.ts').ServerState;
+  userId: string;
+  deviceId: string;
+  authTime?: string | null;
+}): Promise<boolean> {
+  const revokedAt = await state.sessionState?.getDeviceRevokedAt?.(userId, deviceId)
+    ?? state.devices.get(deviceId)?.revokedAt
+    ?? null;
+  if (!revokedAt) return false;
+  const authTimeMs = authTime ? Date.parse(authTime) : NaN;
+  const revokedAtMs = Date.parse(revokedAt);
+  return !Number.isFinite(authTimeMs) || authTimeMs <= revokedAtMs;
+}
+
 /**
  * Session lifecycle: create, inspect, and rotate signaling sessions.
  *
@@ -39,12 +66,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
         state: import('../stores/contracts.ts').ServerState;
         db: Database | null;
         sessionTtlMs: number;
-        verifyIdToken?: (idToken: string) => Promise<{
-            authUid: string;
-            email?: string | null;
-            authProvider?: string | null;
-            authTime?: string | null;
-        }>;
+        verifyIdToken?: (idToken: string) => Promise<VerifiedIdentity>;
     }): import('express').Router {
   const router = express.Router();
 
@@ -108,25 +130,23 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
 
     const deviceId = normaliseId(req.body?.deviceId) || `device-${randomUUID()}`;
     const platform = normaliseOptionalString(req.body?.platform);
-    const localRevokedAt = state.devices.get(deviceId)?.revokedAt ?? null;
-    const sharedRevokedAt = await state.sessionState?.getDeviceRevokedAt?.(userId, deviceId);
-    const revokedAt = sharedRevokedAt ?? localRevokedAt;
-    if (revokedAt) {
-      const authTimeMs = externalIdentity.authTime ? Date.parse(externalIdentity.authTime) : NaN;
-      const revokedAtMs = Date.parse(revokedAt);
-      if (!Number.isFinite(authTimeMs) || authTimeMs <= revokedAtMs) {
-        state.auditLog.record({
-          event: 'session.reauthentication_required',
-          actor: userId,
-          target: deviceId,
-          outcome: 'denied',
-        });
-        res.status(401).json({
-          error: 'reauthentication required for revoked device',
-          code: 'reauthentication_required',
-        });
-        return;
-      }
+    if (await reauthenticationRequiredForDevice({
+      state,
+      userId,
+      deviceId,
+      authTime: externalIdentity.authTime,
+    })) {
+      state.auditLog.record({
+        event: 'session.reauthentication_required',
+        actor: userId,
+        target: deviceId,
+        outcome: 'denied',
+      });
+      res.status(401).json({
+        error: 'reauthentication required for revoked device',
+        code: 'reauthentication_required',
+      });
+      return;
     }
     const { createdAt, expiresAt } = issueSessionTimestamps(sessionTtlMs);
     const session = {
@@ -197,10 +217,11 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       platform: session.platform,
       ...issueSessionTimestamps(sessionTtlMs),
     };
-    const revokedBeforeSave = await state.sessionState?.getDeviceRevokedAt?.(session.userId, session.deviceId)
-      ?? state.devices.get(session.deviceId)?.revokedAt
-      ?? null;
-    if (revokedBeforeSave) {
+    if (await reauthenticationRequiredForDevice({
+      state,
+      userId: session.userId,
+      deviceId: session.deviceId,
+    })) {
       res.status(401).json({
         error: 'reauthentication required for revoked device',
         code: 'reauthentication_required',
@@ -209,10 +230,11 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
     }
     state.sessions.set(newSession.sessionId, newSession);
     await state.sessionState?.save(newSession);
-    const revokedAfterSave = await state.sessionState?.getDeviceRevokedAt?.(session.userId, session.deviceId)
-      ?? state.devices.get(session.deviceId)?.revokedAt
-      ?? null;
-    if (revokedAfterSave) {
+    if (await reauthenticationRequiredForDevice({
+      state,
+      userId: session.userId,
+      deviceId: session.deviceId,
+    })) {
       state.sessions.delete(newSession.sessionId);
       await state.sessionState?.remove(newSession.sessionId);
       res.status(401).json({
