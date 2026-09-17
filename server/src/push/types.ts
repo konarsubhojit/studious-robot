@@ -51,6 +51,7 @@ export type PushDeliveryOutcome = {
 /** Incoming-call push input. */
 export type CallPushData = {
   callId: string;
+  mediaType?: 'audio' | 'video';
   callerId: string;
   ringTimeoutAt?: string | null;
 };

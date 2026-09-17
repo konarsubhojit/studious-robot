@@ -18,14 +18,14 @@ export function isCallServiceAvailable() {
   return Platform.OS === 'android' && Boolean(getNativeModule());
 }
 
-export function startCallService() {
+export function startCallService(mediaType: 'audio' | 'video' = 'video') {
   const module = getNativeModule();
   if (!isCallServiceAvailable() || typeof module.startService !== 'function') {
     return false;
   }
 
   try {
-    module.startService();
+    module.startService(mediaType !== 'audio');
     // A new call must never inherit the previous call's request window.
     resetPictureInPictureRequestThrottle();
     logInfo('Foreground call service started');

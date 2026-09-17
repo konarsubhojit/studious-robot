@@ -80,18 +80,21 @@ test('call.initiate notifies the callee and caller with versioned call events', 
     const ack = await emitWithAck(caller, 'call.initiate', {
       version: 1,
       calleeId: 'user-bob',
+      mediaType: 'audio',
     });
 
     assert.equal(ack.ok, true);
     assert.equal(ack.version, 1);
     assert.equal(ack.event, 'call.initiate');
     assert.equal(ack.call.status, 'ringing');
+    assert.equal(ack.call.mediaType, 'audio');
 
     const incoming = await incomingPromise;
     assert.equal(incoming.version, 1);
     assert.equal(incoming.callId, ack.call.callId);
     assert.equal(incoming.call.callerId, 'user-alice');
     assert.equal(incoming.call.calleeId, 'user-bob');
+    assert.equal(incoming.call.mediaType, 'audio');
 
     const ringing = await ringingPromise;
     assert.equal(ringing.version, 1);

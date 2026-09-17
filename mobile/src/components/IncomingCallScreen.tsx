@@ -86,7 +86,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <View style={styles.header}>
         <Text style={styles.headerLabel} accessibilityRole="header">
-          {isAnswering ? 'Connecting' : 'Incoming call'}
+          {isAnswering ? 'Connecting' : incomingCall?.mediaType === 'audio' ? 'Incoming audio call' : 'Incoming call'}
         </Text>
       </View>
 
@@ -165,7 +165,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
               variant="success"
               size={72}
               accessibilityLabel="Accept incoming call"
-              accessibilityHint="Answers the call and connects audio and video"
+              accessibilityHint={incomingCall?.mediaType === 'audio' ? 'Answers the call with audio only' : 'Answers the call and connects audio and video'}
               testID="incoming-accept"
             />
           </>

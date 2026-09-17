@@ -1214,6 +1214,7 @@ describe('useCallFlow handleCameraSwitch hardening', () => {
     const { RTCPeerConnection } = require('react-native-webrtc');
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       getSenders: jest.fn(() => []),
       onicecandidate: null,
       ontrack: null,
@@ -1318,6 +1319,7 @@ describe('useCallFlow handleCameraSwitch hardening', () => {
     // Provide a sender so the replaceTrack branch is exercised.
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       getSenders: jest.fn(() => [{ track: videoTrack, replaceTrack: mockReplaceTrack }]),
       onicecandidate: null,
       ontrack: null,
@@ -1437,6 +1439,7 @@ describe('useCallFlow incoming-call ringing', () => {
     expect(displayIncomingCall).toHaveBeenCalledWith({
       callId: 'call-1',
       callerId: 'bob',
+      hasVideo: true,
     });
   });
 
@@ -1676,6 +1679,7 @@ describe('useCallFlow incoming-call ringing', () => {
     });
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       addIceCandidate: jest.fn(),
       close: jest.fn(),
       createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: '' }),
@@ -2157,6 +2161,29 @@ describe('useCallFlow incoming-call ringing', () => {
       getAudioTracks: () => [],
     });
   }
+
+  test('audio placement acquires no video and sends its mode to signaling', async () => {
+    stubLocalMedia();
+    const { resultRef } = await renderWithSocket();
+    const socket = scriptInitiate(payload => ({
+      ok: true,
+      call: {
+        callId: 'call-audio-mode', callerId: 'alice', calleeId: 'bob',
+        status: 'ringing', mediaType: payload.mediaType,
+      },
+    }));
+    await act(async () => { await resultRef.current.placeCall('bob', 'audio'); });
+    expect(require('react-native-webrtc').mediaDevices.getUserMedia).toHaveBeenLastCalledWith({
+      audio: true, video: false,
+    });
+    expect(socket.emit).toHaveBeenCalledWith(
+      'call.initiate',
+      expect.objectContaining({ calleeId: 'bob', mediaType: 'audio' }),
+      expect.any(Function),
+    );
+    expect(resultRef.current.activeCall.mediaType).toBe('audio');
+    expect(resultRef.current.isVideoEnabled).toBe(false);
+  });
 
   test('a busy verdict at placement is reported, not painted as ringing', async () => {
     stubLocalMedia();
@@ -3422,6 +3449,7 @@ describe('useCallFlow chat', () => {
     });
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       getSenders: jest.fn(() => [videoSender]),
       onicecandidate: null,
       ontrack: null,
@@ -3524,6 +3552,7 @@ describe('useCallFlow chat', () => {
     });
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       addIceCandidate: jest.fn(),
       close: jest.fn(),
       createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: '' }),
@@ -3621,6 +3650,7 @@ describe('useCallFlow chat', () => {
     // The accepted transition makes the caller send the initial offer.
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       addIceCandidate: jest.fn(),
       close: jest.fn(),
       createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: '' }),
@@ -3734,6 +3764,7 @@ describe('useCallFlow chat', () => {
     });
     const peerConnection: any = {
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       getSenders: jest.fn(() => []),
       onicecandidate: null,
       ontrack: null,
@@ -5859,6 +5890,7 @@ describe('useCallFlow answer path', () => {
     });
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       getSenders: jest.fn(() => []),
       setRemoteDescription: jest.fn().mockResolvedValue(undefined),
       setLocalDescription: jest.fn().mockResolvedValue(undefined),
@@ -5945,6 +5977,7 @@ describe('useCallFlow answer path', () => {
     });
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       getSenders: jest.fn(() => []),
       setRemoteDescription: jest.fn().mockResolvedValue(undefined),
       setLocalDescription: jest.fn().mockResolvedValue(undefined),
@@ -6007,6 +6040,7 @@ describe('useCallFlow answer path', () => {
     });
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
       addTrack: jest.fn(),
+      addTransceiver: jest.fn(),
       getSenders: jest.fn(() => []),
       setRemoteDescription: jest.fn().mockResolvedValue(undefined),
       setLocalDescription: jest.fn().mockResolvedValue(undefined),

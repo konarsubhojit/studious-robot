@@ -229,6 +229,11 @@ export default function usePeerConnection({
           pc.addTrack(track, currentLocalStream);
         }
       });
+      // Reserve a video sender without opening the camera. Explicit video
+      // upgrades can then replace its null track without renegotiating.
+      if (!currentLocalStream.getTracks().some(track => track.kind === 'video')) {
+        pc.addTransceiver('video', { direction: 'sendrecv', streams: [currentLocalStream] });
+      }
     }
 
     pc.onicecandidate = ({ candidate }) => {
@@ -335,9 +340,13 @@ export default function usePeerConnection({
   }, [createPeerConnection]);
 
   const replaceOutgoingVideoTrack = useCallback<ReplaceOutgoingVideoTrack>(async track => {
-    const sender = peerConnectionRef.current?.getSenders?.().find(s => s.track?.kind === 'video');
+    const pc = peerConnectionRef.current;
+    const sender = pc?.getSenders?.().find(s => s.track?.kind === 'video') ??
+      pc?.getTransceivers?.().find(t => t.receiver.track?.kind === 'video')?.sender;
     if (sender) {
       await sender.replaceTrack(track);
+    } else if (pc) {
+      throw new Error('No negotiated video sender');
     }
   }, []);
 

@@ -417,7 +417,7 @@ export async function registerForPushNotifications({ sessionId, signalingUrl }: 
 /**
  * Parse the incoming-call payload from an FCM/APNs data message.
  */
-export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): { callId: string; callerId: string | null; deepLink: string; } | null {
+export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): { callId: string; callerId: string | null; deepLink: string; mediaType: 'audio' | 'video'; } | null {
   const data = remoteMessage?.data ?? {};
   const callId = typeof data.callId === 'string' ? data.callId.trim() : '';
   if (!callId) return null;
@@ -428,6 +428,7 @@ export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<s
   return {
     callId,
     callerId: parsedCallerId || null,
+    mediaType: data.mediaType === 'audio' ? 'audio' : 'video',
     deepLink: parsedDeepLink || `wetalk://call/${callId}`,
   };
 }
@@ -775,6 +776,7 @@ export async function handleBackgroundPushMessage(remoteMessage: { data?: Record
   const displayResult = await displayCallKeepIncomingCall({
     callId: incoming.callId,
     callerId: incoming.callerId,
+    hasVideo: incoming.mediaType !== 'audio',
   }).catch(error => ({
     shown: false,
     reason: 'telecom_threw',
@@ -940,6 +942,7 @@ export async function handleForegroundPushMessage(remoteMessage: { data?: Record
   await displayCallKeepIncomingCall({
     callId: incoming.callId,
     callerId: incoming.callerId,
+    hasVideo: incoming.mediaType !== 'audio',
   }).catch(error => {
     logWarn('[Push] CallKeep displayIncomingCall failed', { message: errorMessage(error) });
   });

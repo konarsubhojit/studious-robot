@@ -46,6 +46,7 @@ function TestHook({ params, resultRef }: any) {
 function makePeerConnection(overrides: any = {}) {
   return {
     addTrack: jest.fn(),
+    addTransceiver: jest.fn(),
     close: jest.fn(),
     createOffer: jest.fn(() => Promise.resolve({ type: 'offer', sdp: 'offer-sdp' })),
     getSenders: jest.fn(() => []),
@@ -97,6 +98,21 @@ beforeEach(() => {
 });
 
 describe('usePeerConnection', () => {
+  test('explicit camera upgrade uses the negotiated video sender whose track is null', async () => {
+    const track = { id: 'camera', kind: 'video' };
+    const sender = { track: null, replaceTrack: jest.fn(async () => {}) };
+    const pc = makePeerConnection({
+      getSenders: () => [sender],
+      getTransceivers: () => [{ sender, receiver: { track: { kind: 'video' } } }],
+    });
+    (RTCPeerConnection as jest.Mock).mockImplementation(() => pc);
+    const { resultRef } = setup();
+    await act(async () => {
+      await resultRef.current.ensurePeerConnection();
+      await resultRef.current.replaceOutgoingVideoTrack(track);
+    });
+    expect(sender.replaceTrack).toHaveBeenCalledWith(track);
+  });
   test('creates a peer connection with prefetched ICE servers and attaches local tracks once', async () => {
     const track = { id: 'mic-1' };
     const stream = { getTracks: () => [track] };
@@ -109,6 +125,9 @@ describe('usePeerConnection', () => {
     });
 
     expect(params.ensureIceSessionId).toHaveBeenCalledTimes(1);
+    expect(peerConnection.addTransceiver).toHaveBeenCalledWith('video', {
+      direction: 'sendrecv', streams: [stream],
+    });
     expect(getIceServersForCall).toHaveBeenCalledWith({
       signalingUrl: 'https://signal.example.test',
       sessionId: 'session-1',

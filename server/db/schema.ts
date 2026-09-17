@@ -44,6 +44,7 @@ const calls = pgTable(
     callId: uuid('call_id').primaryKey(),
     callerId: text('caller_id').notNull(),
     calleeId: text('callee_id').notNull(),
+    mediaType: text('media_type').notNull().default('video'),
     status: text('status').notNull(),
     endReason: text('end_reason'),
     // Seconds of connected conversation, computed server-side when the call

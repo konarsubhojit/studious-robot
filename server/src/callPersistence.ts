@@ -55,6 +55,7 @@ function persistCallRecord(db: Database | null, call: import('./stores/contracts
       callId: call.callId,
       callerId: call.callerId,
       calleeId: call.calleeId,
+      mediaType: call.mediaType ?? 'video',
       status: call.status,
       endReason: call.endReason ?? null,
       durationSeconds: call.durationSeconds ?? null,
@@ -68,6 +69,7 @@ function persistCallRecord(db: Database | null, call: import('./stores/contracts
       set: {
         callerId: call.callerId,
         calleeId: call.calleeId,
+        mediaType: call.mediaType ?? 'video',
         status: call.status,
         endReason: call.endReason ?? null,
         durationSeconds: call.durationSeconds ?? null,

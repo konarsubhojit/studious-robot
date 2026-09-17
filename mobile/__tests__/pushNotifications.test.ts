@@ -463,6 +463,7 @@ describe('background push handler', () => {
       callId: 'call-1',
       callerId: 'alice',
       deepLink: 'wetalk://call/call-1',
+      mediaType: 'video',
     });
   });
 
@@ -475,6 +476,7 @@ describe('background push handler', () => {
       callId: 'call-2',
       callerId: 'bob',
       deepLink: 'wetalk://call/call-2',
+      mediaType: 'video',
     });
   });
 
@@ -489,6 +491,7 @@ describe('background push handler', () => {
     const serverData = {
       callId: 'call-abc',
       callerId: 'alice',
+      mediaType: 'audio',
       type: 'call.incoming',
       deepLink: 'wetalk://call/call-abc',
       title: 'Incoming call',
@@ -499,10 +502,12 @@ describe('background push handler', () => {
       callId: 'call-abc',
       callerId: 'alice',
       deepLink: 'wetalk://call/call-abc',
+      mediaType: 'audio',
     });
     expect(displayIncomingCall).toHaveBeenCalledWith({
       callId: 'call-abc',
       callerId: 'alice',
+      hasVideo: false,
     });
     displayIncomingCall.mockRestore();
   });
@@ -520,6 +525,7 @@ describe('background push handler', () => {
       callId: 'call-3',
       callerId: 'carol',
       deepLink: 'wetalk://call/call-3',
+      mediaType: 'video',
     });
     expect(logBackgroundInfo).toHaveBeenCalledWith('[Push] Background call push received', {
       callId: 'call-3',

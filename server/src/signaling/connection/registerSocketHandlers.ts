@@ -225,6 +225,7 @@ function registerSocketHandlers(
 
       const result = await placeCallWithShared(state, {
         callerId: socket.data.identity.userId,
+        mediaType: parsed.mediaType,
         calleeId,
         ringingTimeoutMs,
         callerDeviceId: socket.data.identity.deviceId ?? null,

@@ -4,9 +4,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -29,8 +31,10 @@ class CallForegroundService : Service() {
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       val serviceType =
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or
-          ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+          if (intent?.getBooleanExtra("hasVideo", false) == true &&
+            checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+          ) ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA else 0
       startForeground(NOTIFICATION_ID, notification, serviceType)
     } else {
       startForeground(NOTIFICATION_ID, notification)

@@ -23,7 +23,6 @@ import {
 } from '../call/sessionLifecycle';
 import { readMediaStateFrame } from '../call/pushRehydration';
 import { clearPendingAnswer, endCall as endCallKeepCall } from '../callKeep';
-import { startCallService } from '../callService';
 import { errorMessage } from '../errors';
 import { emitMetric, getCorrelationId } from '../observability';
 import { sendPushReceipt } from '../pushNotifications';
@@ -507,7 +506,6 @@ export default function useSignalingSocket({
           reportAnswerSent(callId);
           dispatchCallEvent(CALL_EVENTS.CONNECT);
           connectSocketHandlersRef.current.updateStatus('Connected', 'success');
-          startCallService();
         } catch (error) {
           logError('[CallFlow] Failed to handle RTC offer', error);
           connectSocketHandlersRef.current.updateStatus('Failed to connect media', 'error');
@@ -543,7 +541,6 @@ export default function useSignalingSocket({
           }
           dispatchCallEvent(CALL_EVENTS.CONNECT);
           connectSocketHandlersRef.current.updateStatus('Connected', 'success');
-          startCallService();
         } catch (error) {
           logError('[CallFlow] Failed to handle RTC answer', error);
           connectSocketHandlersRef.current.updateStatus('Failed to connect media', 'error');

@@ -48,6 +48,11 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
+    const mediaType = req.body?.mediaType ?? 'video';
+    if (mediaType !== 'audio' && mediaType !== 'video') {
+      res.status(400).json({ error: 'mediaType must be audio or video' });
+      return;
+    }
     const calleeId = normaliseId(req.body?.calleeId);
     if (!calleeId) {
       res.status(400).json({ error: 'calleeId is required' });
@@ -94,6 +99,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
 
     const result = await placeCallWithShared(state, {
       callerId: session.userId,
+      mediaType,
       calleeId,
       ringingTimeoutMs,
       callerDeviceId: session.deviceId ?? null,

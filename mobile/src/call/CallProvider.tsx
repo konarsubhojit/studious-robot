@@ -138,11 +138,8 @@ export function CallProvider({ children }: { children: ReactNode; }) {
   });
 
   const { startVideoCallWith, startAudioCallWith } = useCallInitiation({
-    isInCall: callFlow.isInCall,
     setCalleeId: callFlow.setCalleeId,
     placeCall: callFlow.placeCall,
-    handleVideoToggle: callFlow.handleVideoToggle,
-    setOutgoingCallMediaType: callFlow.setOutgoingCallMediaType,
   });
 
   const streams = useMemo(

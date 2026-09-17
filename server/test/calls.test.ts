@@ -45,10 +45,31 @@ test('initiate: caller gets a ringing call record', async () => {
     assert.equal(typeof call.callId, 'string');
     assert.equal(call.callerId, 'user-alice');
     assert.equal(call.calleeId, 'user-bob');
+    assert.equal(call.mediaType, 'video');
     assert.equal(call.status, 'ringing');
     assert.equal(call.endReason, null);
     assert.equal(typeof call.createdAt, 'string');
     assert.equal(typeof call.ringTimeoutAt, 'string');
+  } finally {
+    await teardown();
+  }
+});
+
+test('audio modality survives acceptance and history; invalid modes are rejected', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const caller = await createSession(url, 'user-alice');
+    const callee = await createSession(url, 'user-bob');
+    const invalid = await postJson(url, '/calls', { calleeId: 'user-bob', mediaType: 'screen' }, caller);
+    assert.equal(invalid.status, 400);
+    const created = await postJson(url, '/calls', { calleeId: 'user-bob', mediaType: 'audio' }, caller);
+    assert.equal(created.status, 201);
+    assert.equal(created.body.mediaType, 'audio');
+    const accepted = await postJson(url, `/calls/${created.body.callId}/accept`, {}, callee);
+    assert.equal(accepted.status, 200);
+    assert.equal(accepted.body.mediaType, 'audio');
+    const history = await getJson(url, '/calls', caller);
+    assert.equal(history.body.calls[0].mediaType, 'audio');
   } finally {
     await teardown();
   }

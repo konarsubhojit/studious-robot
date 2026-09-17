@@ -117,6 +117,16 @@ beforeEach(() => {
 });
 
 describe('useAnswerPath', () => {
+  test('accepted audio mode reaches permission checks and media acquisition', async () => {
+    const { resultRef, params, signaling } = setup();
+    signaling.request.mockResolvedValue({
+      call: { ...params.incomingCall, status: 'accepted', mediaType: 'audio' } as any,
+    });
+    await act(async () => { await resultRef.current.acceptIncomingCall(); });
+    expect(require('../../src/permissions').getMissingCallPermissions).toHaveBeenCalledWith('audio');
+    expect(params.startLocalPreview).toHaveBeenCalledWith('audio');
+    expect(params.setActiveCall).toHaveBeenCalledWith(expect.objectContaining({ mediaType: 'audio' }));
+  });
   test('skips a duplicate accept without calling the server', async () => {
     const answeredCallIdsRef = { current: new Set(['call-1']) };
     const { params, resultRef, signaling } = setup({ answeredCallIdsRef });

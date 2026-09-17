@@ -1,0 +1,1 @@
+ALTER TABLE "calls" ADD COLUMN "media_type" text DEFAULT 'video' NOT NULL;

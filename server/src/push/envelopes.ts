@@ -68,6 +68,7 @@ export function buildCallEnvelope(callData: CallPushData): PushEnvelope {
     data: {
       callId: callData.callId,
       callerId: callData.callerId,
+      mediaType: callData.mediaType ?? 'video',
     },
   };
 }

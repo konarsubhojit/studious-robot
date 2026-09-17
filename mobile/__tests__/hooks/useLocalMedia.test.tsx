@@ -87,6 +87,88 @@ beforeEach(() => {
 });
 
 describe('useLocalMedia', () => {
+  test('audio-only acquisition never requests camera permission or video capture', async () => {
+    const stream = makeStream({ videoTracks: [] });
+    mediaDevices.getUserMedia.mockResolvedValue(stream);
+    const { resultRef } = setup();
+    await act(async () => { await resultRef.current.startLocalPreview('audio'); });
+    expect(ensureCallPermissions).toHaveBeenCalledWith('audio');
+    expect(mediaDevices.getUserMedia).toHaveBeenCalledWith({ audio: true, video: false });
+    expect(resultRef.current.isVideoEnabled).toBe(false);
+  });
+
+  test('camera is acquired only on explicit upgrade and installed on the reserved sender', async () => {
+    const stream = makeStream({ videoTracks: [] });
+    const camera = makeTrack();
+    mediaDevices.getUserMedia.mockResolvedValueOnce(stream)
+      .mockResolvedValueOnce(makeStream({ audioTracks: [], videoTracks: [camera] }));
+    const { resultRef, replaceOutgoingVideoTrack } = setup();
+    await act(async () => { await resultRef.current.startLocalPreview('audio'); });
+    await act(async () => { await resultRef.current.handleVideoToggle(); });
+    expect(ensureCallPermissions).toHaveBeenLastCalledWith('video');
+    expect(mediaDevices.getUserMedia).toHaveBeenLastCalledWith({
+      audio: false, video: { facingMode: 'user' },
+    });
+    expect(replaceOutgoingVideoTrack).toHaveBeenCalledWith(camera);
+    expect(stream.addTrack).toHaveBeenCalledWith(camera);
+    expect(resultRef.current.isVideoEnabled).toBe(true);
+  });
+
+  test('denying a camera upgrade leaves audio intact and does not acquire video', async () => {
+    const stream = makeStream({ videoTracks: [] });
+    mediaDevices.getUserMedia.mockResolvedValue(stream);
+    const { resultRef } = setup();
+    await act(async () => { await resultRef.current.startLocalPreview('audio'); });
+    ensureCallPermissions.mockResolvedValue({ ok: false, message: 'Camera denied' });
+    await act(async () => { await resultRef.current.handleVideoToggle(); });
+    expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+    expect(resultRef.current.localStream).toBe(stream);
+    expect(resultRef.current.isVideoEnabled).toBe(false);
+  });
+
+  test('stops media returned after teardown instead of resurrecting the call', async () => {
+    const stream = makeStream({ videoTracks: [] });
+    let resolveMedia!: (value: typeof stream) => void;
+    mediaDevices.getUserMedia.mockImplementationOnce(() => new Promise(resolve => { resolveMedia = resolve; }));
+    const { resultRef } = setup();
+    await act(async () => {
+      const pending = resultRef.current.startLocalPreview('audio');
+      await Promise.resolve();
+      resultRef.current.releaseLocalMedia();
+      resolveMedia(stream);
+      await pending;
+    });
+    expect(stream.getTracks()[0].stop).toHaveBeenCalledTimes(1);
+    expect(resultRef.current.localStream).toBeNull();
+  });
+
+  test('an audio request supersedes an in-flight video acquisition', async () => {
+    const video = makeStream();
+    const audio = makeStream({ videoTracks: [] });
+    let resolveVideo!: (value: typeof video) => void;
+    mediaDevices.getUserMedia
+      .mockImplementationOnce(() => new Promise(resolve => { resolveVideo = resolve; }))
+      .mockResolvedValueOnce(audio);
+    const { resultRef } = setup();
+    await act(async () => {
+      const pendingVideo = resultRef.current.startLocalPreview('video');
+      await Promise.resolve();
+      await resultRef.current.startLocalPreview('audio');
+      resolveVideo(video);
+      await pendingVideo;
+    });
+    expect(video.getVideoTracks()[0].stop).toHaveBeenCalledTimes(1);
+    expect(resultRef.current.localStream).toBe(audio);
+    expect(resultRef.current.isVideoEnabled).toBe(false);
+  });
+
+  test('camera switch cannot implicitly upgrade an audio call', async () => {
+    const { resultRef } = setup();
+    resultRef.current.localStreamRef.current = makeStream({ videoTracks: [] });
+    await act(async () => { await resultRef.current.handleCameraSwitch(); });
+    expect(mediaDevices.getUserMedia).not.toHaveBeenCalled();
+  });
+
   test('starts local preview after permissions and publishes stream state', async () => {
     const stream = makeStream();
     mediaDevices.getUserMedia.mockResolvedValue(stream);

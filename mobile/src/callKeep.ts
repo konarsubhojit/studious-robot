@@ -111,6 +111,7 @@ const displayedCallIds = new Set<string>();
  * stacking on top of it.
  */
 const displayedCallerIds = new Map<string, string>();
+const displayedVideoModes = new Map<string, boolean>();
 
 /**
  * The call-flow handlers currently allowed to act on CallKeep's `answerCall` /
@@ -180,6 +181,7 @@ export function _resetCallKeepCache() {
   isConfigured = false;
   displayedCallIds.clear();
   displayedCallerIds.clear();
+  displayedVideoModes.clear();
   activeCallActionHandlers = null;
   pendingAnswerCallId = null;
 }
@@ -191,6 +193,7 @@ export function _resetCallKeepCache() {
 export function clearDisplayedCall(callId: string) {
   displayedCallIds.delete(callId);
   displayedCallerIds.delete(callId);
+  displayedVideoModes.delete(callId);
 }
 
 /**
@@ -364,6 +367,7 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true }:
     const handle = callerId || callId;
     const name = callerId || 'Incoming call';
     displayedCallIds.add(callId);
+    displayedVideoModes.set(callId, hasVideo);
     if (callerId) displayedCallerIds.set(callId, callerId);
     callKeep.displayIncomingCall?.(callId, handle, name, 'generic', hasVideo);
     logInfo('[CallKeep] Displayed incoming call', { callId, callerId: callerId ?? null });
@@ -371,6 +375,7 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true }:
   } catch (error) {
     displayedCallIds.delete(callId);
     displayedCallerIds.delete(callId);
+    displayedVideoModes.delete(callId);
     logError('[CallKeep] displayIncomingCall failed', error);
     return { shown: false, reason: 'telecom_threw', message: errorMessage(error) };
   }
@@ -427,6 +432,7 @@ export function endCall(callId: string): boolean {
   // Allow the call id to be displayed again if it ever rings anew.
   displayedCallIds.delete(callId);
   displayedCallerIds.delete(callId);
+  displayedVideoModes.delete(callId);
   // Idempotent no-ops when nothing was ever shown/started for this call.
   dismissIncomingCallNotification(callId);
   stopIncomingRingtone();
@@ -446,6 +452,7 @@ export function endAllCalls() {
   for (const callId of displayedCallIds) dismissIncomingCallNotification(callId);
   displayedCallIds.clear();
   displayedCallerIds.clear();
+  displayedVideoModes.clear();
   stopIncomingRingtone();
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.endAllCalls !== 'function') return false;
@@ -575,6 +582,7 @@ export function registerShowIncomingCallUiListener(): (() => void) & { registere
     const shown = await showIncomingCallNotification({
       callId: callUUID,
       callerId: name || handle,
+      hasVideo: displayedVideoModes.get(callUUID) ?? true,
     }).catch(error => {
       logError('[CallKeep] showIncomingCallNotification threw', error);
       return false;

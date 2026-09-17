@@ -38,12 +38,14 @@ export function requiresPostNotificationsPermission(androidApiLevel = Platform.V
   );
 }
 
-export function getCallRuntimePermissions(androidApiLevel = Platform.Version) {
+export function getCallRuntimePermissions(androidApiLevel = Platform.Version, mediaType: 'audio' | 'video' = 'video') {
   if (Platform.OS !== 'android') {
     return [];
   }
 
-  const permissions: Permission[] = [...REQUIRED_CALL_PERMISSIONS];
+  const permissions: Permission[] = REQUIRED_CALL_PERMISSIONS.filter(
+    permission => mediaType !== 'audio' || permission !== CAMERA_PERMISSION,
+  );
   if (requiresBluetoothConnectPermission(androidApiLevel) && BLUETOOTH_CONNECT_PERMISSION) {
     permissions.push(BLUETOOTH_CONNECT_PERMISSION);
   }
@@ -106,7 +108,7 @@ async function getMissingPermissions(permissions: Permission[]): Promise<Permiss
  *
  * @returns `missing` is empty when nothing is required or everything is granted.
  */
-export async function getMissingCallPermissions(): Promise<{
+export async function getMissingCallPermissions(mediaType: 'audio' | 'video' = 'video'): Promise<{
     camera: boolean;
     microphone: boolean;
     missing: string[];
@@ -116,7 +118,9 @@ export async function getMissingCallPermissions(): Promise<{
     return { camera: false, microphone: false, missing: [], message: null };
   }
 
-  const missing = await getMissingPermissions(REQUIRED_CALL_PERMISSIONS);
+  const missing = await getMissingPermissions(REQUIRED_CALL_PERMISSIONS.filter(
+    permission => mediaType !== 'audio' || permission !== CAMERA_PERMISSION,
+  ));
   return {
     camera: missing.includes(CAMERA_PERMISSION),
     microphone: missing.includes(MICROPHONE_PERMISSION),
@@ -146,7 +150,7 @@ export async function getMissingRuntimePermissions(): Promise<string[]> {
  *
  * @returns a denial always carries a user-facing message.
  */
-export async function ensureCallPermissions(): Promise<{ ok: true; warningMessage: string | null; deniedPermissions: string[]; } |
+export async function ensureCallPermissions(mediaType: 'audio' | 'video' = 'video'): Promise<{ ok: true; warningMessage: string | null; deniedPermissions: string[]; } |
 { ok: false; message: string; warningMessage: null; deniedPermissions: string[]; }> {
   if (
     Platform.OS !== 'android' ||
@@ -160,7 +164,7 @@ export async function ensureCallPermissions(): Promise<{ ok: true; warningMessag
   // foreground-service permissions are normal/install-time permissions. Android
   // does not expose them via PermissionsAndroid, so the manifest declarations
   // are the real fix for native-thread SecurityExceptions from WebRTC/InCall.
-  const permissions = getCallRuntimePermissions();
+  const permissions = getCallRuntimePermissions(Platform.Version, mediaType);
   const missingPermissions = await getMissingPermissions(permissions);
 
   if (missingPermissions.length === 0) {

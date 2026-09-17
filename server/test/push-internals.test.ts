@@ -30,7 +30,7 @@ test('a call envelope carries the ids the client needs to ring', () => {
 
   assert.equal(envelope.type, 'call.incoming');
   assert.equal(envelope.deepLink, 'wetalk://call/call-1');
-  assert.deepEqual(envelope.data, { callId: 'call-1', callerId: 'alice' });
+  assert.deepEqual(envelope.data, { callId: 'call-1', callerId: 'alice', mediaType: 'video' });
 });
 
 test('a call TTL tracks the time left in the ring window', () => {
