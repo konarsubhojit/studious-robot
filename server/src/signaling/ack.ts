@@ -10,7 +10,7 @@ import { ERROR_CODES, SERVER_EVENTS, parseEventPayload } from '../../../shared/i
  * consistent.
  */
 
-export type SignalingState = { telemetry: { recordSignalingError: (code: string) => void; }; };
+export type SignalingState = { telemetry: { recordSignalingError: (code: string, eventName?: string) => void; }; };
 
 /** Upper bound on each client-controlled field written to a log line. */
 const MAX_LOGGED_CHARS = 200;
@@ -113,7 +113,7 @@ function acknowledgeSuccess(socket: import('socket.io').Socket, ack: Function | 
  */
 function acknowledgeError(socket: import('socket.io').Socket, ack: Function | undefined, eventName: string, code: string, message: string, state?: SignalingState) {
   if (state) {
-    state.telemetry.recordSignalingError(code);
+    state.telemetry.recordSignalingError(code, eventName);
   }
 
   console.warn(

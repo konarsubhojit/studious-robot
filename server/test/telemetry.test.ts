@@ -506,12 +506,27 @@ test('GET /metrics breaks signaling errors down by code', async () => {
     });
     assert.equal(staleAck.error.code, 'stale_call_state');
 
+    // A different triggering event, same call, same code — must be tracked
+    // separately so a stale `call.media-state` (a regression of the fixed
+    // `canRelayMediaState` bug) is never confused with a stale `rtc.offer`
+    // (a race in the accept path).
+    const staleMediaStateAck = await emitWithAck(caller, 'call.media-state', {
+      version: 1,
+      callId: callRes.body.callId,
+      mediaState: { isScreenSharing: false, isVideoEnabled: false },
+    });
+    assert.equal(staleMediaStateAck.error.code, 'stale_call_state');
+
     const snap = (await getMetricsHttp(url)).body;
     // The aggregate counter stays, for backwards compatibility.
-    assert.equal(snap.counters.signaling_errors, 3);
+    assert.equal(snap.counters.signaling_errors, 4);
     assert.deepEqual(snap.signaling_errors_by_code, {
       call_not_found: 2,
-      stale_call_state: 1,
+      stale_call_state: 2,
+    });
+    assert.deepEqual(snap.signaling_errors_stale_call_state_by_event, {
+      'rtc.offer': 1,
+      'call.media-state': 1,
     });
   } finally {
     caller.disconnect();
@@ -572,6 +587,42 @@ test('recordSignalingError buckets a missing code and caps distinct codes', () =
   assert.equal(
     Object.values(breakdown).reduce((total, count) => total + count, 0),
     snap.counters.signaling_errors
+  );
+});
+
+test('recordSignalingError tracks stale_call_state by triggering event, capped like the code breakdown', () => {
+  const telemetry = createTelemetry();
+
+  // Not stale_call_state — must not appear in the per-event breakdown at all.
+  telemetry.recordSignalingError('call_not_found', 'rtc.offer');
+
+  telemetry.recordSignalingError('stale_call_state', 'rtc.candidate');
+  telemetry.recordSignalingError('stale_call_state', 'rtc.candidate');
+  telemetry.recordSignalingError('stale_call_state', 'rtc.offer');
+  telemetry.recordSignalingError('stale_call_state'); // no event name supplied
+
+  // Fill the per-event map to its cap, then overflow it.
+  for (let i = 0; i < 60; i += 1) {
+    telemetry.recordSignalingError('stale_call_state', `event_${i}`);
+  }
+
+  const snap = telemetry.getSnapshot();
+  const breakdown = snap.signaling_errors_stale_call_state_by_event;
+
+  assert.equal(breakdown['rtc.candidate'], 2);
+  assert.equal(breakdown['rtc.offer'], 1);
+  assert.equal(breakdown.unknown, 1);
+  // 3 distinct keys (`rtc.candidate`, `rtc.offer`, `unknown`) were already
+  // tracked before the loop, leaving 47 of the 50 slots free: `event_0`
+  // through `event_46` fill them, and `event_47`…`event_59` (13 entries)
+  // overflow into `other`.
+  assert.equal(breakdown.event_46, 1);
+  assert.equal(breakdown.event_59, undefined);
+  assert.equal(breakdown.other, 13);
+  assert.equal(Object.keys(breakdown).length, 51);
+  assert.equal(
+    Object.values(breakdown).reduce((total, count) => total + count, 0),
+    snap.signaling_errors_by_code.stale_call_state
   );
 });
 
@@ -719,7 +770,9 @@ test('recordRtcRelay separates SDP relays from candidates and flags empty rooms'
   // Candidates are counted but never looked up, so their cardinality is
   // unknown — which must not be mistaken for "nobody was listening".
   telemetry.recordRtcRelay('rtc.candidate', null);
-  telemetry.recordRtcRelay('call.media-state', null);
+  // A genuinely unexpected event — not one of the four `handleRtcRelay` is
+  // wired to — still lands in `other`.
+  telemetry.recordRtcRelay('rtc.something-unexpected', null);
 
   const { counters } = telemetry.getSnapshot();
   assert.equal(counters.rtc_relays_offer, 2);
@@ -728,6 +781,21 @@ test('recordRtcRelay separates SDP relays from candidates and flags empty rooms'
   assert.equal(counters.rtc_relays_other, 1);
   assert.equal(counters.rtc_relays_no_recipient, 1, 'only a known zero counts as a drop');
 });
+
+test('recordRtcRelay splits call.media-state into heartbeat and state-change buckets', () => {
+  const telemetry = createTelemetry();
+
+  telemetry.recordRtcRelay('call.media-state', null, true);
+  telemetry.recordRtcRelay('call.media-state', null, true);
+  telemetry.recordRtcRelay('call.media-state', null, false);
+
+  const { counters } = telemetry.getSnapshot();
+  assert.equal(counters.rtc_relays_media_heartbeat, 2);
+  assert.equal(counters.rtc_relays_media_state_change, 1);
+  // The known fourth relayed event must never fall into the catch-all bucket.
+  assert.equal(counters.rtc_relays_other, 0);
+});
+
 
 test('call_ring_duration_ms is measured from the record, not this process', () => {
   const telemetry = createTelemetry();

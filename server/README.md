@@ -477,3 +477,85 @@ problem is known before the remedy changes it.
 the shared `answeredAt`. The difference between the two lines' values is the
 `connecting_media → in_call` leg, so one journal grep attributes the interval
 without cross-referencing both hosts.
+
+### RTC relay bucketing
+
+`handleRtcRelay` relays four socket events, not three, and each is counted:
+
+| Counter | Meaning |
+| --- | --- |
+| `rtc_relays_offer` / `rtc_relays_answer` / `rtc_relays_candidate` | SDP offer/answer and ICE candidates. |
+| `rtc_relays_media_heartbeat` | The 30s liveness beat (`call.media-state` with `heartbeat: true`), sent by both participants of a connected call independently. Scales with connected-minutes, not call count — a large number here is expected load, not a loop. |
+| `rtc_relays_media_state_change` | A real `call.media-state` toggle (screen-share/camera on or off), not a heartbeat. |
+| `rtc_relays_other` | An event this relay path did not anticipate at all. Should read ~0 in normal operation; a non-zero value here is the signal actually worth alarming on. |
+
+Before this split, heartbeats and state-change toggles both fell into
+`rtc_relays_other`, which made routine heartbeat load (hundreds of beats per
+handful of connected calls) indistinguishable from a genuine unexpected-event
+bug. See `docs/call-setup-telemetry-findings.md` §1 for the investigation that
+prompted this.
+
+### Signaling error attribution
+
+`signaling_errors_by_code` counts rejected socket acks by error code (e.g.
+`stale_call_state`, `call_not_found`, `forbidden`), capped at
+`MAX_TRACKED_SIGNALING_ERROR_CODES` distinct codes with overflow folded into
+an `other` key.
+
+`stale_call_state` additionally gets a per-triggering-event breakdown,
+`signaling_errors_stale_call_state_by_event` (same capping pattern, capped at
+`MAX_TRACKED_STALE_CALL_STATE_EVENTS`), because that one code is ambiguous
+without knowing which event triggered it:
+
+- a stale `rtc.candidate` is **expected** — `holdOrRejectRtcSignal` buffers
+  candidates for a non-live call rather than rejecting them outright, but a
+  candidate that arrives after the buffer's own limits still surfaces here
+- a stale `rtc.offer` / `rtc.answer` indicates a **real race** in the accept path
+- a stale `call.media-state` would indicate a **regression** of the
+  previously-fixed `canRelayMediaState` gate (see
+  `docs/signaling-error-diagnosis.md`)
+
+Only `stale_call_state` gets this per-event breakdown, not every code: the
+other tracked codes (`call_not_found`, `forbidden`, …) do not currently have
+this same "which event changes the diagnosis" ambiguity, and adding a second
+capped map per code multiplies cardinality for a question that, so far, only
+`stale_call_state` actually poses. If that changes, extending the same
+mechanism to other codes is a small follow-up.
+
+### Which derived ratios are fleet-relative, and which are (not yet) local-safe
+
+`derived.call_connect_rate` and `derived.call_completion_rate` divide
+counters that can each be satisfied by a **different** instance than the one
+reporting the ratio — `calls_in_call` is recorded by whichever instance's
+socket first observes the `in_call` transition, independent of which
+instance recorded `calls_accepted` or `calls_ended` for that same call. On a
+fleet, a single call's accept, connect and end can each be observed by a
+different host. **Both ratios are fleet-relative artefacts, not trustworthy
+per-instance figures** — a value derived per-host can be arithmetically
+impossible (e.g. `> 1`) or read as "this host connects 0% of what it
+accepts" when every call in question did connect, just via a peer instance.
+
+A same-instance-safe replacement was considered
+(`call_connect_latency_shared / calls_accepted`, using the counter that
+tracks connect-latency samples this instance actually recorded) but was
+**not shipped**: `call_connect_latency_shared` can increment for a call this
+instance never recorded as accepted (that is the entire purpose of the
+shared-timestamp path in `src/lib/callLatency.ts`, which lets connect latency
+be observed even when the accept happened on a peer instance), so that ratio
+is not guaranteed to stay ≤ 1 either — it has the same structural problem by
+a different route. No dedicated same-instance counter exists yet that would
+fix this, so until one does, treat `call_connect_rate` and
+`call_completion_rate` as coarse, whole-fleet-behavior signals to be read
+after combining scrapes from every instance, never as a single host's
+conversion rate. See `docs/call-setup-telemetry-findings.md` §5 for the full
+analysis.
+
+### DB query blocking/detached split
+
+Each entry in the `dbQueries` per-operation breakdown carries a `detached`
+count alongside `count`/`totalMs`/`meanMs`/`maxMs`/`slow`: the number of that
+operation's queries that were fire-and-forget (`runDetached`, e.g.
+`persistCallRecord`'s mirror-to-shared-store write) rather than blocking on a
+user-facing request. This lets an outlier `maxMs` on a given operation be
+attributed to background load versus a request that actually waited on it,
+without cross-referencing raw timing records.

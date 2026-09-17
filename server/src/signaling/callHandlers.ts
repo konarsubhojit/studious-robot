@@ -311,8 +311,9 @@ function logRtcRelay(state: import('../stores/contracts.ts').ServerState, option
         fromUserId: string;
         toUserId: string;
         recipients: number | null;
+        isHeartbeat: boolean;
     }): void {
-  state.telemetry?.recordRtcRelay(options.eventName, options.recipients);
+  state.telemetry?.recordRtcRelay(options.eventName, options.recipients, options.isHeartbeat);
   const line =
     `[signaling] rtc.relay event=${options.eventName} callId=${options.callId}` +
     ` from=${sanitizeForLog(options.fromUserId)} to=${sanitizeForLog(options.toUserId)}` +
@@ -421,7 +422,12 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
   // The opt-in flag matters: older clients emit this event when screen sharing
   // is toggled but never send beats, and stamping those would arm the
   // heartbeat deadline on a call that will never satisfy it.
-  if (options.recordsHeartbeat && value?.heartbeat === true) {
+  //
+  // Computed once and reused by `logRtcRelay` below, so the telemetry split
+  // between `rtc_relays_media_heartbeat` and `rtc_relays_media_state_change`
+  // uses the exact same predicate as the heartbeat-recording decision itself.
+  const isHeartbeatFrame = options.recordsHeartbeat === true && value?.heartbeat === true;
+  if (isHeartbeatFrame) {
     // `recordCallHeartbeat` already mirrors the stamped record to the shared
     // store fire-and-forget. Awaiting a second, identical save here put a
     // shared-store round trip in front of every heartbeat ack — for a liveness
@@ -447,6 +453,7 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
     fromUserId: userId,
     toUserId: peerUserId,
     recipients,
+    isHeartbeat: isHeartbeatFrame,
   });
   acknowledgeSuccess(socket, ack, options.eventName, { callId });
 }
