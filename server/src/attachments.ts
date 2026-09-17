@@ -292,8 +292,8 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
  * from a link that was used before it expired.
  */
 function presignAttachmentDownload({ config, key, now = new Date() }: {
-        config: ReturnType<typeof loadR2Config>; key: string; now?: Date;
-    }): { downloadUrl: string; expiresAt: string; } {
+  config: ReturnType<typeof loadR2Config>; key: string; now?: Date;
+}): { downloadUrl: string; expiresAt: string; } {
   if (!config) throw new Error('presignAttachmentDownload: R2 is not configured');
   const signed = presignObjectRequest({
     config: { ...config, ttlSeconds: DOWNLOAD_PRESIGN_TTL_SECONDS },
@@ -329,7 +329,7 @@ function attachmentScopeFromKey(key: unknown): string | null {
  * for: an arbitrary URL would turn every chat bubble into a request to a host
  * of the sender's choosing (an IP-leak / tracking vector for the recipient).
  */
-function isManagedAttachmentUrl(config: ReturnType<typeof loadR2Config>, url: unknown): boolean {
+function isManagedAttachmentUrl(config: ReturnType<typeof loadR2Config>, url: unknown): url is string {
   if (!config || typeof url !== 'string') return false;
   if (!url.startsWith(`${config.publicBaseUrl}/${ATTACHMENT_PATH_PREFIX}/`)) return false;
   // `startsWith` alone would accept a URL that escapes the prefix again once a
@@ -347,7 +347,7 @@ function isManagedAttachmentUrl(config: ReturnType<typeof loadR2Config>, url: un
  */
 function attachmentKeyFromUrl(config: ReturnType<typeof loadR2Config>, url: unknown): string | null {
   if (!config || !isManagedAttachmentUrl(config, url)) return null;
-  const path = (url as string).slice(config.publicBaseUrl.length + 1);
+  const path = url.slice(config.publicBaseUrl.length + 1);
   try {
     return path.split('/').map(decodeURIComponent).join('/');
   } catch {

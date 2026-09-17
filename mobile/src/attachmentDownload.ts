@@ -382,7 +382,7 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
     });
   }
 
-  logInfo('[Attachments] download started', { host: hostOf(url), mimeType, fileName });
+  logInfo('[Attachments] download started', { host: hostOf(fetchUrl), mimeType, fileName });
 
   const result = await downloadWithFallback({
     url: fetchUrl,
@@ -396,7 +396,7 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
   });
 
   if (result.reason === 'cancelled') {
-    logInfo('[Attachments] download cancelled', { host: hostOf(url) });
+    logInfo('[Attachments] download cancelled', { host: hostOf(fetchUrl) });
     return { ...result, message: describeAttachmentDownloadResult(result) };
   }
   if (result.success) {
@@ -410,7 +410,7 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
   }
 
   logError('[Attachments] download failed', {
-    host: hostOf(url),
+    host: hostOf(fetchUrl),
     reason: result.reason,
     statusCode: result.statusCode,
     error: result.error,
