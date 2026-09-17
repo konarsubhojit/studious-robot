@@ -193,6 +193,11 @@ verified Firebase account:
   `AppIcon.appiconset`).
 - **i18n** (`CALL_END_REASON_LABELS` is i18n-ready) — still absent: no
   `i18n`/`i18next`/`translation`/`locale` matches under `mobile/src`. Tracked in #305.
+  **Decision (roadmap #403, 2026-09-17):** deprioritized — #305 stays open,
+  unscheduled, and under its existing parent (#299); it is not being duplicated
+  or reparented under #403. Revisit only once there is a concrete target
+  market/locale requirement, per the "product decision, not an engineering
+  one" recommendation already recorded on #305.
 - **Accessibility hints** — **could not determine full completion**: there are
   182 `accessibilityLabel` usages across `mobile/src`, but this document has not
   been through a full accessibility audit pass.
