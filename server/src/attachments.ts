@@ -290,6 +290,10 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
  * as any other file transfer. `DOWNLOAD_PRESIGN_TTL_SECONDS` bounds how long
  * an unused *link* stays valid; it says nothing about copies already made
  * from a link that was used before it expired.
+ *
+ * `config` is only accepted as possibly-null to match `loadR2Config`'s
+ * return type; the throw below is defensive — callers are expected to have
+ * already returned a 503 when R2 is unconfigured, as the route handler does.
  */
 function presignAttachmentDownload({ config, key, now = new Date() }: {
   config: ReturnType<typeof loadR2Config>; key: string; now?: Date;
@@ -346,7 +350,7 @@ function isManagedAttachmentUrl(config: ReturnType<typeof loadR2Config>, url: un
  * @returns the key, or `null` when the URL is not one of ours.
  */
 function attachmentKeyFromUrl(config: ReturnType<typeof loadR2Config>, url: unknown): string | null {
-  if (!config || !isManagedAttachmentUrl(config, url)) return null;
+  if (!config || !isManagedAttachmentUrl(config, url) || typeof url !== 'string') return null;
   const path = url.slice(config.publicBaseUrl.length + 1);
   try {
     return path.split('/').map(decodeURIComponent).join('/');

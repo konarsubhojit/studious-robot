@@ -186,10 +186,10 @@ function createAttachmentsRouter({ state, env = process.env }: {
       return;
     }
 
-    const rawKey = req.query?.key;
+    const rawKeyParam = req.query?.key;
     const key =
-      typeof rawKey === 'string' && rawKey.trim()
-        ? rawKey.trim()
+      typeof rawKeyParam === 'string' && rawKeyParam.trim()
+        ? rawKeyParam.trim()
         : attachmentKeyFromUrl(config, req.query?.url);
     if (!key) {
       res.status(400).json({ error: 'key must reference a managed attachment' });
@@ -197,6 +197,9 @@ function createAttachmentsRouter({ state, env = process.env }: {
     }
 
     const expectedScope = deriveConversationId(session.userId, peerId).replace(/:/g, '_');
+    // `attachmentScopeFromKey` returns `null` for a malformed/foreign key,
+    // which can never equal `expectedScope` (always a non-empty string) —
+    // so a bad key is rejected by the same comparison as a mismatched scope.
     if (attachmentScopeFromKey(key) !== expectedScope) {
       // Either a foreign key (a guess, or one lifted from another
       // conversation) or a `peerId` the caller is not actually talking to —
