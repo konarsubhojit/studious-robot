@@ -374,8 +374,21 @@ describe('callKeep with the native module present', () => {
     expect(mockShowIncomingCallNotification).toHaveBeenCalledWith({
       callId: 'call-6',
       callerId: 'Alice',
+      hasVideo: true,
     });
     expect(mockStartIncomingRingtone).not.toHaveBeenCalled();
+  });
+
+  test('branded incoming notification retains the audio-only mode', async () => {
+    await mod.displayIncomingCall({ callId: 'call-audio', callerId: 'alice', hasVideo: false });
+    mod.registerShowIncomingCallUiListener();
+    const handler = mockCallKeep.addEventListener.mock.calls.find(
+      (c: any[]) => c[0] === 'showIncomingCallUi',
+    )[1];
+    await handler({ callUUID: 'call-audio', name: 'Alice' });
+    expect(mockShowIncomingCallNotification).toHaveBeenCalledWith({
+      callId: 'call-audio', callerId: 'Alice', hasVideo: false,
+    });
   });
 
   test('showIncomingCallUi falls back to an audible ring when the branded notification cannot be shown', async () => {

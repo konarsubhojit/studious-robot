@@ -51,6 +51,34 @@ server using the authenticated session. Configure that server with
 credentials into a public APK. `TURN_USERNAME` and `TURN_CREDENTIAL` remain
 supported only as a fallback; without either path calls use STUN-only.
 
+## Audio-only calls
+
+Audio calls request microphone access and acquire no camera track on either
+device. The incoming notification identifies the media mode; call history and
+redial use the initial mode saved by the server. Enabling the camera during an
+audio call is an explicit action and requests camera permission at that point.
+Switching cameras cannot implicitly enable video.
+
+Deploy migration `0014_call_media_type` with the server's existing
+`npm run db:migrate` command before starting the updated backend, then update
+both clients together. There is no legacy-client rejection gate. Historical
+server records default to video because their original modality was not saved.
+
+Before release, verify on the two Android devices:
+
+- Deny camera permission and complete an audio call in both directions,
+  including an incoming call while the app is backgrounded/locked.
+- Check that the camera privacy indicator never appears during audio-only use.
+- Enable video explicitly: denial must leave audio running; granting access
+  must deliver video to the other participant.
+- Cancel/decline an audio call, then place a video call; no deferred camera
+  toggle from the earlier call may affect it.
+- Exercise network handoff, hang-up during media acquisition, and history/redial
+  after restart. Confirm microphone/camera indicators stop after hang-up.
+
+JavaScript tests do not replace these physical-device checks. iOS build
+validation is deferred.
+
 ## Local data and synchronization
 
 Structured mobile data uses **SQLite through `@op-engineering/op-sqlite`**,

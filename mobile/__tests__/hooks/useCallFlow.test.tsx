@@ -2162,6 +2162,29 @@ describe('useCallFlow incoming-call ringing', () => {
     });
   }
 
+  test('audio placement acquires no video and sends its mode to signaling', async () => {
+    stubLocalMedia();
+    const { resultRef } = await renderWithSocket();
+    const socket = scriptInitiate(payload => ({
+      ok: true,
+      call: {
+        callId: 'call-audio-mode', callerId: 'alice', calleeId: 'bob',
+        status: 'ringing', mediaType: payload.mediaType,
+      },
+    }));
+    await act(async () => { await resultRef.current.placeCall('bob', 'audio'); });
+    expect(require('react-native-webrtc').mediaDevices.getUserMedia).toHaveBeenLastCalledWith({
+      audio: true, video: false,
+    });
+    expect(socket.emit).toHaveBeenCalledWith(
+      'call.initiate',
+      expect.objectContaining({ calleeId: 'bob', mediaType: 'audio' }),
+      expect.any(Function),
+    );
+    expect(resultRef.current.activeCall.mediaType).toBe('audio');
+    expect(resultRef.current.isVideoEnabled).toBe(false);
+  });
+
   test('a busy verdict at placement is reported, not painted as ringing', async () => {
     stubLocalMedia();
     const { resultRef, tree } = await renderWithSocket();

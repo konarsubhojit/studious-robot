@@ -142,6 +142,26 @@ describe('useLocalMedia', () => {
     expect(resultRef.current.localStream).toBeNull();
   });
 
+  test('an audio request supersedes an in-flight video acquisition', async () => {
+    const video = makeStream();
+    const audio = makeStream({ videoTracks: [] });
+    let resolveVideo!: (value: typeof video) => void;
+    mediaDevices.getUserMedia
+      .mockImplementationOnce(() => new Promise(resolve => { resolveVideo = resolve; }))
+      .mockResolvedValueOnce(audio);
+    const { resultRef } = setup();
+    await act(async () => {
+      const pendingVideo = resultRef.current.startLocalPreview('video');
+      await Promise.resolve();
+      await resultRef.current.startLocalPreview('audio');
+      resolveVideo(video);
+      await pendingVideo;
+    });
+    expect(video.getVideoTracks()[0].stop).toHaveBeenCalledTimes(1);
+    expect(resultRef.current.localStream).toBe(audio);
+    expect(resultRef.current.isVideoEnabled).toBe(false);
+  });
+
   test('camera switch cannot implicitly upgrade an audio call', async () => {
     const { resultRef } = setup();
     resultRef.current.localStreamRef.current = makeStream({ videoTracks: [] });

@@ -46,7 +46,7 @@ describe('useCallInitiation', () => {
     });
     expect(params.setCalleeId).toHaveBeenCalledWith('bob');
     expect(params.placeCall).toHaveBeenCalledWith('bob', 'video');
-    expect(params.setOutgoingCallMediaType).toHaveBeenCalledWith('video');
+    expect(params.setOutgoingCallMediaType).not.toHaveBeenCalled();
   });
 
   test('startVideoCallWith logs an error when placeCall rejects', async () => {
@@ -73,7 +73,7 @@ describe('useCallInitiation', () => {
     });
     expect(params.setCalleeId).toHaveBeenCalledWith('bob');
     expect(params.placeCall).toHaveBeenCalledWith('bob', 'audio');
-    expect(params.setOutgoingCallMediaType).toHaveBeenCalledWith('audio');
+    expect(params.setOutgoingCallMediaType).not.toHaveBeenCalled();
     expect(params.handleVideoToggle).not.toHaveBeenCalled();
 
     act(() => {

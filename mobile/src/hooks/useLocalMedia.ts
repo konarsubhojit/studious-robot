@@ -29,6 +29,7 @@ export default function useLocalMedia({
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const localStreamRef = useRef(null as WebrtcMediaStream | null);
   const mediaEpochRef = useRef(0);
+  const requestedMediaTypeRef = useRef<'audio' | 'video'>('video');
   const cameraChangeRef = useRef(false);
 
   const releaseLocalMedia = useCallback(() => {
@@ -50,16 +51,12 @@ export default function useLocalMedia({
   useEffect(() => releaseLocalMedia, [releaseLocalMedia]);
 
   const startLocalPreview = useCallback(async (mediaType: 'audio' | 'video' = 'video') => {
-    if (localStreamRef.current) {
-      if (mediaType === 'audio') {
-        localStreamRef.current.getVideoTracks().forEach(track => {
-          track.stop();
-          localStreamRef.current?.removeTrack(track);
-        });
-        setIsVideoEnabled(false);
-      }
-      return localStreamRef.current;
+    if (requestedMediaTypeRef.current !== mediaType) {
+      releaseLocalMedia();
+      requestedMediaTypeRef.current = mediaType;
     }
+    if (localStreamRef.current) return localStreamRef.current;
+    if (mediaType === 'audio') setIsVideoEnabled(false);
 
     const epoch = mediaEpochRef.current;
     const permResult = await ensureCallPermissions(mediaType);
@@ -97,7 +94,7 @@ export default function useLocalMedia({
       updateStatus(getMediaAccessStatus(error), 'error');
       throw error;
     }
-  }, [setIsMuted, updateStatus]);
+  }, [releaseLocalMedia, setIsMuted, updateStatus]);
 
   const enableCamera = useCallback(async (stream: WebrtcMediaStream) => {
     if (cameraChangeRef.current) return;
@@ -110,28 +107,28 @@ export default function useLocalMedia({
         updateStatus(permissions.message, 'error');
         return;
       }
-        cameraStream = await mediaDevices.getUserMedia({
-          audio: false,
-          video: { facingMode: 'user' },
-        });
-        const [track] = cameraStream.getVideoTracks();
-        if (!track || localStreamRef.current !== stream) {
-          cameraStream.getTracks().forEach(t => t.stop());
-          return;
-        }
-        await replaceOutgoingVideoTrackRef.current?.(track);
-        if (localStreamRef.current !== stream) {
-          cameraStream.getTracks().forEach(t => t.stop());
-          return;
-        }
-        stream.addTrack(track);
-        setIsVideoEnabled(true);
-        setIsFrontCamera(true);
-        updateStatus('Camera enabled');
+      cameraStream = await mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: 'user' },
+      });
+      const [track] = cameraStream.getVideoTracks();
+      if (!track || localStreamRef.current !== stream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        return;
+      }
+      await replaceOutgoingVideoTrackRef.current?.(track);
+      if (localStreamRef.current !== stream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        return;
+      }
+      stream.addTrack(track);
+      setIsVideoEnabled(true);
+      setIsFrontCamera(true);
+      updateStatus('Camera enabled');
     } catch (error) {
-        cameraStream?.getTracks().forEach(track => track.stop());
-        logError('[CallFlow] Failed to enable camera', error);
-        updateStatus(getMediaAccessStatus(error), 'error');
+      cameraStream?.getTracks().forEach(track => track.stop());
+      logError('[CallFlow] Failed to enable camera', error);
+      updateStatus(getMediaAccessStatus(error), 'error');
     } finally {
       cameraChangeRef.current = false;
     }

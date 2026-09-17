@@ -9,12 +9,9 @@ import { logError } from '../appLogger';
  *
  * @param params
  */
-export default function useCallInitiation({ setCalleeId, placeCall, setOutgoingCallMediaType }: {
-        isInCall: boolean;
+export default function useCallInitiation({ setCalleeId, placeCall }: {
         setCalleeId: (peerId: string) => void;
         placeCall: (peerId?: string, mediaType?: 'audio' | 'video') => Promise<void>;
-        handleVideoToggle: () => void;
-        setOutgoingCallMediaType: (mediaType: 'audio' | 'video') => void;
     }) {
   /**
    * Start a video call with `peerId` (used by the call log's redial action, the
@@ -22,13 +19,12 @@ export default function useCallInitiation({ setCalleeId, placeCall, setOutgoingC
    */
   const startVideoCallWith = useCallback(
     (peerId: string) => {
-      setOutgoingCallMediaType('video');
       setCalleeId(peerId);
       placeCall(peerId, 'video').catch(error => {
         logError('placeCall (video) failed', error);
       });
     },
-    [setCalleeId, placeCall, setOutgoingCallMediaType],
+    [setCalleeId, placeCall],
   );
 
   /**
@@ -36,13 +32,12 @@ export default function useCallInitiation({ setCalleeId, placeCall, setOutgoingC
    */
   const startAudioCallWith = useCallback(
     (peerId: string) => {
-      setOutgoingCallMediaType('audio');
       setCalleeId(peerId);
       placeCall(peerId, 'audio').catch(error => {
         logError('placeCall (audio) failed', error);
       });
     },
-    [setCalleeId, placeCall, setOutgoingCallMediaType],
+    [setCalleeId, placeCall],
   );
 
   return { startVideoCallWith, startAudioCallWith };

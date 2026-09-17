@@ -263,13 +263,8 @@ export async function loadDeviceId(): Promise<string> {
 export const DEVICE_FILE_PATH = DEVICE_FILE;
 
 // ─── Call modality log ────────────────────────────────────────────────────────
-// The signaling server has no notion of an "audio call": `startAudioCallWith`
-// places an ordinary call and turns the local camera off once it connects, so
-// the call record the server returns cannot say which of the two the user
-// actually placed.  Without that, the call log can't show an audio-vs-video
-// type icon and redial always starts a video call — the exact complaint that
-// "redialling a voice call starts a video call".  Remembering the modality per
-// call id locally is enough, and keeps the change out of the wire protocol.
+// New call records carry their initial modality on the wire and in Postgres.
+// Keep the local map as a fallback for older cached records that lack it.
 
 const CALL_MEDIA_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-call-media.json`;
 

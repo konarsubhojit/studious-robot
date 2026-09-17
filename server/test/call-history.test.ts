@@ -70,7 +70,7 @@ test('history: survives a server restart', async () => {
   const first = await startServer({ db });
   try {
     const aliceSession = await createSession(first.url, 'user-restart-alice');
-    await postJson(first.url, '/calls', { calleeId: 'ghost-restart' }, aliceSession);
+    await postJson(first.url, '/calls', { calleeId: 'ghost-restart', mediaType: 'audio' }, aliceSession);
     await waitForRows(db, 1);
   } finally {
     await first.teardown();
@@ -85,6 +85,7 @@ test('history: survives a server restart', async () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.total, 1);
     assert.equal(res.body.calls[0].callerId, 'user-restart-alice');
+    assert.equal(res.body.calls[0].mediaType, 'audio');
   } finally {
     await second.teardown();
   }
