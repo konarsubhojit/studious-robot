@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 
 export type IceServer = { urls: string | string[]; username?: string; credential?: string; };
 
@@ -176,7 +176,7 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
 
   router.get(API_ROUTES.TURN_CREDENTIALS, async (req, res) => {
     res.set('Cache-Control', 'no-store');
-    const session = getSessionFromRequest(req, state.sessions);
+    const session = await getSessionFromRequestAsync(req, state).catch(() => null);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;

@@ -19,6 +19,7 @@ export type DeviceRecord = {
   pushToken: string | null;
   lastRegisteredAt?: string | null;
   lastUnregisteredAt?: string | null;
+  revokedAt?: string | null;
   updatedAt?: string | null;
 };
 export type DeviceStore = Map<string, DeviceRecord>;
@@ -137,6 +138,9 @@ export type Stores = {
     get: (sessionId: string) => Promise<SessionRecord | null>;
     save: (session: SessionRecord) => Promise<void>;
     remove: (sessionId: string) => Promise<void>;
+    listByUser?: (userId: string) => Promise<SessionRecord[]>;
+    revokeDevice?: (userId: string, deviceId: string, revokedAt: string) => Promise<void>;
+    getDeviceRevokedAt?: (userId: string, deviceId: string) => Promise<string | null>;
   };
   close?: () => Promise<void>;
 };
@@ -165,6 +169,7 @@ export type ServerState = Stores & {
   db: import('../../db/client.ts').Database | null;
   auditLog: AuditLog;
   callInitRateLimiter: RateLimiter;
+  sessionRateLimiter: RateLimiter;
   rtcRateLimiter: RateLimiter;
   turnCredentialsRateLimiter: RateLimiter;
   messageSendRateLimiter: RateLimiter;

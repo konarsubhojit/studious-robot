@@ -1,6 +1,6 @@
 import express from 'express';
 import { addBlock, removeBlock, listBlocks } from '../security.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { persistBlock, deletePersistedBlock } from '../lib/persistence.ts';
 import { API_ROUTES } from '../../../shared/index.ts';
@@ -11,6 +11,11 @@ import type { Database } from '../../db/client.ts';
  */
 function createBlocksRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: Database | null; }): import('express').Router {
   const router = express.Router();
+  async function requireSession(req: express.Request, res: express.Response) {
+    const session = await getSessionFromRequestAsync(req, state).catch(() => null);
+    if (!session) res.status(401).json({ error: 'invalid session' });
+    return session;
+  }
 
   /**
    * POST /blocks
@@ -22,11 +27,8 @@ function createBlocksRouter({ state, db }: { state: import('../stores/contracts.
    * Response 200: { blockerId, blockeeId }
    */
   router.post(API_ROUTES.BLOCKS, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
-      return;
-    }
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     const blockeeId = normaliseId(req.body?.blockeeId);
     if (!blockeeId) {
@@ -60,11 +62,8 @@ function createBlocksRouter({ state, db }: { state: import('../stores/contracts.
    * Response 404: when the block did not exist
    */
   router.delete(`${API_ROUTES.BLOCKS}/:blockeeId`, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
-      return;
-    }
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     const blockeeId = normaliseId(req.params.blockeeId);
     if (!blockeeId) {
@@ -98,12 +97,9 @@ function createBlocksRouter({ state, db }: { state: import('../stores/contracts.
    *
    * Response 200: { blockedUsers: string[] }
    */
-  router.get(API_ROUTES.BLOCKS, (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
-      return;
-    }
+  router.get(API_ROUTES.BLOCKS, async (req, res) => {
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     res.status(200).json({ blockedUsers: listBlocks(state.blocks, session.userId) });
   });

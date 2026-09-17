@@ -30,8 +30,16 @@ function userCallsKey(userId: string): string {
   return `signaling:user:${userId}:calls`;
 }
 
+function userSessionsKey(userId: string): string {
+  return `signaling:user:${userId}:sessions`;
+}
+
 function sessionKey(sessionId: string): string {
   return `signaling:session:${sessionId}`;
+}
+
+function deviceRevocationKey(userId: string, deviceId: string): string {
+  return `signaling:user:${userId}:device:${deviceId}:revoked`;
 }
 
 /**
@@ -206,6 +214,7 @@ async function createRedisPgStores(
   const instanceId = process.env.INSTANCE_ID || randomUUID();
   const callFallback = new Map<string, import('./contracts.ts').CallRecord>();
   const sessionFallback = new Map<string, import('./contracts.ts').SessionRecord>();
+  const deviceRevocationFallback = new Map<string, string>();
   const evalFn = typeof busPub.eval === 'function' ? busPub.eval.bind(busPub) : null;
 
   const bundle: Record<string, any> = createHotMaps();
@@ -368,19 +377,74 @@ async function createRedisPgStores(
           { backend: 'redis', operation: 'save', kind: 'write', target: 'session-state' },
           () => busPub.set(sessionKey(session.sessionId), payload, { PX: ttlMs })
         );
+        if (typeof busPub.sAdd === 'function') {
+          await timeQuery(
+            { backend: 'redis', operation: 'index', kind: 'write', target: 'session-state' },
+            () => busPub.sAdd(userSessionsKey(session.userId), session.sessionId)
+          );
+        }
+        if (typeof busPub.pExpire === 'function') {
+          await timeQuery(
+            { backend: 'redis', operation: 'expire', kind: 'write', target: 'session-state' },
+            () => busPub.pExpire(userSessionsKey(session.userId), SHARED_SESSION_MAX_TTL_MS)
+          );
+        }
         return;
       }
       sessionFallback.set(session.sessionId, { ...session });
     },
     remove: async (sessionId: string) => {
+      const existing = await bundle.sessionState.get(sessionId);
       if (typeof busPub.del === 'function') {
         await timeQuery(
           { backend: 'redis', operation: 'remove', kind: 'write', target: 'session-state' },
           () => busPub.del(sessionKey(sessionId))
         );
+        if (existing?.userId && typeof busPub.sRem === 'function') {
+          await timeQuery(
+            { backend: 'redis', operation: 'unindex', kind: 'write', target: 'session-state' },
+            () => busPub.sRem(userSessionsKey(existing.userId), sessionId)
+          );
+        }
         return;
       }
       sessionFallback.delete(sessionId);
+    },
+    listByUser: async (userId: string) => {
+      const ids = typeof busPub.sMembers === 'function'
+        ? await timeQuery(
+            { backend: 'redis', operation: 'list', kind: 'read', target: 'session-state' },
+            () => busPub.sMembers(userSessionsKey(userId))
+          )
+        : Array.from(bundle.userSessions.get(userId) ?? []);
+      const sessions = await Promise.all(
+        ids.map((sessionId: string) => bundle.sessionState.get(sessionId))
+      );
+      return sessions.filter(
+        (session: import('./contracts.ts').SessionRecord | null): session is import('./contracts.ts').SessionRecord =>
+          Boolean(session)
+      );
+    },
+    revokeDevice: async (userId: string, deviceId: string, revokedAt: string) => {
+      const key = deviceRevocationKey(userId, deviceId);
+      if (typeof busPub.set === 'function') {
+        await timeQuery(
+          { backend: 'redis', operation: 'revoke', kind: 'write', target: 'session-state' },
+          () => busPub.set(key, revokedAt)
+        );
+        return;
+      }
+      deviceRevocationFallback.set(key, revokedAt);
+    },
+    getDeviceRevokedAt: async (userId: string, deviceId: string) => {
+      const key = deviceRevocationKey(userId, deviceId);
+      if (typeof busPub.get === 'function') {
+        return await timeQuery(
+          { backend: 'redis', operation: 'get-revocation', kind: 'read', target: 'session-state' },
+          () => busPub.get(key)
+        );
+      }
+      return deviceRevocationFallback.get(key) ?? null;
     },
   };
 

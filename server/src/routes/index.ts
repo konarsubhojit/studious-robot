@@ -34,6 +34,7 @@ function mountRoutes(app: import('express').Express, ctx: {
             authUid: string;
             email?: string | null;
             authProvider?: string | null;
+            authTime?: string | null;
         }>;
     }) {
   const {
@@ -52,7 +53,7 @@ function mountRoutes(app: import('express').Express, ctx: {
   app.use(createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }));
   app.use(createAccountExportRouter({ state }));
   app.use(createAccountDeletionRouter({ state, graceMs: accountDeletionGraceMs }));
-  app.use(createDevicesRouter({ state, db }));
+  app.use(createDevicesRouter({ state, db, io }));
   app.use(createDirectoryRouter({ state }));
   app.use(createMetricsRouter({ state }));
   app.use(createBlocksRouter({ state, db }));

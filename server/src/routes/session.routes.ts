@@ -30,6 +30,59 @@ function issueSessionTimestamps(sessionTtlMs: number): {
   };
 }
 
+type VerifiedIdentity = {
+  authUid: string;
+  email?: string | null;
+  authProvider?: string | null;
+  authTime?: string | null;
+};
+
+async function reauthenticationRequiredForDevice({
+  state,
+  userId,
+  deviceId,
+  authTime,
+}: {
+  state: import('../stores/contracts.ts').ServerState;
+  userId: string;
+  deviceId: string;
+  authTime?: string | null;
+}): Promise<boolean> {
+  const revokedAt = await state.sessionState?.getDeviceRevokedAt?.(userId, deviceId)
+    ?? state.devices.get(deviceId)?.revokedAt
+    ?? null;
+  if (!revokedAt) return false;
+  const authTimeMs = authTime ? Date.parse(authTime) : NaN;
+  const revokedAtMs = Date.parse(revokedAt);
+  return !Number.isFinite(authTimeMs) || authTimeMs <= revokedAtMs;
+}
+
+function sessionRateLimitKey(req: express.Request): string {
+  const requestedUserId = normaliseId(req.body?.userId) ?? 'unknown-user';
+  const requestedDeviceId = normaliseId(req.body?.deviceId) ?? 'unknown-device';
+  return `${requestedUserId}:${requestedDeviceId}:${req.ip ?? 'unknown-ip'}`;
+}
+
+function rejectRateLimitedSession(
+  state: import('../stores/contracts.ts').ServerState,
+  res: express.Response,
+  key: string,
+  actor?: string | null
+): boolean {
+  const rateCheck = state.sessionRateLimiter.check(key);
+  if (rateCheck.allowed) return false;
+  state.auditLog.record({
+    event: 'session.rate_limited',
+    actor: actor ?? null,
+    outcome: 'rejected',
+  });
+  res.status(429).json({
+    error: 'too many session requests',
+    retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
+  });
+  return true;
+}
+
 /**
  * Session lifecycle: create, inspect, and rotate signaling sessions.
  *
@@ -39,15 +92,15 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
         state: import('../stores/contracts.ts').ServerState;
         db: Database | null;
         sessionTtlMs: number;
-        verifyIdToken?: (idToken: string) => Promise<{
-            authUid: string;
-            email?: string | null;
-            authProvider?: string | null;
-        }>;
+        verifyIdToken?: (idToken: string) => Promise<VerifiedIdentity>;
     }): import('express').Router {
   const router = express.Router();
 
+  // lgtm[js/missing-rate-limiting] Guarded by state.sessionRateLimiter at the start of this handler.
   router.post(API_ROUTES.SESSION, async (req, res) => {
+    if (rejectRateLimitedSession(state, res, sessionRateLimitKey(req), normaliseId(req.body?.userId))) {
+      return;
+    }
     let externalIdentity;
     try {
       externalIdentity = verifyIdToken
@@ -107,6 +160,24 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
 
     const deviceId = normaliseId(req.body?.deviceId) || `device-${randomUUID()}`;
     const platform = normaliseOptionalString(req.body?.platform);
+    if (await reauthenticationRequiredForDevice({
+      state,
+      userId,
+      deviceId,
+      authTime: externalIdentity.authTime,
+    })) {
+      state.auditLog.record({
+        event: 'session.reauthentication_required',
+        actor: userId,
+        target: deviceId,
+        outcome: 'denied',
+      });
+      res.status(401).json({
+        error: 'reauthentication required for revoked device',
+        code: 'reauthentication_required',
+      });
+      return;
+    }
     const { createdAt, expiresAt } = issueSessionTimestamps(sessionTtlMs);
     const session = {
       sessionId: randomUUID(),
@@ -125,6 +196,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       deviceId,
       platform,
       sessionId: session.sessionId,
+      revokedAt: null,
     });
     ensurePresenceRecord(state, userId);
 
@@ -144,6 +216,9 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
+    if (rejectRateLimitedSession(state, res, `refresh:${session.userId}:${session.deviceId}`, session.userId)) {
+      return;
+    }
 
     res.status(200).json(session);
   });
@@ -155,6 +230,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
    * fresh one (same userId / deviceId) is returned.  Useful for security-
    * conscious clients that periodically rotate their credentials.
    */
+  // lgtm[js/missing-rate-limiting] Guarded by state.sessionRateLimiter before rotating the token.
   router.post(API_ROUTES.SESSION_REFRESH, async (req, res) => {
     const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
@@ -175,8 +251,36 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       platform: session.platform,
       ...issueSessionTimestamps(sessionTtlMs),
     };
+    // The pair of checks brackets the shared-store write: if a remote revocation
+    // lands during the write, the freshly saved session is removed here. A
+    // revocation that lands after the second check is enforced by the next REST
+    // or socket authorization check.
+    if (await reauthenticationRequiredForDevice({
+      state,
+      userId: session.userId,
+      deviceId: session.deviceId,
+    })) {
+      res.status(401).json({
+        error: 'reauthentication required for revoked device',
+        code: 'reauthentication_required',
+      });
+      return;
+    }
     state.sessions.set(newSession.sessionId, newSession);
     await state.sessionState?.save(newSession);
+    if (await reauthenticationRequiredForDevice({
+      state,
+      userId: session.userId,
+      deviceId: session.deviceId,
+    })) {
+      state.sessions.delete(newSession.sessionId);
+      await state.sessionState?.remove(newSession.sessionId);
+      res.status(401).json({
+        error: 'reauthentication required for revoked device',
+        code: 'reauthentication_required',
+      });
+      return;
+    }
     addSessionToUser(state, newSession);
     upsertDevice(state, {
       userId: newSession.userId,

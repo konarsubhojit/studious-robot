@@ -16,6 +16,7 @@ import { useChat } from '../chat/ChatProvider';
 import AppNavigator from '../navigation/AppNavigator';
 import { alertStatus } from './StatusToast';
 import useRecentSearches from '../hooks/useRecentSearches';
+import useDevices from '../hooks/useDevices';
 import useStorageUsage from '../hooks/useStorageUsage';
 import {
   closeChatConversation,
@@ -60,6 +61,7 @@ const selectTabShellSlice = (state: CallContextValue) => ({
   setSignalingUrl: state.callFlow.setSignalingUrl,
   signalingUrl: state.callFlow.signalingUrl,
   status: state.callFlow.status,
+  authedFetch: state.callFlow.authedFetch,
   unregisterUser: state.callFlow.unregisterUser,
   updateStatus: state.callFlow.updateStatus,
   userId: state.callFlow.userId,
@@ -95,6 +97,7 @@ function TabShell() {
     setSignalingUrl,
     signalingUrl,
     status,
+    authedFetch,
     unregisterUser,
     updateStatus,
     userId,
@@ -145,6 +148,13 @@ function TabShell() {
     refreshStorageUsage,
     clearCachedMedia,
   } = useStorageUsage({ onStatus: updateStatus });
+  const {
+    devices,
+    isLoadingDevices,
+    refreshDevices,
+    revokeDevice,
+    revokeAllDevices,
+  } = useDevices({ signalingUrl, authedFetch, updateStatus });
 
   const renderChatConversation = useCallback((peerId: string | null, { messageId }: { messageId?: string | null; } = {}) => {
     // A conversation route always carries its peer; without one there is
@@ -426,6 +436,19 @@ function TabShell() {
           logError('unregisterUser failed', error);
         });
       }}
+      devices={devices}
+      onRefreshDevices={refreshDevices}
+      isLoadingDevices={isLoadingDevices}
+      onRevokeDevice={(deviceId) => {
+        void revokeDevice(deviceId);
+      }}
+      onRevokeAllDevices={async () => {
+        const revoked = await revokeAllDevices();
+        if (!revoked) return;
+        resetNavigation();
+        clearNavigationState();
+        await unregisterUser();
+      }}
       onClose={() => openTab(TABS.CHATS)}
       onExportLogs={handleExportLogs}
       storageUsage={storageUsage}
@@ -454,6 +477,7 @@ function TabShell() {
   ), [
     accountEmail,
     accountProviderId,
+    devices,
     setSignalingUrl,
     signalingUrl,
     userId,
@@ -471,6 +495,10 @@ function TabShell() {
     handleSpeakerDefaultToggle,
     isClearingMedia,
     isMeasuringStorage,
+    isLoadingDevices,
+    refreshDevices,
+    revokeAllDevices,
+    revokeDevice,
     refreshStorageUsage,
     setPeerMuted,
     settings.autoCameraLightingEnabled,

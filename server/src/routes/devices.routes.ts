@@ -1,9 +1,15 @@
 import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normalisePushProvider, sanitizeForLog } from '../lib/normalize.ts';
 import { upsertDevice } from '../lib/state.ts';
 import { persistDevice } from '../lib/persistence.ts';
+import {
+  disconnectRevokedSockets,
+  listUserSessions,
+  revokeAllDeviceSessions,
+  revokeDeviceSessions,
+} from '../domain/sessionRevocation.ts';
 import type { Database } from '../../db/client.ts';
 
 // Delivery stages report that a call push reached the device and rang it;
@@ -107,15 +113,64 @@ function formatReceiptLog({
   );
 }
 
-function createDevicesRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: Database | null; }): import('express').Router {
+function createDevicesRouter({ state, db, io }: { state: import('../stores/contracts.ts').ServerState; db: Database | null; io: import('socket.io').Server; }): import('express').Router {
   const router = express.Router();
 
-  router.post(API_ROUTES.DEVICES_REGISTER, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
+  async function requireSession(req: express.Request, res: express.Response) {
+    try {
+      const session = await getSessionFromRequestAsync(req, state);
+      if (!session) {
+        res.status(401).json({ error: 'invalid session' });
+      }
+      return session;
+    } catch {
+      res.status(503).json({ error: 'session state unavailable' });
+      return null;
+    }
+  }
+
+  router.get(API_ROUTES.DEVICES, async (req, res) => {
+    const session = await requireSession(req, res);
+    if (!session) return;
+
+    const sessions = await listUserSessions(state, session.userId).catch(() => null);
+    if (!sessions) {
+      res.status(503).json({ error: 'session state unavailable' });
       return;
     }
+    const deviceIds = new Set(state.userDevices.get(session.userId) ?? []);
+    for (const knownSession of sessions) {
+      if (knownSession.userId === session.userId) deviceIds.add(knownSession.deviceId);
+    }
+    const connections = state.userConnections.get(session.userId);
+    const connectedDeviceIds = new Set(
+      Array.from(connections?.values() || [], (connection) => connection.deviceId)
+    );
+    const activeSessionDeviceIds = new Set(sessions.map((knownSession) => knownSession.deviceId));
+
+    res.status(200).json({
+      devices: Array.from(deviceIds).map((deviceId) => {
+        const device = state.devices.get(deviceId);
+        const matchingSession = sessions.find((knownSession) => knownSession.deviceId === deviceId);
+        return {
+          deviceId,
+          platform: device?.platform ?? matchingSession?.platform ?? null,
+          current: deviceId === session.deviceId,
+          connected: connectedDeviceIds.has(deviceId),
+          activeSession: activeSessionDeviceIds.has(deviceId),
+          pushRegistered: Boolean(device?.pushProvider && device?.pushToken),
+          lastRegisteredAt: device?.lastRegisteredAt ?? null,
+          lastUnregisteredAt: device?.lastUnregisteredAt ?? null,
+          updatedAt: device?.updatedAt ?? matchingSession?.createdAt ?? null,
+          revokedAt: device?.revokedAt ?? null,
+        };
+      }),
+    });
+  });
+
+  router.post(API_ROUTES.DEVICES_REGISTER, async (req, res) => {
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     const provider = normalisePushProvider(req.body?.provider);
     const pushToken = normaliseId(req.body?.pushToken);
@@ -152,11 +207,8 @@ function createDevicesRouter({ state, db }: { state: import('../stores/contracts
   });
 
   router.post(API_ROUTES.DEVICES_UNREGISTER, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
-      return;
-    }
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     const requestedDeviceId = normaliseId(req.body?.deviceId);
     if (requestedDeviceId && requestedDeviceId !== session.deviceId) {
@@ -185,8 +237,100 @@ function createDevicesRouter({ state, db }: { state: import('../stores/contracts
     });
   });
 
+  router.post(API_ROUTES.DEVICES_REVOKE, async (req, res) => {
+    const session = await requireSession(req, res);
+    if (!session) return;
+
+    const deviceId = normaliseId(req.body?.deviceId);
+    if (!deviceId) {
+      res.status(400).json({ error: 'deviceId is required' });
+      return;
+    }
+    const device = state.devices.get(deviceId);
+    const sessions = await listUserSessions(state, session.userId).catch(() => null);
+    if (!sessions) {
+      res.status(503).json({ error: 'session state unavailable' });
+      return;
+    }
+    const belongsToUser = device?.userId === session.userId ||
+      sessions.some((knownSession) => knownSession.userId === session.userId && knownSession.deviceId === deviceId);
+    if (!belongsToUser) {
+      res.status(404).json({ error: 'device not found' });
+      return;
+    }
+
+    if (!device) {
+      upsertDevice(state, {
+        userId: session.userId,
+        deviceId,
+        platform: sessions.find((knownSession) => knownSession.deviceId === deviceId)?.platform ?? null,
+        sessionId: null,
+      });
+    }
+    const result = await revokeDeviceSessions(state, {
+      userId: session.userId,
+      deviceId,
+      reason: 'revocation',
+    });
+    disconnectRevokedSockets(io, state, session.userId, [deviceId], result.revokedSessionIds);
+    state.auditLog.record({
+      event: 'device.revoked',
+      actor: session.userId,
+      target: deviceId,
+      outcome: 'success',
+      details: {
+        currentDevice: deviceId === session.deviceId,
+        sessionsRevoked: result.revokedSessionIds.length,
+        reauthentication: 'required_before_this_installation_can_create_another_session',
+        currentCallHandling: 'revoked sockets disconnect immediately; existing disconnect cleanup handles active calls',
+      },
+    });
+
+    res.status(200).json({
+      status: 'revoked',
+      deviceId,
+      current: deviceId === session.deviceId,
+      sessionsRevoked: result.revokedSessionIds.length,
+      reauthentication: 'required',
+      currentCallHandling: 'revoked sockets disconnect immediately; existing disconnect cleanup handles active calls',
+    });
+  });
+
+  router.post(API_ROUTES.DEVICES_REVOKE_ALL, async (req, res) => {
+    const session = await requireSession(req, res);
+    if (!session) return;
+
+    const result = await revokeAllDeviceSessions(state, session.userId).catch(() => null);
+    if (!result) {
+      res.status(503).json({ error: 'session state unavailable' });
+      return;
+    }
+    disconnectRevokedSockets(io, state, session.userId, result.revokedDeviceIds, result.revokedSessionIds);
+    state.auditLog.record({
+      event: 'device.revoked_all',
+      actor: session.userId,
+      outcome: 'success',
+      details: {
+        devicesRevoked: result.revokedDeviceIds.length,
+        sessionsRevoked: result.revokedSessionIds.length,
+        includesCurrentDevice: true,
+        reauthentication: 'required_before_any_revoked_installation_can_create_another_session',
+        currentCallHandling: 'revoked sockets disconnect immediately; existing disconnect cleanup handles active calls',
+      },
+    });
+
+    res.status(200).json({
+      status: 'revoked',
+      devicesRevoked: result.revokedDeviceIds.length,
+      sessionsRevoked: result.revokedSessionIds.length,
+      includesCurrentDevice: true,
+      reauthentication: 'required',
+      currentCallHandling: 'revoked sockets disconnect immediately; existing disconnect cleanup handles active calls',
+    });
+  });
+
   router.post(API_ROUTES.DEVICES_PUSH_RECEIPT, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+    const session = await getSessionFromRequestAsync(req, state).catch(() => null);
     const deviceId = session?.deviceId || normaliseId(req.body?.deviceId);
     const callId = normaliseId(req.body?.callId);
     const messageId = normaliseId(req.body?.messageId);

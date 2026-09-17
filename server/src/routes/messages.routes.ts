@@ -1,6 +1,6 @@
 import express from 'express';
 import { isBlocked } from '../security.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { DEFAULT_FIRST_MESSAGE_LIMIT, deriveConversationId, clampMessageLimit } from '../messageStore.ts';
 import { toCallTimelineEntry, readCallsBetween, augmentConversationsWithCalls, markMissedCallsRead, mergeTimeline } from '../domain/callTimeline.ts';
@@ -187,6 +187,11 @@ async function buildHistoryResponse({
 
 function createMessagesRouter({ state, io }: { state: import('../stores/contracts.ts').ServerState; io: any; }): import('express').Router {
   const router = express.Router();
+  async function requireSession(req: express.Request, res: express.Response) {
+    const session = await getSessionFromRequestAsync(req, state).catch(() => null);
+    if (!session) res.status(401).json({ error: 'invalid session' });
+    return session;
+  }
 
   /**
    * GET /messages?peerId=…&limit=…&before=…&include=calls
@@ -204,11 +209,8 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
    * Response 200: { conversationId, messages: TimelineEntry[], limit }
    */
   router.get(API_ROUTES.MESSAGES, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
-      return;
-    }
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     const peerId = normaliseId(req.query?.peerId);
     if (!peerId) {
@@ -275,11 +277,8 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
    *   full page (there may be more) from a partial one (there is not).
    */
   router.get(API_ROUTES.MESSAGES_SEARCH, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
-      return;
-    }
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     // Search is the most expensive read the API serves (it fans out across
     // every conversation the user is part of), so it is rate limited per user.
@@ -374,11 +373,8 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
    * Response 200: { conversations: Array<{ conversationId, peerId, lastMessage, unreadCount, online }> }
    */
   router.get(API_ROUTES.CONVERSATIONS, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
-      return;
-    }
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     // The cached value is the raw store result: the blocklist filter and the
     // presence flag below are evaluated per request so neither can go stale.
@@ -429,11 +425,8 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
    * Response 200: { conversationId, updated, missedCallsRead }
    */
   router.post(API_ROUTES.MESSAGES_READ, async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
-    if (!session) {
-      res.status(401).json({ error: 'invalid session' });
-      return;
-    }
+    const session = await requireSession(req, res);
+    if (!session) return;
 
     const peerId = normaliseId(req.body?.peerId);
     if (!peerId) {

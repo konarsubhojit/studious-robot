@@ -147,6 +147,9 @@ function upsertDevice(state: Stores, nextDevice: Partial<DeviceRecord> & { devic
     lastUnregisteredAt: hasOwnProp(nextDevice, 'lastUnregisteredAt')
       ? nextDevice.lastUnregisteredAt ?? null
       : existing?.lastUnregisteredAt ?? null,
+    revokedAt: hasOwnProp(nextDevice, 'revokedAt')
+      ? nextDevice.revokedAt ?? null
+      : existing?.revokedAt ?? null,
     updatedAt: new Date().toISOString(),
   };
 

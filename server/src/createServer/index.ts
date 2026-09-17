@@ -7,7 +7,7 @@ import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from '../cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS, DEFAULT_FANOUT_PROBE_INTERVAL_MS, DEFAULT_ACCOUNT_DELETION_GRACE_MS, DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS } from '../config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_RATE_LIMIT, DEFAULT_SESSION_RATE_WINDOW_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS, DEFAULT_FANOUT_PROBE_INTERVAL_MS, DEFAULT_ACCOUNT_DELETION_GRACE_MS, DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS } from '../config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
 import { runRetentionSweep } from '../lib/retention.ts';
 import { hydrateAccountDeletions, runAccountDeletionSweep } from '../domain/accountDeletion.ts';
@@ -126,6 +126,12 @@ function createServer(opts: CreateServerOptions = {}) {
     windowMs:
       opts.turnRateWindowMs ?? parseEnv('TURN_CREDENTIALS_RATE_WINDOW_MS', 60_000),
   });
+  const sessionRateLimiter = createRateLimiter({
+    maxRequests: opts.sessionRateLimit ?? parseEnv('SESSION_RATE_LIMIT', DEFAULT_SESSION_RATE_LIMIT),
+    windowMs:
+      opts.sessionRateWindowMs ??
+      parseEnv('SESSION_RATE_WINDOW_MS', DEFAULT_SESSION_RATE_WINDOW_MS),
+  });
   const messageSendRateLimiter = createRateLimiter({
     maxRequests: opts.messageRateLimit ?? parseEnv('MESSAGE_RATE_LIMIT', 30),
     windowMs: opts.messageRateWindowMs ?? parseEnv('MESSAGE_RATE_WINDOW_MS', 60_000),
@@ -220,6 +226,7 @@ function createServer(opts: CreateServerOptions = {}) {
     auditLog: createAuditLog({ db }),
     /** Rate limiter for call initiation (HTTP + socket). */
     callInitRateLimiter,
+    sessionRateLimiter,
     /** Rate limiter for RTC signaling events. */
     rtcRateLimiter,
     /** Rate limiter for TURN credential minting. */

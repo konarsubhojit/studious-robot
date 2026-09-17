@@ -71,18 +71,24 @@ async function getSessionFromRequestAsync(
     normaliseId(req.body?.sessionId);
   if (!sessionId) return null;
 
-  const local = state.sessions.get(sessionId);
-  if (local) {
-    if (local.expiresAt && new Date(local.expiresAt).getTime() < Date.now()) return null;
-    return local;
-  }
-
   if (!state.sessionState) {
+    const local = state.sessions.get(sessionId);
+    if (local) {
+      if (local.expiresAt && new Date(local.expiresAt).getTime() < Date.now()) return null;
+      return local;
+    }
     return null;
   }
 
   const shared = await state.sessionState.get(sessionId);
-  if (!shared) return null;
+  if (!shared) {
+    const local = state.sessions.get(sessionId);
+    if (local) {
+      state.sessions.delete(sessionId);
+      state.userSessions.get(local.userId)?.delete(sessionId);
+    }
+    return null;
+  }
   if (shared.expiresAt && new Date(shared.expiresAt).getTime() < Date.now()) return null;
   state.sessions.set(sessionId, shared);
   return shared;
@@ -162,8 +168,9 @@ async function resolveSocketIdentityAsync(
   const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth ?? {} : {};
   const sessionId = normaliseId(auth.sessionId);
   const localSession = sessionId ? state.sessions.get(sessionId) : null;
+  const shouldReadShared = !localSession && Boolean(sessionId && state.sessionState);
   const sharedSession =
-    !localSession && sessionId && state.sessionState ? await state.sessionState.get(sessionId) : null;
+    shouldReadShared && sessionId && state.sessionState ? await state.sessionState.get(sessionId) : null;
   if (sharedSession && sessionId) {
     state.sessions.set(sessionId, sharedSession);
   }

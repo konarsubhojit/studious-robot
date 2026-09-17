@@ -19,6 +19,8 @@ import { verboseLog } from '../../lib/verbose.ts';
 import { decideRoomJoin, normaliseReportedActiveCallIds } from './state.ts';
 import { leaveRoom, logCallCorrelation, scheduleParticipantDisconnectCleanup } from './lifecycle.ts';
 
+const SOCKET_SESSION_RECHECK_MS = 1000;
+
 function registerSocketHandlers(
   io: import('socket.io').Server,
   { state, ringingTimeoutMs, participantDisconnectGraceMs = DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS }: {
@@ -56,6 +58,40 @@ function registerSocketHandlers(
         `[signaling] socket ${socket.id} presented stale sessionId=${identity.presentedSessionId}; downgraded to guest user=${identity.userId}`
       );
     }
+
+    socket.use((_packet, next) => {
+      const sessionId = socket.data.identity?.sessionId;
+      if (!sessionId || !state.sessionState) {
+        next();
+        return;
+      }
+      const lastCheckedAt = socket.data.sessionCheckedAt;
+      if (typeof lastCheckedAt === 'number' && Date.now() - lastCheckedAt < SOCKET_SESSION_RECHECK_MS) {
+        next();
+        return;
+      }
+      state.sessionState.get(sessionId)
+        .then((session) => {
+          if (session) {
+            socket.data.sessionCheckedAt = Date.now();
+            next();
+            return;
+          }
+          socket.emit(SERVER_EVENTS.SESSION_INVALID, { sessionId, reason: 'revoked' });
+          socket.disconnect(true);
+        })
+        .catch(() => {
+          acknowledgeError(
+            socket,
+            undefined,
+            'session.check',
+            ERROR_CODES.UNAUTHORIZED,
+            'session state unavailable',
+            state
+          );
+          socket.disconnect(true);
+        });
+    });
 
     console.log(
       `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}` +

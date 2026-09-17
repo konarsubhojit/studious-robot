@@ -22,6 +22,7 @@ import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch, To
 import type { StorageUsage } from '../storageUsage';
 import type { ThemeColors } from '../theme';
 import type { ToastTone } from './primitives';
+import type { ActiveDevice } from '../hooks/useDevices';
 
 const ICE_TRANSPORT_POLICY_OPTIONS = [
   { policy: ICE_TRANSPORT_POLICIES.ALL, label: 'Default', testID: 'settings-ice-policy-all' },
@@ -41,6 +42,16 @@ export type SettingsScreenProps = {
   onSaveSignalingUrl: (url: string) => void;
   /** Clear the identity and return to registration. */
   onSignOut: () => void;
+  /** Active devices for this account, excluding sensitive push/session tokens. */
+  devices?: ActiveDevice[];
+  /** Refresh the account device inventory. */
+  onRefreshDevices?: () => void;
+  /** Whether the device inventory is loading. */
+  isLoadingDevices?: boolean;
+  /** Remotely revoke one device. */
+  onRevokeDevice?: (deviceId: string) => void | Promise<void>;
+  /** Revoke every device session, including this device. */
+  onRevokeAllDevices?: () => void | Promise<void>;
   /** Dismiss the screen and return to the tabs. */
   onClose: () => void;
   /** Optional: export diagnostic logs. */
@@ -148,6 +159,89 @@ function MutedPeopleSettings({
   );
 }
 
+function formatDeviceTimestamp(value: string | null | undefined): string {
+  if (!value) return 'Never';
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return value;
+  return new Date(timestamp).toLocaleString();
+}
+
+function describeDevice(device: ActiveDevice): string {
+  const state = device.connected
+    ? 'Connected now'
+    : device.activeSession
+      ? 'Signed in'
+      : device.revokedAt
+        ? 'Revoked'
+        : 'No active session';
+  return [
+    state,
+    device.pushRegistered ? 'push enabled' : 'push off',
+    `last seen ${formatDeviceTimestamp(device.updatedAt ?? device.lastRegisteredAt)}`,
+  ].join(' · ');
+}
+
+function DeviceSecuritySettings({
+  devices,
+  isLoadingDevices,
+  onRefreshDevices,
+  onRevokeDevice,
+  onRevokeAllDevices,
+}: Pick<SettingsScreenProps, 'devices' | 'isLoadingDevices' | 'onRefreshDevices' |
+  'onRevokeDevice' | 'onRevokeAllDevices'>) {
+  const styles = useThemedStyles(createStyles);
+  const sortedDevices = [...(devices ?? [])].sort((a, b) => Number(b.current) - Number(a.current));
+  return (
+    <>
+      <ListItem
+        title="Active devices"
+        subtitle="Review where your account is signed in. Tokens are never shown."
+        value={isLoadingDevices ? 'Loading' : `${sortedDevices.length}`}
+        icon="settingsPrivacy"
+        onPress={onRefreshDevices}
+        accessibilityHint="Refreshes your active device list"
+        testID="settings-devices-refresh"
+      />
+      {sortedDevices.length === 0 ? (
+        <Text style={styles.emptyText} testID="settings-devices-empty">
+          No active devices found.
+        </Text>
+      ) : sortedDevices.map(device => (
+        <ListItem
+          key={device.deviceId}
+          title={device.current ? 'This device' : device.platform || 'Device'}
+          subtitle={describeDevice(device)}
+          value={device.deviceId}
+          icon="settingsPrivacy"
+          trailing={
+            device.current ? null : (
+              <AppButton
+                title="Sign out"
+                onPress={() => onRevokeDevice?.(device.deviceId)}
+                disabled={!onRevokeDevice}
+                testID="settings-revoke-device"
+                accessibilityLabel={`Sign out device ${device.deviceId}`}
+              />
+            )
+          }
+          testID="settings-device-row"
+        />
+      ))}
+      {onRevokeAllDevices ? (
+        <ListItem
+          title="Sign out all devices"
+          subtitle="Revokes every session, including this device. Sign in again to continue."
+          icon="settingsPrivacy"
+          destructive
+          onPress={onRevokeAllDevices}
+          accessibilityHint="Signs this account out everywhere"
+          testID="settings-revoke-all-devices"
+        />
+      ) : null}
+    </>
+  );
+}
+
 function BlockedPeopleSettings({
   blockedUsers,
   onOpenProfile,
@@ -171,6 +265,7 @@ function BlockedPeopleSettings({
       />
     );
   }
+
   return (
     <View testID="settings-blocked-people">
       <Text style={styles.groupCaption}>Blocked people</Text>
@@ -433,6 +528,11 @@ function SettingsScreen({
   signalingUrl,
   onSaveSignalingUrl,
   onSignOut,
+  devices = [],
+  onRefreshDevices,
+  isLoadingDevices = false,
+  onRevokeDevice,
+  onRevokeAllDevices,
   onClose,
   onExportLogs,
   storageUsage = EMPTY_STORAGE_USAGE,
@@ -481,7 +581,8 @@ function SettingsScreen({
   // this screen reads the number, and the crawl is not free.
   useEffect(() => {
     onRefreshStorage?.();
-  }, [onRefreshStorage]);
+    onRefreshDevices?.();
+  }, [onRefreshDevices, onRefreshStorage]);
 
   // Clearing is asynchronous, so the confirmation is driven off the *end* of
   // the work rather than off the tap: a toast that fired on intent would claim
@@ -562,6 +663,16 @@ function SettingsScreen({
           value={accountLine}
           icon="settingsPrivacy"
           testID="settings-account-row"
+        />
+
+        {/* ── Security ────────────────────────────────────────────────────── */}
+        <SectionHeader title="Security" icon="settingsPrivacy" />
+        <DeviceSecuritySettings
+          devices={devices}
+          isLoadingDevices={isLoadingDevices}
+          onRefreshDevices={onRefreshDevices}
+          onRevokeDevice={onRevokeDevice}
+          onRevokeAllDevices={onRevokeAllDevices}
         />
 
         {/* ── Notifications ───────────────────────────────────────────────── */}
@@ -787,6 +898,11 @@ const createStyles = (colors: ThemeColors) =>
     },
     hint: {
       ...typography.hint,
+      color: colors.textSecondary,
+      marginBottom: spacing.sm,
+    },
+    emptyText: {
+      ...typography.body,
       color: colors.textSecondary,
       marginBottom: spacing.sm,
     },
