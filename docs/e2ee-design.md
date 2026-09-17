@@ -137,7 +137,7 @@ say plainly that metadata remains visible.
 
 ---
 
-## 5. Enrollment, rotation, revocation and lost devices
+## 5. Enrolment, rotation, revocation and lost devices
 
 | Event | Behaviour |
 | --- | --- |
@@ -162,7 +162,7 @@ This is where an E2EE messenger is won or lost in practice, and it must be
 decided **before** any implementation:
 
 - **Option A — no history transfer (default).** A new device sees only messages
-  sent after enrollment. Simplest and safest. Users lose history on device loss.
+  sent after enrolment. Simplest and safest. Users lose history on device loss.
 - **Option B — device-to-device transfer.** Existing device encrypts its local
   history to the new device over an authenticated channel. No server trust, but
   requires both devices present.
