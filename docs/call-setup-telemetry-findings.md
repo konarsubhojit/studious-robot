@@ -449,8 +449,8 @@ proportional to call volume was found in the reachable code.
 
 If a 2s event-loop stall did occur mid-relay, its effect on `handleRtcRelay`
 is real regardless of its cause: `handleRtcRelay` is on the hot path for
-every offer/answer/candidate/media-state frame
-(`callHandlers.ts:335-451`), and a stalled event loop delays every queued
+every offer/answer/candidate/media-state frame (`handleRtcRelay` in
+`callHandlers.ts`), and a stalled event loop delays every queued
 callback, including the one that would deliver an offer to the callee. A 2s
 delay landing on the setup window (`call_setup_latency_ms` mean 5093/5620ms)
 would be visible as a fat right tail, not the mean — and the reported means
@@ -472,6 +472,37 @@ CPU-time histogram (see below) sampled around the same tick as the
 other suspected synchronous hot path in a `performance.now()` span reported
 as its own histogram, so the next occurrence can be attributed directly
 instead of by elimination.
+
+### Status: deferred, not shipped in this pass
+
+Per this task's explicit instruction, this phase is deferred rather than
+shipped alongside the cheaper Phases 0–3, so it does not hold back the
+inexpensive fixes above. The design considered, for whoever picks this up:
+
+- **What to build:** a small, capped span histogram (mirroring the existing
+  `db_queries_total`/`pg_query_duration_ms` pattern) recording
+  `performance.now()`-bounded durations around a short, explicit list of
+  suspected synchronous hot paths (the audit-log `entries.shift()` compaction,
+  the per-frame work inside `handleRtcRelay` before its first `await`, and
+  JSON (de)serialization of large payloads), *or* capturing which handler
+  (`options.eventName` in `handleRtcRelay`, or an equivalent label in other
+  hot paths) was executing at the moment `monitorEventLoopDelay` samples a
+  spike, so the next occurrence is attributed directly instead of by
+  elimination.
+- **The hard constraint:** the instrumentation must add no synchronous
+  per-event cost to the relay hot path itself — `handleRtcRelay` runs once
+  per offer/answer/candidate/heartbeat/state-change frame, so a `Date.now()`
+  or `performance.now()` call around *every* invocation is probably fine, but
+  anything heavier (allocating a histogram bucket key by string
+  interpolation, for example) is not, and should be sampled (e.g. 1-in-N)
+  rather than measured on every call if profiling shows it matters.
+- **Why deferred rather than shipped now:** the design has two real
+  alternatives (span histogram vs. spike-time handler capture) with
+  different cost/precision tradeoffs, and picking one without a clear
+  performance budget for the relay hot path risks exactly the kind of
+  "instrumentation adds the load it's trying to measure" problem this whole
+  investigation is about. A separate issue tracks this; Phases 0–3 do not
+  depend on it and are not blocked by leaving it open.
 
 ---
 
