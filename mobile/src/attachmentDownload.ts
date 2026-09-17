@@ -286,7 +286,7 @@ async function downloadWithFallback({ url, fileName, onProgress, permission, isC
  *
  * @param [attachment]
  */
-export async function downloadAttachment({ url, name, mimeType, messageId, now = new Date(), onProgress, onAbortHandle }: {
+export async function downloadAttachment({ url, name, mimeType, messageId, now = new Date(), onProgress, onAbortHandle, resolveFetchUrl }: {
     url?: string | null;
     name?: string | null;
     mimeType?: string | null;
@@ -297,6 +297,15 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
     onProgress?: (fraction: number) => void;
     /** Handed an abort function that cancels the in-flight attempt, if any. */
     onAbortHandle?: (abort: () => void) => void;
+    /**
+     * Exchange the stored attachment reference (`url`, stable for caching and
+     * de-duplication) for the short-lived URL bytes are actually fetched
+     * from. Storage is not publicly readable, so a deployment with the
+     * participant-authorized download endpoint wired up must supply this —
+     * without it, `url` is used verbatim (only ever true for a deployment
+     * that has not migrated yet).
+     */
+    resolveFetchUrl?: (url: string) => Promise<string>;
 } = {}): Promise<AttachmentDownloadResult> {
   if (!url || typeof url !== 'string') {
     logWarn('[Attachments] download skipped: no URL on the attachment', { mimeType });
@@ -323,7 +332,8 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
   });
 
   // Already on the device: opening it again costs nothing, so neither the
-  // network nor the storage permission prompt is reached.
+  // network nor the storage permission prompt is reached, and no download
+  // grant needs to be minted for bytes already on disk.
   const cached = await findCachedAttachment({ url });
   if (cached && !cancelled) {
     onProgress?.(1);
@@ -341,6 +351,30 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
     return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
   }
 
+  // The stored reference (`url`) is never fetched directly once download
+  // authorization is wired up: it identifies the object for caching, but the
+  // bytes are only reachable through the short-lived link the server just
+  // minted for this specific request.
+  let fetchUrl = url;
+  if (resolveFetchUrl) {
+    try {
+      fetchUrl = await resolveFetchUrl(url);
+    } catch (error) {
+      if (cancelled) {
+        const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
+        return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
+      }
+      const statusCode = (error as { status?: number; })?.status;
+      const reason = classifyFailure({ statusCode, error });
+      logWarn('[Attachments] download authorization failed', { reason, statusCode });
+      return { success: false, error, reason, statusCode, message: describeAttachmentDownloadResult({ reason }) };
+    }
+  }
+  if (cancelled) {
+    const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
+    return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
+  }
+
   const permission = await ensureDownloadPermission();
   if (!permission.granted) {
     logWarn('[Attachments] storage permission denied; saving inside the app instead', {
@@ -348,10 +382,10 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
     });
   }
 
-  logInfo('[Attachments] download started', { host: hostOf(url), mimeType, fileName });
+  logInfo('[Attachments] download started', { host: hostOf(fetchUrl), mimeType, fileName });
 
   const result = await downloadWithFallback({
-    url,
+    url: fetchUrl,
     fileName,
     onProgress,
     permission,
@@ -362,7 +396,7 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
   });
 
   if (result.reason === 'cancelled') {
-    logInfo('[Attachments] download cancelled', { host: hostOf(url) });
+    logInfo('[Attachments] download cancelled', { host: hostOf(fetchUrl) });
     return { ...result, message: describeAttachmentDownloadResult(result) };
   }
   if (result.success) {
@@ -376,7 +410,7 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
   }
 
   logError('[Attachments] download failed', {
-    host: hostOf(url),
+    host: hostOf(fetchUrl),
     reason: result.reason,
     statusCode: result.statusCode,
     error: result.error,

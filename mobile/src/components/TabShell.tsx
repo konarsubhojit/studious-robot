@@ -2,6 +2,7 @@ import { memo, useCallback, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
+import { resolveAttachmentDownloadUrl } from '../attachmentAccess';
 import {
   describeAttachmentDownloadResult,
   downloadAttachment,
@@ -186,6 +187,8 @@ function TabShell() {
             messageId: message?.messageId,
             onProgress,
             onAbortHandle,
+            resolveFetchUrl: attachmentUrl =>
+              resolveAttachmentDownloadUrl({ authedFetch, signalingUrl, peerId, url: attachmentUrl }),
           });
           updateStatus(
             describeAttachmentDownloadResult(result),
@@ -204,6 +207,8 @@ function TabShell() {
             onProgress,
             onAbortHandle,
             isStillOpenable: () => !currentMessage()?.deletedAt,
+            resolveFetchUrl: attachmentUrl =>
+              resolveAttachmentDownloadUrl({ authedFetch, signalingUrl, peerId, url: attachmentUrl }),
           });
           updateStatus(
             result.message ?? describeAttachmentOpenResult({ success: false, reason: 'open-failed' }),
@@ -277,6 +282,8 @@ function TabShell() {
     saveDraft,
     sendMessage,
     sendTypingIndicator,
+    signalingUrl,
+    authedFetch,
     startAudioCallWith,
     startRecordingVoiceNote,
     startVideoCallWith,

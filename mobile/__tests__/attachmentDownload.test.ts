@@ -198,4 +198,36 @@ describe('attachmentDownload', () => {
     expect(isAttachmentDownloadRetryable('cancelled')).toBe(true);
     expect(isAttachmentDownloadRetryable(undefined)).toBe(false);
   });
+
+  test('resolveFetchUrl exchanges the stored reference for the URL bytes are actually fetched from', async () => {
+    (RNFS.downloadFile as jest.Mock).mockReturnValueOnce({
+      promise: Promise.resolve({ statusCode: 200 }),
+    });
+    const resolveFetchUrl = jest.fn().mockResolvedValue('https://media.test/signed?X-Amz-Signature=abc');
+
+    const result = await downloadAttachment({
+      url: 'https://media.test/chatblobs/c/photo.jpg',
+      mimeType: 'image/jpeg',
+      resolveFetchUrl,
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(resolveFetchUrl).toHaveBeenCalledWith('https://media.test/chatblobs/c/photo.jpg');
+    // The bytes are fetched from the resolved, signed URL...
+    expect(RNFS.downloadFile).toHaveBeenCalledWith(
+      expect.objectContaining({ fromUrl: 'https://media.test/signed?X-Amz-Signature=abc' }),
+    );
+  });
+
+  test('a resolveFetchUrl failure fails the download without ever calling storage', async () => {
+    const resolveFetchUrl = jest.fn().mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+
+    const result = await downloadAttachment({
+      url: 'https://media.test/chatblobs/c/photo.jpg',
+      resolveFetchUrl,
+    });
+
+    expect(result).toMatchObject({ success: false, reason: 'unauthorized', statusCode: 403 });
+    expect(RNFS.downloadFile).not.toHaveBeenCalled();
+  });
 });

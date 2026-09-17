@@ -174,6 +174,7 @@ export type ServerState = Stores & {
   turnCredentialsRateLimiter: RateLimiter;
   messageSendRateLimiter: RateLimiter;
   messageSearchRateLimiter: RateLimiter;
+  attachmentDownloadRateLimiter: RateLimiter;
   accountExportRateLimiter: RateLimiter;
   accountDeletionRateLimiter: RateLimiter;
   telemetry: import('../telemetry.ts').Telemetry;
