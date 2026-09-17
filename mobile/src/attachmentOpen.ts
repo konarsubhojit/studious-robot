@@ -128,6 +128,7 @@ export async function openChatAttachment({
   onProgress,
   onAbortHandle,
   isStillOpenable = () => true,
+  resolveFetchUrl,
   download = downloadAttachment,
   open = openDownloadedAttachment,
 }: {
@@ -135,6 +136,7 @@ export async function openChatAttachment({
   onProgress?: (fraction: number) => void;
   onAbortHandle?: (abort: () => void) => void;
   isStillOpenable?: () => boolean;
+  resolveFetchUrl?: (url: string) => Promise<string>;
   download?: typeof downloadAttachment;
   open?: typeof openDownloadedAttachment;
 }): Promise<AttachmentOpenActionResult> {
@@ -161,6 +163,7 @@ export async function openChatAttachment({
     messageId: message.messageId,
     onProgress,
     onAbortHandle,
+    resolveFetchUrl,
   });
   if (!result.success) {
     return {

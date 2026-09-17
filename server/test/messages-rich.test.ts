@@ -299,6 +299,187 @@ test('presign reports unavailable when R2 is not configured', async (t) => {
   assert.equal(res.status, 503);
 });
 
+// ─── GET /attachments/download ─────────────────────────────────────────────────
+
+test('download rejects an unauthenticated caller', async (t) => {
+  withR2Env(t);
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const res = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&key=${encodeURIComponent('chatblobs/rich-alice_rich-bob/photo.jpg')}`
+  );
+  assert.equal(res.status, 401);
+});
+
+test('download mints a short-lived, participant-scoped URL for the object owner', async (t) => {
+  withR2Env(t);
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const session = await createSession(url, 'rich-alice');
+  await createSession(url, 'rich-bob');
+
+  const presigned = await postJson(
+    url,
+    '/attachments/presign',
+    { peerId: 'rich-bob', type: 'image', mimeType: 'image/jpeg', sizeBytes: 2048 },
+    session
+  );
+  assert.equal(presigned.status, 200);
+
+  const res = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&key=${encodeURIComponent(presigned.body.key)}`,
+    session
+  );
+  assert.equal(res.status, 200);
+  assert.ok(res.body.downloadUrl);
+  assert.equal(new URL(res.body.downloadUrl).searchParams.get('X-Amz-Expires'), '120');
+  assert.ok(Date.parse(res.body.expiresAt) > Date.now());
+  // The peer who received the message is equally authorized to fetch it.
+  const peerSession = await createSession(url, 'rich-bob', 'device-rich-bob-2');
+  const peerRes = await getJson(
+    url,
+    `/attachments/download?peerId=rich-alice&key=${encodeURIComponent(presigned.body.key)}`,
+    peerSession
+  );
+  assert.equal(peerRes.status, 200);
+});
+
+test('download accepts a legacy publicUrl for migration compatibility', async (t) => {
+  withR2Env(t);
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const session = await createSession(url, 'rich-alice');
+  await createSession(url, 'rich-bob');
+
+  const presigned = await postJson(
+    url,
+    '/attachments/presign',
+    { peerId: 'rich-bob', type: 'image', mimeType: 'image/jpeg', sizeBytes: 2048 },
+    session
+  );
+
+  const res = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&url=${encodeURIComponent(presigned.body.publicUrl)}`,
+    session
+  );
+  assert.equal(res.status, 200);
+  assert.ok(res.body.downloadUrl);
+});
+
+test('download refuses a key from another conversation (guessed or cross-conversation)', async (t) => {
+  withR2Env(t);
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'rich-alice');
+  await createSession(url, 'rich-bob');
+  await createSession(url, 'rich-carol');
+
+  const aliceBobAttachment = await postJson(
+    url,
+    '/attachments/presign',
+    { peerId: 'rich-bob', type: 'image', mimeType: 'image/jpeg', sizeBytes: 2048 },
+    aliceSession
+  );
+
+  // Alice tries to claim the object belongs to her conversation with Carol —
+  // the scope embedded in the key does not match, so the grant is refused.
+  const crossConversation = await getJson(
+    url,
+    `/attachments/download?peerId=rich-carol&key=${encodeURIComponent(aliceBobAttachment.body.key)}`,
+    aliceSession
+  );
+  assert.equal(crossConversation.status, 403);
+
+  // An unrelated user cannot claim Alice/Bob's object either, however it is
+  // phrased — a guessed key is no more useful than a real one it does not own.
+  const carolSession = await createSession(url, 'rich-carol');
+  const unrelated = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&key=${encodeURIComponent(aliceBobAttachment.body.key)}`,
+    carolSession
+  );
+  assert.equal(unrelated.status, 403);
+
+  // A key guessed without ever calling presign — even one shaped like a real
+  // attachment key — is refused the same way: the scope it claims (Alice/Bob's
+  // conversation) does not match what Carol's session can derive.
+  const guessedKey = 'chatblobs/rich-alice_rich-bob/00000000-0000-4000-8000-000000000000.jpg';
+  const guessed = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&key=${encodeURIComponent(guessedKey)}`,
+    carolSession
+  );
+  assert.equal(guessed.status, 403);
+});
+
+test('download refuses a blocked pair', async (t) => {
+  withR2Env(t);
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'rich-alice');
+  const bobSession = await createSession(url, 'rich-bob');
+  const presigned = await postJson(
+    url,
+    '/attachments/presign',
+    { peerId: 'rich-bob', type: 'image', mimeType: 'image/jpeg', sizeBytes: 2048 },
+    aliceSession
+  );
+
+  assert.equal(
+    (await postJson(url, '/blocks', { blockeeId: 'rich-alice' }, bobSession)).status,
+    200
+  );
+
+  const res = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&key=${encodeURIComponent(presigned.body.key)}`,
+    aliceSession
+  );
+  assert.equal(res.status, 403);
+});
+
+test('download rejects a malformed or missing key', async (t) => {
+  withR2Env(t);
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const session = await createSession(url, 'rich-alice');
+  await createSession(url, 'rich-bob');
+
+  const missing = await getJson(url, `/attachments/download?peerId=rich-bob`, session);
+  assert.equal(missing.status, 400);
+
+  const outsidePrefix = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&key=${encodeURIComponent('elsewhere/rich-alice_rich-bob/photo.jpg')}`,
+    session
+  );
+  assert.equal(outsidePrefix.status, 403);
+});
+
+test('download reports unavailable when R2 is not configured', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const session = await createSession(url, 'rich-alice');
+  await createSession(url, 'rich-bob');
+
+  const res = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&key=${encodeURIComponent('chatblobs/rich-alice_rich-bob/photo.jpg')}`,
+    session
+  );
+  assert.equal(res.status, 503);
+});
+
 // ─── message.send with attachments ────────────────────────────────────────────
 
 test('message.send stores an image attachment and previews it in push', async (t) => {

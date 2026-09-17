@@ -31,6 +31,16 @@ const S3_SERVICE = 's3';
 const DEFAULT_PRESIGN_TTL_SECONDS = 300;
 /** Upper bound on the configurable TTL: a leaked URL should expire quickly. */
 const MAX_PRESIGN_TTL_SECONDS = 3600;
+/**
+ * How long a presigned *download* URL stays valid, in seconds.
+ *
+ * Deliberately much shorter than an upload TTL: a download link is minted on
+ * every viewing/opening/downloading attempt (see `GET /attachments/download`),
+ * so there is no reason for one to outlive the request that asked for it by
+ * much, and a short TTL bounds how long a link that leaks (a forwarded chat
+ * export, a proxy log) stays useful to whoever it leaked to.
+ */
+const DOWNLOAD_PRESIGN_TTL_SECONDS = 120;
 const ATTACHMENT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 /** File extension per accepted MIME type, purely cosmetic for the object key. */
@@ -266,6 +276,53 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
 }
 
 /**
+ * Presign a short-lived download (`GET`) of an existing object.
+ *
+ * This is the authorization boundary the upload flow's `publicUrl` on its own
+ * cannot provide: the bucket behind `config.publicBaseUrl` is not readable
+ * without a valid signature, so a client can only ever fetch bytes for a key
+ * this deployment agreed, per request, to hand out — never by guessing or
+ * replaying an old public link.
+ *
+ * What this *cannot* do: revoke a copy that already left the server. Once a
+ * download link has been followed — or the resulting file saved, forwarded,
+ * or screenshotted — those bytes are outside this system's control, the same
+ * as any other file transfer. `DOWNLOAD_PRESIGN_TTL_SECONDS` bounds how long
+ * an unused *link* stays valid; it says nothing about copies already made
+ * from a link that was used before it expired.
+ */
+function presignAttachmentDownload({ config, key, now = new Date() }: {
+        config: ReturnType<typeof loadR2Config>; key: string; now?: Date;
+    }): { downloadUrl: string; expiresAt: string; } {
+  if (!config) throw new Error('presignAttachmentDownload: R2 is not configured');
+  const signed = presignObjectRequest({
+    config: { ...config, ttlSeconds: DOWNLOAD_PRESIGN_TTL_SECONDS },
+    method: 'GET',
+    key,
+    now,
+  });
+  return { downloadUrl: signed.url, expiresAt: signed.expiresAt };
+}
+
+/**
+ * The `<scope>` segment of an attachment key (`chatblobs/<scope>/<file>`).
+ *
+ * `createAttachmentKey` namespaces every object by conversation so a download
+ * grant can be checked against the two participants the key was minted for
+ * without a database round trip: the caller recomputes the scope it expects
+ * from its own session and the peer it claims, and the two are compared for
+ * exact equality.
+ *
+ * @returns the scope, or `null` when `key` is not a well-formed attachment key.
+ */
+function attachmentScopeFromKey(key: unknown): string | null {
+  if (typeof key !== 'string') return null;
+  const parts = key.split('/');
+  if (parts.length < 3 || parts[0] !== ATTACHMENT_PATH_PREFIX) return null;
+  return parts[1] || null;
+}
+
+/**
  * Whether `url` points at this deployment's chat-blob prefix.
  *
  * A message may only reference media this server handed out a presigned URL
@@ -323,12 +380,15 @@ async function deleteAttachmentObject({ config, url, fetchImpl = fetch, now = ne
 
 export {
   DEFAULT_PRESIGN_TTL_SECONDS,
+  DOWNLOAD_PRESIGN_TTL_SECONDS,
   MAX_PRESIGN_TTL_SECONDS,
   attachmentKeyFromUrl,
+  attachmentScopeFromKey,
   createAttachmentKey,
   deleteAttachmentObject,
   isManagedAttachmentUrl,
   loadR2Config,
+  presignAttachmentDownload,
   presignAttachmentUpload,
   validateAttachmentRequest,
 };

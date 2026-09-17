@@ -146,6 +146,16 @@ function createServer(opts: CreateServerOptions = {}) {
       opts.messageSearchRateWindowMs ??
       parseEnv('MESSAGE_SEARCH_RATE_WINDOW_MS', 60_000),
   });
+  // Minted once per view/open/download attempt (an image bubble, a full-screen
+  // viewer, a saved file), so it needs a much larger budget than a write, but
+  // still bounds a script that walks every key in a conversation.
+  const attachmentDownloadRateLimiter = createRateLimiter({
+    maxRequests:
+      opts.attachmentDownloadRateLimit ?? parseEnv('ATTACHMENT_DOWNLOAD_RATE_LIMIT', 120),
+    windowMs:
+      opts.attachmentDownloadRateWindowMs ??
+      parseEnv('ATTACHMENT_DOWNLOAD_RATE_WINDOW_MS', 60_000),
+  });
   // An export is substantially broader than an interactive read. One successful
   // attempt per account per day limits scraping and accidental retry storms.
   const accountExportRateLimiter = createRateLimiter({
@@ -234,6 +244,8 @@ function createServer(opts: CreateServerOptions = {}) {
     messageSendRateLimiter,
     /** Rate limiter for message search (`GET /messages/search`). */
     messageSearchRateLimiter,
+    /** Rate limiter for attachment download-URL minting (`GET /attachments/download`). */
+    attachmentDownloadRateLimiter,
     accountExportRateLimiter,
     accountDeletionRateLimiter,
     /** Shared telemetry recorder for this server instance. */

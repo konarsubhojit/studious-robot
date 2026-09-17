@@ -22,6 +22,8 @@ export type CreateServerOptions = {
   messageRateWindowMs?: number;
   messageSearchRateLimit?: number;
   messageSearchRateWindowMs?: number;
+  attachmentDownloadRateLimit?: number;
+  attachmentDownloadRateWindowMs?: number;
   sessionRateLimit?: number;
   sessionRateWindowMs?: number;
   accountExportRateLimit?: number;
