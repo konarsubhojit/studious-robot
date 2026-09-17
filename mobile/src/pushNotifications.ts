@@ -24,7 +24,9 @@ import {
 import {
   areMessageNotificationsEnabled,
   ensureNotificationPrefsLoaded,
+  getNotificationPreviewMode,
   isPeerMuted,
+  isQuietHoursActive,
 } from './notificationPreferences';
 import { loadDeviceId, loadSettings } from './settingsStorage';
 import type { Messaging } from '@react-native-firebase/messaging';
@@ -461,6 +463,24 @@ export function _extractMessageFromMessage(remoteMessage: { data?: Record<string
   };
 }
 
+export function formatMessageNotificationPreview(message: {
+  senderId: string | null;
+  title: string;
+  body: string;
+}): { title: string; body: string; } {
+  const mode = getNotificationPreviewMode();
+  if (mode === 'generic') {
+    return { title: 'New WeTalk message', body: 'Open WeTalk to view it.' };
+  }
+  if (mode === 'sender') {
+    return {
+      title: message.senderId || message.title || 'New message',
+      body: 'Sent you a message',
+    };
+  }
+  return { title: message.title, body: message.body };
+}
+
 /**
  * Classify a push by the envelope `type` the server sends.
  *
@@ -686,7 +706,18 @@ async function displayMessagePush({ remoteMessage, message }: {
     return { shown: false, reason: 'peer_muted' };
   }
 
-  const result = await showMessageNotification(message).catch(error => ({
+  if (isQuietHoursActive('messages')) {
+    await sendPushReceipt({
+      remoteMessage,
+      messageId: message.messageId,
+      stage: 'notification_suppressed',
+      reason: 'quiet_hours',
+    });
+    return { shown: false, reason: 'quiet_hours' };
+  }
+
+  const preview = formatMessageNotificationPreview(message);
+  const result = await showMessageNotification({ ...message, ...preview }).catch(error => ({
     shown: false,
     reason: 'notification_threw',
     message: errorMessage(error),
@@ -766,6 +797,21 @@ export async function handleBackgroundPushMessage(remoteMessage: { data?: Record
     callId: incoming.callId,
     callerId: incoming.callerId,
   });
+
+  await ensureNotificationPrefsLoaded();
+  if (isQuietHoursActive('calls')) {
+    await sendPushReceipt({
+      remoteMessage,
+      callId: incoming.callId,
+      stage: 'ui_failed',
+      reason: 'quiet_hours',
+    });
+    await logBackgroundInfo('[Push] Incoming call suppressed by quiet hours', {
+      callId: incoming.callId,
+    });
+    await flushDurableLogs();
+    return incoming;
+  }
 
   // Surface the OS-level incoming-call UI (CallKeep) so the call rings
   // full-screen even when the app was cold-started by this push. Degrades to a

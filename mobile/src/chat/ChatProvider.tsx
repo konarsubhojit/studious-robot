@@ -49,6 +49,9 @@ export type ChatContextValue = {
   // Mute sits beside block deliberately: both are relationship-level decisions
   // about one person, and the person hub offers them as one pair.
   mutedPeers: NotificationPreferences['mutedPeers'];
+  mutedPeerExpirations: NotificationPreferences['mutedPeerExpirations'];
+  quietHours: NotificationPreferences['quietHours'];
+  previewMode: NotificationPreferences['previewMode'];
   isPeerMuted: NotificationPreferences['isPeerMuted'];
   setPeerMuted: NotificationPreferences['setPeerMuted'];
   messageNotificationsEnabled: NotificationPreferences['messageNotificationsEnabled'];
@@ -168,6 +171,9 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
 
   const {
     mutedPeers,
+    mutedPeerExpirations,
+    quietHours,
+    previewMode,
     isPeerMuted,
     setPeerMuted,
     messageNotificationsEnabled,
@@ -209,6 +215,9 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       blockPeer: callFlow.blockPeer,
       unblockPeer: callFlow.unblockPeer,
       mutedPeers,
+      mutedPeerExpirations,
+      quietHours,
+      previewMode,
       isPeerMuted,
       setPeerMuted,
       messageNotificationsEnabled,
@@ -268,6 +277,9 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       isRefreshingMessages,
       messageNotificationsEnabled,
       mutedPeers,
+      mutedPeerExpirations,
+      previewMode,
+      quietHours,
       isPeerMuted,
       peerPresence,
       setMessageNotificationsEnabled,

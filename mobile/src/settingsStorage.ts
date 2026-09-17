@@ -335,12 +335,102 @@ export type NotificationPrefs = {
   messageNotificationsEnabled: boolean;
   /** People whose message notifications are silenced, newest first. */
   mutedPeers: string[];
+  /** Optional per-person mute expiry times, keyed by normalized user id. */
+  mutedPeerExpirations: Record<string, number>;
+  /** Quiet-hours schedule. Evaluated locally from the device clock. */
+  quietHours: {
+    enabled: boolean;
+    startMinutes: number;
+    endMinutes: number;
+    affects: 'messages' | 'calls' | 'both';
+  };
+  /** How much message detail may be shown on OS notification surfaces. */
+  previewMode: 'full' | 'sender' | 'generic';
 };
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   messageNotificationsEnabled: true,
   mutedPeers: [],
+  mutedPeerExpirations: {},
+  quietHours: {
+    enabled: false,
+    startMinutes: 22 * 60,
+    endMinutes: 7 * 60,
+    affects: 'messages',
+  },
+  previewMode: 'full',
 };
+
+function normalizeNotificationPeerId(peerId: string | null | undefined): string {
+  return (peerId ?? '').trim().toLowerCase();
+}
+
+function notificationAccountScope(userId: string): string {
+  const trimmed = (userId ?? '').trim();
+  return trimmed ? `account:${trimmed}` : 'signed-out';
+}
+
+function sanitizeNotificationPrefs(raw: unknown): NotificationPrefs {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_NOTIFICATION_PREFS };
+  const source = raw as Partial<NotificationPrefs>;
+  const mutedPeers = Array.isArray(source.mutedPeers)
+    ? source.mutedPeers
+        .filter((peerId): peerId is string => typeof peerId === 'string' && peerId.length > 0)
+        .slice(0, MAX_MUTED_PEERS)
+    : [];
+  const rawExpirations =
+    source.mutedPeerExpirations && typeof source.mutedPeerExpirations === 'object'
+      ? source.mutedPeerExpirations
+      : {};
+  const mutedPeerExpirations = Object.fromEntries(
+    Object.entries(rawExpirations)
+      .map(([peerId, expiresAt]) => [normalizeNotificationPeerId(peerId), expiresAt] as const)
+      .filter(([peerId, expiresAt]) => peerId && typeof expiresAt === 'number' && Number.isFinite(expiresAt)),
+  );
+  const quietHoursSource =
+    source.quietHours && typeof source.quietHours === 'object' ? source.quietHours : {};
+  const quietHours = quietHoursSource as Partial<NotificationPrefs['quietHours']>;
+  const startMinutes = Number.isInteger(quietHours.startMinutes)
+    ? Math.max(0, Math.min(1439, quietHours.startMinutes as number))
+    : DEFAULT_NOTIFICATION_PREFS.quietHours.startMinutes;
+  const endMinutes = Number.isInteger(quietHours.endMinutes)
+    ? Math.max(0, Math.min(1439, quietHours.endMinutes as number))
+    : DEFAULT_NOTIFICATION_PREFS.quietHours.endMinutes;
+  const affects =
+    quietHours.affects === 'calls' || quietHours.affects === 'both' || quietHours.affects === 'messages'
+      ? quietHours.affects
+      : DEFAULT_NOTIFICATION_PREFS.quietHours.affects;
+  const previewMode =
+    source.previewMode === 'sender' || source.previewMode === 'generic' || source.previewMode === 'full'
+      ? source.previewMode
+      : DEFAULT_NOTIFICATION_PREFS.previewMode;
+  return {
+    messageNotificationsEnabled:
+      typeof source.messageNotificationsEnabled === 'boolean'
+        ? source.messageNotificationsEnabled
+        : DEFAULT_NOTIFICATION_PREFS.messageNotificationsEnabled,
+    mutedPeers,
+    mutedPeerExpirations,
+    quietHours: {
+      enabled: typeof quietHours.enabled === 'boolean' ? quietHours.enabled : false,
+      startMinutes,
+      endMinutes,
+      affects,
+    },
+    previewMode,
+  };
+}
+
+async function readNotificationFile(): Promise<unknown> {
+  const exists = await RNFS.exists(NOTIFICATION_FILE);
+  if (!exists) return null;
+  return JSON.parse(await RNFS.readFile(NOTIFICATION_FILE, 'utf8'));
+}
+
+async function getNotificationAccountScope(): Promise<string> {
+  const identity = await loadIdentity();
+  return notificationAccountScope(identity.userId);
+}
 
 /**
  * Load the notification preferences.  An unreadable or corrupt file yields the
@@ -350,24 +440,14 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
  */
 export async function loadNotificationPrefs(): Promise<NotificationPrefs> {
   try {
-    const exists = await RNFS.exists(NOTIFICATION_FILE);
-    if (!exists) return { ...DEFAULT_NOTIFICATION_PREFS };
-    const content = await RNFS.readFile(NOTIFICATION_FILE, 'utf8');
-    const parsed = JSON.parse(content);
+    const parsed = await readNotificationFile();
     if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_NOTIFICATION_PREFS };
-    const raw = (parsed as Partial<NotificationPrefs>);
-    const mutedPeers = Array.isArray(raw.mutedPeers)
-      ? raw.mutedPeers
-          .filter((peerId): peerId is string => typeof peerId === 'string' && peerId.length > 0)
-          .slice(0, MAX_MUTED_PEERS)
-      : [];
-    return {
-      messageNotificationsEnabled:
-        typeof raw.messageNotificationsEnabled === 'boolean'
-          ? raw.messageNotificationsEnabled
-          : DEFAULT_NOTIFICATION_PREFS.messageNotificationsEnabled,
-      mutedPeers,
-    };
+    const scope = await getNotificationAccountScope();
+    const accounts = (parsed as { accounts?: unknown }).accounts;
+    if (accounts && typeof accounts === 'object') {
+      return sanitizeNotificationPrefs((accounts as Record<string, unknown>)[scope]);
+    }
+    return sanitizeNotificationPrefs(parsed);
   } catch (error) {
     logError('Failed to load notification preferences; using defaults', {
       message: errorMessage(error),
@@ -383,11 +463,23 @@ export async function loadNotificationPrefs(): Promise<NotificationPrefs> {
  */
 export async function saveNotificationPrefs(prefs: NotificationPrefs): Promise<boolean> {
   try {
+    const scope = await getNotificationAccountScope();
+    const parsed = await readNotificationFile().catch(() => null);
+    const previousAccounts =
+      parsed && typeof parsed === 'object' && (parsed as { accounts?: unknown }).accounts &&
+      typeof (parsed as { accounts?: unknown }).accounts === 'object'
+        ? ((parsed as { accounts: Record<string, unknown> }).accounts)
+        : {};
+    const accounts = {
+      ...previousAccounts,
+      [scope]: sanitizeNotificationPrefs(prefs),
+    };
     await RNFS.writeFile(
       NOTIFICATION_FILE,
       JSON.stringify({
-        messageNotificationsEnabled: Boolean(prefs.messageNotificationsEnabled),
-        mutedPeers: (prefs.mutedPeers ?? []).slice(0, MAX_MUTED_PEERS),
+        version: 2,
+        localOnly: true,
+        accounts,
       }),
       'utf8',
     );

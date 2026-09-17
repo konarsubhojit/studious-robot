@@ -13,12 +13,14 @@ jest.mock('../src/appLogger', () => ({
 import RNFS from 'react-native-fs';
 import {
   loadIdentity,
+  loadNotificationPrefs,
   loadOnboardingState,
   loadSettings,
   loadThemeMode,
   loadThemePreferences,
   mergeSettings,
   saveIdentity,
+  saveNotificationPrefs,
   saveOnboardingState,
   saveSettings,
   saveThemeMode,
@@ -301,6 +303,93 @@ describe('settingsStorage', () => {
     test('resolves false on write failure', async () => {
       writeFileMock.mockRejectedValue(new Error('disk full'));
       await expect(saveThemePreferences(DEFAULT_THEME_PREFERENCES)).resolves.toBe(false);
+    });
+  });
+
+  describe('notification preferences', () => {
+    test('loads a legacy unscoped file without changing existing mute behavior', async () => {
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockImplementation((path: string) => {
+        if (path.endsWith('wetalk-notifications.json')) {
+          return Promise.resolve(JSON.stringify({
+            messageNotificationsEnabled: false,
+            mutedPeers: ['user-bob'],
+          }));
+        }
+        return Promise.resolve(JSON.stringify({ userId: 'alice' }));
+      });
+
+      await expect(loadNotificationPrefs()).resolves.toEqual(expect.objectContaining({
+        messageNotificationsEnabled: false,
+        mutedPeers: ['user-bob'],
+        previewMode: 'full',
+      }));
+    });
+
+    test('stores notification preferences per local account', async () => {
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockImplementation((path: string) => {
+        if (path.endsWith('wetalk-identity.json')) {
+          return Promise.resolve(JSON.stringify({ userId: 'alice' }));
+        }
+        return Promise.resolve(JSON.stringify({
+          version: 2,
+          localOnly: true,
+          accounts: {
+            'account:bob': {
+              messageNotificationsEnabled: true,
+              mutedPeers: ['user-carol'],
+              mutedPeerExpirations: {},
+              quietHours: { enabled: false, startMinutes: 1320, endMinutes: 420, affects: 'messages' },
+              previewMode: 'full',
+            },
+          },
+        }));
+      });
+      writeFileMock.mockResolvedValue(undefined);
+
+      await expect(saveNotificationPrefs({
+        messageNotificationsEnabled: false,
+        mutedPeers: ['user-dana'],
+        mutedPeerExpirations: { 'user-dana': 1_800_000_000_000 },
+        quietHours: { enabled: true, startMinutes: 1320, endMinutes: 420, affects: 'messages' },
+        previewMode: 'sender',
+      })).resolves.toBe(true);
+
+      const written = JSON.parse((writeFileMock.mock.calls.at(-1) as string[])[1]);
+      expect(written.localOnly).toBe(true);
+      expect(written.accounts['account:bob'].mutedPeers).toEqual(['user-carol']);
+      expect(written.accounts['account:alice']).toEqual(expect.objectContaining({
+        messageNotificationsEnabled: false,
+        mutedPeers: ['user-dana'],
+        previewMode: 'sender',
+      }));
+    });
+
+    test('switching accounts does not inherit another account peer mute list', async () => {
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockImplementation((path: string) => {
+        if (path.endsWith('wetalk-identity.json')) {
+          return Promise.resolve(JSON.stringify({ userId: 'alice' }));
+        }
+        return Promise.resolve(JSON.stringify({
+          version: 2,
+          localOnly: true,
+          accounts: {
+            'account:bob': {
+              messageNotificationsEnabled: true,
+              mutedPeers: ['user-carol'],
+              mutedPeerExpirations: {},
+              quietHours: { enabled: false, startMinutes: 1320, endMinutes: 420, affects: 'messages' },
+              previewMode: 'full',
+            },
+          },
+        }));
+      });
+
+      await expect(loadNotificationPrefs()).resolves.toEqual(expect.objectContaining({
+        mutedPeers: [],
+      }));
     });
   });
 

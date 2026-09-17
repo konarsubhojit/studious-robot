@@ -8,13 +8,26 @@ import {
 import { loadNotificationPrefs, saveNotificationPrefs } from '../../src/settingsStorage';
 
 jest.mock('../../src/settingsStorage', () => ({
-  DEFAULT_NOTIFICATION_PREFS: { messageNotificationsEnabled: true, mutedPeers: [] },
+  DEFAULT_NOTIFICATION_PREFS: {
+    messageNotificationsEnabled: true,
+    mutedPeers: [],
+    mutedPeerExpirations: {},
+    quietHours: { enabled: false, startMinutes: 22 * 60, endMinutes: 7 * 60, affects: 'messages' },
+    previewMode: 'full',
+  },
   loadNotificationPrefs: jest.fn(),
   saveNotificationPrefs: jest.fn(),
 }));
 
 const mockLoad = loadNotificationPrefs as jest.MockedFunction<typeof loadNotificationPrefs>;
 const mockSave = saveNotificationPrefs as jest.MockedFunction<typeof saveNotificationPrefs>;
+const mockDefaultNotificationPrefs = {
+  messageNotificationsEnabled: true,
+  mutedPeers: [],
+  mutedPeerExpirations: {},
+  quietHours: { enabled: false, startMinutes: 22 * 60, endMinutes: 7 * 60, affects: 'messages' as const },
+  previewMode: 'full' as const,
+};
 
 type Hook = ReturnType<typeof useNotificationPreferences>;
 
@@ -41,14 +54,18 @@ describe('useNotificationPreferences', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     resetNotificationPrefsForTests();
-    mockLoad.mockResolvedValue({ messageNotificationsEnabled: true, mutedPeers: [] });
+    mockLoad.mockResolvedValue(mockDefaultNotificationPrefs);
     mockSave.mockResolvedValue(true);
+    jest.useRealTimers();
   });
 
   test('hydrates from the stored preferences', async () => {
     mockLoad.mockResolvedValue({
       messageNotificationsEnabled: false,
       mutedPeers: ['user-bob'],
+      mutedPeerExpirations: {},
+      quietHours: mockDefaultNotificationPrefs.quietHours,
+      previewMode: 'sender',
     });
 
     const { result } = renderHook();
@@ -56,6 +73,7 @@ describe('useNotificationPreferences', () => {
 
     expect(result.current.messageNotificationsEnabled).toBe(false);
     expect(result.current.mutedPeers).toEqual(['user-bob']);
+    expect(result.current.previewMode).toBe('sender');
     expect(result.current.isPeerMuted('user-bob')).toBe(true);
   });
 
@@ -63,6 +81,9 @@ describe('useNotificationPreferences', () => {
     mockLoad.mockResolvedValue({
       messageNotificationsEnabled: true,
       mutedPeers: ['User-Bob'],
+      mutedPeerExpirations: {},
+      quietHours: mockDefaultNotificationPrefs.quietHours,
+      previewMode: 'full',
     });
 
     const { result } = renderHook();
@@ -71,6 +92,22 @@ describe('useNotificationPreferences', () => {
     expect(result.current.isPeerMuted('  user-bob ')).toBe(true);
     expect(result.current.isPeerMuted('user-carol')).toBe(false);
     expect(result.current.isPeerMuted('')).toBe(false);
+  });
+
+  test('matches timed mutes against the current clock', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-01-01T10:00:00Z'));
+    mockLoad.mockResolvedValue({
+      ...mockDefaultNotificationPrefs,
+      mutedPeers: ['User-Bob'],
+      mutedPeerExpirations: { 'user-bob': Date.now() + 60_000 },
+    });
+
+    const { result } = renderHook();
+    await act(async () => {});
+    expect(result.current.isPeerMuted('user-bob')).toBe(true);
+
+    jest.setSystemTime(new Date('2026-01-01T10:01:01Z'));
+    expect(result.current.isPeerMuted('user-bob')).toBe(false);
   });
 
   test('re-renders when the shared cache changes, whoever changed it', async () => {

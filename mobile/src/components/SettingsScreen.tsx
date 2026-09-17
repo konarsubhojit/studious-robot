@@ -92,6 +92,17 @@ export type SettingsScreenProps = {
   onToggleMessageNotifications?: (next: boolean) => void;
   /** People whose message notifications are silenced, newest first. */
   mutedPeers?: string[];
+  /** Optional per-person mute expiry times, keyed by normalized user id. */
+  mutedPeerExpirations?: Record<string, number>;
+  /** Local quiet-hours schedule for message/call notifications. */
+  quietHours?: {
+    enabled: boolean;
+    startMinutes: number;
+    endMinutes: number;
+    affects: 'messages' | 'calls' | 'both';
+  };
+  /** How much message detail appears in OS notifications. */
+  previewMode?: 'full' | 'sender' | 'generic';
   /** Unmute one person, in place. */
   onUnmutePeer?: (peerId: string) => void;
   /** People blocked server-side. */
@@ -104,11 +115,12 @@ export type SettingsScreenProps = {
 
 function MutedPeopleSettings({
   mutedPeers,
+  mutedPeerExpirations = {},
   onOpenProfile,
   onUnmutePeer,
   confirm,
   styles,
-}: Pick<SettingsScreenProps, 'mutedPeers' | 'onOpenProfile' | 'onUnmutePeer'> & {
+}: Pick<SettingsScreenProps, 'mutedPeers' | 'mutedPeerExpirations' | 'onOpenProfile' | 'onUnmutePeer'> & {
   mutedPeers: string[];
   confirm: (message: string) => void;
   styles: ReturnType<typeof createStyles>;
@@ -132,7 +144,7 @@ function MutedPeopleSettings({
         <ListItem
           key={peer}
           title={peer}
-          subtitle="Messages arrive silently"
+          subtitle={describeMutedPeer(peer, mutedPeerExpirations)}
           leading={<Avatar id={peer} size="sm" />}
           onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
           accessibilityLabel={`${peer}, muted`}
@@ -157,6 +169,37 @@ function MutedPeopleSettings({
       ))}
     </View>
   );
+}
+
+function formatQuietHourTime(minutes: number): string {
+  const hour = Math.floor(minutes / 60) % 24;
+  const minute = minutes % 60;
+  return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+}
+
+function describeQuietHours(quietHours: NonNullable<SettingsScreenProps['quietHours']>): string {
+  if (!quietHours.enabled) return 'Off';
+  const target =
+    quietHours.affects === 'both'
+      ? 'messages and calls'
+      : quietHours.affects === 'calls'
+      ? 'calls'
+      : 'messages';
+  return `${formatQuietHourTime(quietHours.startMinutes)}–${formatQuietHourTime(quietHours.endMinutes)} for ${target}`;
+}
+
+function describePreviewMode(mode: NonNullable<SettingsScreenProps['previewMode']>): string {
+  if (mode === 'generic') return 'Generic';
+  if (mode === 'sender') return 'Sender only';
+  return 'Full preview';
+}
+
+function describeMutedPeer(peerId: string, expirations: Record<string, number>): string {
+  const expiresAt = expirations[(peerId ?? '').trim().toLowerCase()];
+  if (typeof expiresAt === 'number' && expiresAt > Date.now()) {
+    return `Messages arrive silently until ${new Date(expiresAt).toLocaleString()}`;
+  }
+  return 'Messages arrive silently';
 }
 
 function formatDeviceTimestamp(value: string | null | undefined): string {
@@ -553,6 +596,9 @@ function SettingsScreen({
   messageNotificationsEnabled = true,
   onToggleMessageNotifications,
   mutedPeers = [],
+  mutedPeerExpirations = {},
+  quietHours = { enabled: false, startMinutes: 22 * 60, endMinutes: 7 * 60, affects: 'messages' },
+  previewMode = 'full',
   onUnmutePeer,
   blockedUsers = [],
   onUnblockUser,
@@ -680,14 +726,29 @@ function SettingsScreen({
         {onToggleMessageNotifications ? (
           <Switch
             label="Message notifications"
-            hint="Notify me about new messages. Calls always ring."
+            hint="Notify me about new messages unless a local mute or quiet-hours rule suppresses them."
             value={Boolean(messageNotificationsEnabled)}
             onValueChange={onToggleMessageNotifications}
             testID="settings-message-notifications"
           />
         ) : null}
+        <ListItem
+          title="Quiet hours"
+          value={describeQuietHours(quietHours)}
+          subtitle="Local to this account on this device. Calls still ring unless quiet hours explicitly include calls; OS notification permission and Do Not Disturb can still block WeTalk."
+          icon="settingsNotifications"
+          testID="settings-quiet-hours"
+        />
+        <ListItem
+          title="Notification previews"
+          value={describePreviewMode(previewMode)}
+          subtitle="Sender-only and generic previews hide message bodies and attachment filenames on WeTalk-rendered notifications."
+          icon="settingsPrivacy"
+          testID="settings-preview-mode"
+        />
         <MutedPeopleSettings
           mutedPeers={mutedPeers}
+          mutedPeerExpirations={mutedPeerExpirations}
           onOpenProfile={onOpenProfile}
           onUnmutePeer={onUnmutePeer}
           confirm={confirm}
