@@ -250,6 +250,7 @@ describe('SettingsScreen', () => {
     // value: "Signaling server" and "Developer" were implementation labels.
     [
       'Account',
+      'Security',
       'Notifications',
       'Appearance',
       'Privacy',
@@ -259,6 +260,78 @@ describe('SettingsScreen', () => {
     ].forEach(label => {
       const match = tree.root.findAll((n: any) => n.type === 'Text' && n.props.children === label);
       expect(match.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('security devices', () => {
+    test('lists active devices without exposing sensitive tokens', () => {
+      const onRevokeDevice = jest.fn();
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            devices={[
+              {
+                deviceId: 'device-current',
+                platform: 'ios',
+                current: true,
+                connected: true,
+                activeSession: true,
+                pushRegistered: true,
+                updatedAt: '2026-01-01T00:00:00.000Z',
+                lastRegisteredAt: null,
+                lastUnregisteredAt: null,
+                revokedAt: null,
+              },
+              {
+                deviceId: 'device-remote',
+                platform: 'android',
+                current: false,
+                connected: false,
+                activeSession: true,
+                pushRegistered: false,
+                updatedAt: '2026-01-02T00:00:00.000Z',
+                lastRegisteredAt: null,
+                lastUnregisteredAt: null,
+                revokedAt: null,
+              },
+            ]}
+            onRevokeDevice={onRevokeDevice}
+          />,
+        );
+      });
+
+      const rows = findByTestID(tree, 'settings-device-row').filter(
+        (n: any) => typeof n.type === 'string',
+      );
+      expect(rows).toHaveLength(2);
+      expect(tree.root.findAll((n: any) => n.type === 'Text' && n.props.children === 'This device')).toHaveLength(1);
+      expect(JSON.stringify(tree.toJSON())).not.toContain('pushToken');
+
+      pressByTestID(tree, 'settings-revoke-device');
+      expect(onRevokeDevice).toHaveBeenCalledWith('device-remote');
+    });
+
+    test('refreshes and signs out all devices', () => {
+      const onRefreshDevices = jest.fn();
+      const onRevokeAllDevices = jest.fn();
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            devices={[]}
+            onRefreshDevices={onRefreshDevices}
+            onRevokeAllDevices={onRevokeAllDevices}
+          />,
+        );
+      });
+
+      expect(onRefreshDevices).toHaveBeenCalled();
+      expect(findByTestID(tree, 'settings-devices-empty').length).toBeGreaterThan(0);
+      pressByTestID(tree, 'settings-revoke-all-devices');
+      expect(onRevokeAllDevices).toHaveBeenCalled();
     });
   });
 

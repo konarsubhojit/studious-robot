@@ -648,12 +648,21 @@ export default function useSignalingSocket({
         connectSocketHandlersRef.current.recordConnectError();
       });
 
-      signaling.on(SERVER_EVENTS.SESSION_INVALID, async ({ sessionId: staleSessionId } = {}) => {
-        logWarn('[CallFlow] Session invalidated by server; re-minting session', {
+      signaling.on(SERVER_EVENTS.SESSION_INVALID, async (payload: { sessionId?: string; reason?: string } = {}) => {
+        const { sessionId: staleSessionId, reason } = payload;
+        logWarn('[CallFlow] Session invalidated by server', {
           sessionId: staleSessionId,
+          reason,
           inCall: isInCallRef.current,
         });
         sessionIdRef.current = null;
+        if (reason === 'revoked') {
+          connectSocketHandlersRef.current.updateStatus(
+            'Session revoked — sign in again to continue.',
+            'error',
+          );
+          return;
+        }
         const attempts = sessionRemintAttempts(isInCallRef.current);
         for (let attempt = 1; attempt <= attempts; attempt += 1) {
           try {
