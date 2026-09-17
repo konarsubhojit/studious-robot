@@ -151,6 +151,7 @@ describe('useCallHistory', () => {
             callId: 'c1',
             callerId: 'alice',
             calleeId: 'bob',
+            mediaType: 'audio',
             status: 'ended',
             endReason: 'hangup',
             createdAt: '2024-01-01T00:00:00Z',
@@ -183,6 +184,7 @@ describe('useCallHistory', () => {
         createdAt: '2024-01-01T00:00:00Z',
         durationSeconds: null,
         isRead: true,
+        mediaType: 'audio',
       },
       {
         callId: 'c2',
