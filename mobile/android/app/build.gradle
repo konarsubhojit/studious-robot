@@ -68,9 +68,14 @@ react {
 }
 
 /**
- * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
+ * Run R8 on release builds.  The dependency graph pulled in by the calling and
+ * messaging stack (WebRTC, Firebase, Play Services, AndroidX, Kotlin stdlib)
+ * contributes far more bytecode than the app actually calls, so without
+ * shrinking the release APK ships several megabytes of dead dex.  The keep
+ * rules the app needs on top of the libraries' own consumer rules live in
+ * `proguard-rules.pro`.
  */
-def enableProguardInReleaseBuilds = false
+def enableProguardInReleaseBuilds = true
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
@@ -107,6 +112,14 @@ android {
             usesCleartextTraffic: "false"
         ]
     }
+    androidResources {
+        // Every string the app renders is defined in English, in JS or in
+        // `res/values/strings.xml`; nothing is translated. Without a filter the
+        // APK still packages every translation shipped by AndroidX, Play
+        // Services and Firebase, which is pure weight in `resources.arsc` for
+        // strings this app can never display.
+        localeFilters += ["en"]
+    }
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -125,6 +138,11 @@ android {
             // see https://reactnative.dev/docs/signed-apk-android.
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
+            // Resource shrinking needs code shrinking to know which resources
+            // are still reachable, so it follows `minifyEnabled`.  It removes
+            // the drawables/layouts/animations of library UI the app never
+            // shows (Play Services sign-in dialogs, AndroidX widgets, …).
+            shrinkResources enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }

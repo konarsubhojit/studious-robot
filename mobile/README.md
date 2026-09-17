@@ -513,6 +513,32 @@ cd android
 # => android/app/build/outputs/apk/release/app-release.apk
 ```
 
+### Shrinking
+
+The release build runs R8 (`minifyEnabled`) and the resource shrinker
+(`shrinkResources`); debug builds do not, so a crash that only reproduces on a
+release APK is usually a missing keep rule. Together they cut the arm64-v8a APK
+from ~48 MiB to ~40 MiB, almost all of it dead bytecode (four dex files become
+one) plus the unused resources and non-English translations of AndroidX, Play
+Services and Firebase.
+
+Two things shrinking cannot see, both of which fail only at runtime:
+
+- **Classes reached from native code.** Libraries that bind JNI symbols to a
+  fully-qualified class name break when R8 renames the class. React Native,
+  Reanimated, Worklets, WebRTC and Firebase ship consumer rules; the ones that
+  do not are kept explicitly in `android/app/proguard-rules.pro`.
+- **Resources resolved by `getIdentifier()`**, such as the screen-share
+  notification icon and the google-services generated strings. These are listed
+  in `android/app/src/main/res/raw/keep_wetalk.xml` — deliberately *not* named
+  `keep.xml`, which the React Native bundler generates and would override.
+
+After adding a dependency that uses either mechanism, add the matching rule and
+smoke-test a release APK on a device. `__tests__/androidReleaseShrinking.test.ts`
+guards the configuration itself, and
+`android/app/build/outputs/mapping/release/` holds the R8 mapping plus the
+`resources.txt` report listing every resource that was dropped.
+
 ## Other scripts
 
 ```bash

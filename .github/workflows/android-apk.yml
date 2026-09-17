@@ -253,11 +253,37 @@ jobs:
             exit 1
           fi
 
+      - name: Report APK size
+        run: |
+          set -euo pipefail
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          SIZE_BYTES="$(stat -c%s "$APK_PATH")"
+          SIZE_MIB="$(awk -v b="$SIZE_BYTES" 'BEGIN { printf "%.1f", b / 1048576 }')"
+          echo "Release APK: ${SIZE_MIB} MiB (${SIZE_BYTES} bytes)"
+          {
+            echo "### Release APK"
+            echo
+            echo "| ABI | Size |"
+            echo "| --- | ---- |"
+            echo "| arm64-v8a | ${SIZE_MIB} MiB |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload release APK
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: app-release-apk
           path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 3
+          if-no-files-found: error
+
+      # R8 obfuscates the release build, so a crash report from this APK is
+      # unreadable without the mapping produced alongside it.
+      - name: Upload R8 mapping
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-release-mapping
+          path: mobile/android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 3
           if-no-files-found: error
