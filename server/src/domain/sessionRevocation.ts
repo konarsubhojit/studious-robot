@@ -109,7 +109,14 @@ async function revokeAllDeviceSessions(
       }
       userDeviceIds.add(deviceId);
     }
-    const result = await revokeDeviceSessions(state, { userId, deviceId, reason: 'revocation_all' });
+  }
+  const results = await Promise.all(
+    Array.from(deviceIds, (deviceId) =>
+      revokeDeviceSessions(state, { userId, deviceId, reason: 'revocation_all' })
+        .then((result) => ({ deviceId, result }))
+    )
+  );
+  for (const { deviceId, result } of results) {
     if (result.device) revokedDeviceIds.push(deviceId);
     revokedSessionIds.push(...result.revokedSessionIds);
   }

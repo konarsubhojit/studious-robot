@@ -430,7 +430,7 @@ async function createRedisPgStores(
       if (typeof busPub.set === 'function') {
         await timeQuery(
           { backend: 'redis', operation: 'revoke', kind: 'write', target: 'session-state' },
-          () => busPub.set(key, revokedAt, { PX: SHARED_SESSION_MAX_TTL_MS })
+          () => busPub.set(key, revokedAt)
         );
         return;
       }

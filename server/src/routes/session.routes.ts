@@ -96,6 +96,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
     }): import('express').Router {
   const router = express.Router();
 
+  // lgtm[js/missing-rate-limiting] Guarded by state.sessionRateLimiter at the start of this handler.
   router.post(API_ROUTES.SESSION, async (req, res) => {
     if (rejectRateLimitedSession(state, res, sessionRateLimitKey(req), normaliseId(req.body?.userId))) {
       return;
@@ -229,6 +230,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
    * fresh one (same userId / deviceId) is returned.  Useful for security-
    * conscious clients that periodically rotate their credentials.
    */
+  // lgtm[js/missing-rate-limiting] Guarded by state.sessionRateLimiter before rotating the token.
   router.post(API_ROUTES.SESSION_REFRESH, async (req, res) => {
     const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
@@ -250,8 +252,9 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       ...issueSessionTimestamps(sessionTtlMs),
     };
     // The pair of checks brackets the shared-store write: if a remote revocation
-    // lands while refresh is rotating the token, revocation wins and any freshly
-    // saved session is removed before the client can use it.
+    // lands during the write, the freshly saved session is removed here. A
+    // revocation that lands after the second check is enforced by the next REST
+    // or socket authorization check.
     if (await reauthenticationRequiredForDevice({
       state,
       userId: session.userId,
