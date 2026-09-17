@@ -2,10 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ensureNotificationPrefsLoaded,
   getNotificationPrefs,
+  setNotificationPreviewMode as persistNotificationPreviewMode,
   setMessageNotificationsEnabled as persistMessageNotificationsEnabled,
   setPeerMuted as persistPeerMuted,
+  setQuietHours as persistQuietHours,
   subscribeToNotificationPrefs,
 } from '../notificationPreferences';
+import type { NotificationPrefs } from '../settingsStorage';
 
 /**
  * React's view of the notification preferences.
@@ -42,9 +45,11 @@ export default function useNotificationPreferences() {
     (peerId: string | null | undefined) => {
       const normalized = (peerId ?? '').trim().toLowerCase();
       if (!normalized) return false;
-      return prefs.mutedPeers.some(muted => muted.trim().toLowerCase() === normalized);
+      if (!prefs.mutedPeers.some(muted => muted.trim().toLowerCase() === normalized)) return false;
+      const expiresAt = prefs.mutedPeerExpirations[normalized];
+      return typeof expiresAt !== 'number' || expiresAt > Date.now();
     },
-    [prefs.mutedPeers],
+    [prefs.mutedPeerExpirations, prefs.mutedPeers],
   );
 
   const setPeerMuted = useCallback((peerId: string, muted: boolean) => {
@@ -55,11 +60,24 @@ export default function useNotificationPreferences() {
     void persistMessageNotificationsEnabled(enabled);
   }, []);
 
+  const setNotificationPreviewMode = useCallback((previewMode: NotificationPrefs['previewMode']) => {
+    void persistNotificationPreviewMode(previewMode);
+  }, []);
+
+  const setQuietHours = useCallback((quietHours: NotificationPrefs['quietHours']) => {
+    void persistQuietHours(quietHours);
+  }, []);
+
   return {
     mutedPeers: prefs.mutedPeers,
     isPeerMuted,
     setPeerMuted,
     messageNotificationsEnabled: prefs.messageNotificationsEnabled,
     setMessageNotificationsEnabled,
+    mutedPeerExpirations: prefs.mutedPeerExpirations,
+    quietHours: prefs.quietHours,
+    setQuietHours,
+    previewMode: prefs.previewMode,
+    setNotificationPreviewMode,
   };
 }

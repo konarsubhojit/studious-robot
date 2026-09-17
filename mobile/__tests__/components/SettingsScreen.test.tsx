@@ -388,6 +388,28 @@ describe('SettingsScreen', () => {
       pressByTestID(tree, 'settings-unmute');
       expect(onUnmutePeer).toHaveBeenCalledWith('user-bob');
     });
+
+    test('explains quiet hours, private previews, call exceptions and local scope', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            quietHours={{ enabled: true, startMinutes: 22 * 60, endMinutes: 7 * 60, affects: 'messages' }}
+            previewMode="sender"
+          />,
+        );
+      });
+
+      const json = JSON.stringify(tree.toJSON());
+      expect(findByTestID(tree, 'settings-quiet-hours').length).toBeGreaterThan(0);
+      expect(findByTestID(tree, 'settings-preview-mode').length).toBeGreaterThan(0);
+      expect(json).toContain('22:00–07:00 for messages');
+      expect(json).toContain('Calls still ring unless quiet hours explicitly include calls');
+      expect(json).toContain('OS notification permission and Do Not Disturb');
+      expect(json).toContain('Local to this account on this device');
+      expect(json).toContain('Sender-only and generic previews hide message bodies and attachment filenames');
+    });
   });
 
   describe('privacy', () => {

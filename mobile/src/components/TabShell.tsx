@@ -476,6 +476,9 @@ function TabShell() {
       messageNotificationsEnabled={chat.messageNotificationsEnabled}
       onToggleMessageNotifications={chat.setMessageNotificationsEnabled}
       mutedPeers={chat.mutedPeers}
+      mutedPeerExpirations={chat.mutedPeerExpirations}
+      quietHours={chat.quietHours}
+      previewMode={chat.previewMode}
       onUnmutePeer={peerId => setPeerMuted(peerId, false)}
       blockedUsers={chat.blockedUsers}
       onUnblockUser={chat.unblockPeer}
@@ -491,6 +494,9 @@ function TabShell() {
     chat.blockedUsers,
     chat.messageNotificationsEnabled,
     chat.mutedPeers,
+    chat.mutedPeerExpirations,
+    chat.previewMode,
+    chat.quietHours,
     chat.setMessageNotificationsEnabled,
     chat.unblockPeer,
     clearCachedMedia,

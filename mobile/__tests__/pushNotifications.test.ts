@@ -5,6 +5,7 @@ import {
   _extractPushType,
   addCallLinkListener,
   addChatLinkListener,
+  formatMessageNotificationPreview,
   getInitialCallLink,
   getInitialChatLink,
   getPushToken,
@@ -36,8 +37,10 @@ import {
 } from '../src/messageNotification';
 import {
   resetNotificationPrefsForTests,
+  setNotificationPreviewMode,
   setMessageNotificationsEnabled,
   setPeerMuted,
+  setQuietHours,
 } from '../src/notificationPreferences';
 
 const globalAny = ((global) as any);
@@ -64,9 +67,21 @@ jest.mock('../src/settingsStorage', () => ({
   loadSettings: jest.fn(() => Promise.resolve({ signalingUrl: 'http://localhost:4173' })),
   // `notificationPreferences` reads the mute list through these; the push path
   // consults it before it rings.
-  DEFAULT_NOTIFICATION_PREFS: { messageNotificationsEnabled: true, mutedPeers: [] },
+  DEFAULT_NOTIFICATION_PREFS: {
+    messageNotificationsEnabled: true,
+    mutedPeers: [],
+    mutedPeerExpirations: {},
+    quietHours: { enabled: false, startMinutes: 22 * 60, endMinutes: 7 * 60, affects: 'messages' },
+    previewMode: 'full',
+  },
   loadNotificationPrefs: jest.fn(() =>
-    Promise.resolve({ messageNotificationsEnabled: true, mutedPeers: [] }),
+    Promise.resolve({
+      messageNotificationsEnabled: true,
+      mutedPeers: [],
+      mutedPeerExpirations: {},
+      quietHours: { enabled: false, startMinutes: 22 * 60, endMinutes: 7 * 60, affects: 'messages' },
+      previewMode: 'full',
+    }),
   ),
   saveNotificationPrefs: jest.fn(() => Promise.resolve(true)),
 }));
@@ -445,6 +460,7 @@ describe('background push handler', () => {
 
   beforeEach(() => {
     _resetMessagingCache();
+    resetNotificationPrefsForTests();
     globalAny.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
     jest.clearAllMocks();
   });
@@ -573,6 +589,35 @@ describe('background push handler', () => {
       },
     );
     expect(flushDurableLogs).toHaveBeenCalled();
+  });
+
+  test('suppresses incoming calls only when quiet hours explicitly include calls', async () => {
+    const displayIncomingCall = jest
+      .spyOn(callKeep, 'displayIncomingCall')
+      .mockResolvedValue({ shown: true });
+    await setQuietHours({
+      enabled: true,
+      startMinutes: 0,
+      endMinutes: 1439,
+      affects: 'calls',
+    });
+
+    await handleBackgroundPushMessage({
+      data: { callId: 'call-quiet', callerId: 'alice', type: 'call.incoming' },
+    });
+
+    expect(displayIncomingCall).not.toHaveBeenCalled();
+    expect(globalAny.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          callId: 'call-quiet',
+          stage: 'ui_failed',
+          reason: 'quiet_hours',
+        }),
+      }),
+    );
   });
 
   test('a failed CallKeep display reports why it failed, not connection liveness', async () => {
@@ -980,6 +1025,50 @@ describe('message push handling', () => {
         }),
       }),
     );
+  });
+
+  test('suppresses message notifications during message quiet hours', async () => {
+    await setQuietHours({
+      enabled: true,
+      startMinutes: 0,
+      endMinutes: 1439,
+      affects: 'messages',
+    });
+
+    await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(globalAny.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          messageId: 'message-1',
+          stage: 'notification_suppressed',
+          reason: 'quiet_hours',
+        }),
+      }),
+    );
+  });
+
+  test('sender-only and generic previews hide message bodies and attachment filenames', async () => {
+    const message = {
+      senderId: 'alice',
+      title: 'Alice',
+      body: 'Secret text with attachment budget.xlsx',
+    };
+
+    await setNotificationPreviewMode('sender');
+    expect(formatMessageNotificationPreview(message)).toEqual({
+      title: 'alice',
+      body: 'Sent you a message',
+    });
+
+    await setNotificationPreviewMode('generic');
+    expect(formatMessageNotificationPreview(message)).toEqual({
+      title: 'New WeTalk message',
+      body: 'Open WeTalk to view it.',
+    });
   });
 
   test('a mute silences only that person', async () => {
