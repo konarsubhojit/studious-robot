@@ -170,6 +170,10 @@ verified Firebase account:
 
 - **Group calls** — still absent: server capacity is still capped to 1:1
   (`server/src/config.ts` `MAX_ROOM_SIZE = 2`).
+- **Group messaging** — implementation deferred pending the reviewed bounded
+  membership and E2EE-compatibility decision in
+  [`group-messaging-mvp.md`](./group-messaging-mvp.md); group calls remain out
+  of scope for that decision.
 - ~~**Mobile chat UI**~~ ✅ implemented (`mobile/src/components/chat/ChatConversationPresentation.tsx`,
   `mobile/src/components/ChatListScreen.tsx`, `mobile/src/components/SearchScreen.tsx`).
 - ~~**Screen sharing**~~ ✅ implemented (`mobile/src/hooks/useScreenShare.ts`,
