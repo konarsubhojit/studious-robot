@@ -1,6 +1,6 @@
 import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { deriveConversationId } from '../messageStore.ts';
 import { isBlocked } from '../security.ts';
@@ -35,10 +35,10 @@ function createAttachmentsRouter({ state, env = process.env }: {
    * Body: { peerId, type: 'image'|'file'|'voice', mimeType, sizeBytes }
    * Response 200: { conversationId, key, uploadUrl, publicUrl, expiresAt, headers }
    */
-  router.post(API_ROUTES.ATTACHMENTS_PRESIGN, (req, res) => {
+  router.post(API_ROUTES.ATTACHMENTS_PRESIGN, async (req, res) => {
     res.set('Cache-Control', 'no-store');
 
-    const session = getSessionFromRequest(req, state.sessions);
+    const session = await getSessionFromRequestAsync(req, state).catch(() => null);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;

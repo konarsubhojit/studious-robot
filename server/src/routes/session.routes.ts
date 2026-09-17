@@ -43,6 +43,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
             authUid: string;
             email?: string | null;
             authProvider?: string | null;
+            authTime?: string | null;
         }>;
     }): import('express').Router {
   const router = express.Router();
@@ -107,6 +108,26 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
 
     const deviceId = normaliseId(req.body?.deviceId) || `device-${randomUUID()}`;
     const platform = normaliseOptionalString(req.body?.platform);
+    const localRevokedAt = state.devices.get(deviceId)?.revokedAt ?? null;
+    const sharedRevokedAt = await state.sessionState?.getDeviceRevokedAt?.(userId, deviceId);
+    const revokedAt = sharedRevokedAt ?? localRevokedAt;
+    if (revokedAt) {
+      const authTimeMs = externalIdentity.authTime ? Date.parse(externalIdentity.authTime) : NaN;
+      const revokedAtMs = Date.parse(revokedAt);
+      if (!Number.isFinite(authTimeMs) || authTimeMs <= revokedAtMs) {
+        state.auditLog.record({
+          event: 'session.reauthentication_required',
+          actor: userId,
+          target: deviceId,
+          outcome: 'denied',
+        });
+        res.status(401).json({
+          error: 'reauthentication required for revoked device',
+          code: 'reauthentication_required',
+        });
+        return;
+      }
+    }
     const { createdAt, expiresAt } = issueSessionTimestamps(sessionTtlMs);
     const session = {
       sessionId: randomUUID(),
@@ -125,6 +146,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       deviceId,
       platform,
       sessionId: session.sessionId,
+      revokedAt: null,
     });
     ensurePresenceRecord(state, userId);
 
@@ -175,8 +197,30 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       platform: session.platform,
       ...issueSessionTimestamps(sessionTtlMs),
     };
+    const revokedBeforeSave = await state.sessionState?.getDeviceRevokedAt?.(session.userId, session.deviceId)
+      ?? state.devices.get(session.deviceId)?.revokedAt
+      ?? null;
+    if (revokedBeforeSave) {
+      res.status(401).json({
+        error: 'reauthentication required for revoked device',
+        code: 'reauthentication_required',
+      });
+      return;
+    }
     state.sessions.set(newSession.sessionId, newSession);
     await state.sessionState?.save(newSession);
+    const revokedAfterSave = await state.sessionState?.getDeviceRevokedAt?.(session.userId, session.deviceId)
+      ?? state.devices.get(session.deviceId)?.revokedAt
+      ?? null;
+    if (revokedAfterSave) {
+      state.sessions.delete(newSession.sessionId);
+      await state.sessionState?.remove(newSession.sessionId);
+      res.status(401).json({
+        error: 'reauthentication required for revoked device',
+        code: 'reauthentication_required',
+      });
+      return;
+    }
     addSessionToUser(state, newSession);
     upsertDevice(state, {
       userId: newSession.userId,

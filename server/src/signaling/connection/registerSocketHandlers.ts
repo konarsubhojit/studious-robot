@@ -57,6 +57,34 @@ function registerSocketHandlers(
       );
     }
 
+    socket.use((_packet, next) => {
+      const sessionId = socket.data.identity?.sessionId;
+      if (!sessionId || !state.sessionState) {
+        next();
+        return;
+      }
+      state.sessionState.get(sessionId)
+        .then((session) => {
+          if (session) {
+            next();
+            return;
+          }
+          socket.emit(SERVER_EVENTS.SESSION_INVALID, { sessionId, reason: 'revoked' });
+          socket.disconnect(true);
+        })
+        .catch(() => {
+          acknowledgeError(
+            socket,
+            undefined,
+            'session.check',
+            ERROR_CODES.UNAUTHORIZED,
+            'session state unavailable',
+            state
+          );
+          socket.disconnect(true);
+        });
+    });
+
     console.log(
       `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}` +
         ` correlationId=${identity.correlationId ?? 'none'}`

@@ -34,6 +34,9 @@ function createFirebaseTokenVerifier({ serviceAccountValue = process.env.FCM_SER
       authUid: decoded.uid,
       email: decoded.email ?? null,
       authProvider: decoded.firebase?.sign_in_provider ?? null,
+      authTime: typeof decoded.auth_time === 'number'
+        ? new Date(decoded.auth_time * 1000).toISOString()
+        : null,
     };
   };
 }

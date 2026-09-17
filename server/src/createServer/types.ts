@@ -3,6 +3,7 @@ export type CreateServerOptions = {
     authUid: string;
     email?: string | null;
     authProvider?: string | null;
+    authTime?: string | null;
   }>;
   stores?: import('../stores/contracts.ts').Stores;
   db?: import('../../db/client.ts').Database | null;
