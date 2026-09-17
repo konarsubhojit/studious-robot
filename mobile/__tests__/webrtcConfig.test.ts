@@ -583,6 +583,30 @@ describe('applyBitrateConstraints', () => {
     );
   });
 
+  test('applies adaptive video resolution and frame-rate constraints without reducing audio', async () => {
+    const videoSender = {
+      track: { kind: 'video' },
+      getParameters: () => ({ encodings: [{}] }),
+      setParameters: jest.fn().mockResolvedValue(undefined),
+    };
+    const audioSender = {
+      track: { kind: 'audio' },
+      getParameters: () => ({ encodings: [{}] }),
+      setParameters: jest.fn().mockResolvedValue(undefined),
+    };
+    await applyBitrateConstraints(({ getSenders: () => [videoSender, audioSender] } as any), {
+      videoMaxBps: 250_000, videoMaxFramerate: 10, videoResolutionScale: 4,
+    });
+    expect(videoSender.setParameters).toHaveBeenCalledWith(expect.objectContaining({
+      encodings: [expect.objectContaining({
+        maxBitrate: 250_000, maxFramerate: 10, scaleResolutionDownBy: 4,
+      })],
+    }));
+    expect(audioSender.setParameters).toHaveBeenCalledWith(expect.objectContaining({
+      encodings: [expect.objectContaining({ maxBitrate: 64_000 })],
+    }));
+  });
+
   test('silently skips senders without getParameters', async () => {
     const sender = { track: { kind: 'video' }, setParameters: jest.fn() };
     const pc = { getSenders: () => [sender] };

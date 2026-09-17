@@ -71,6 +71,7 @@ const selectTabShellSlice = (state: CallContextValue) => ({
   handleDeveloperModeToggle: state.handleDeveloperModeToggle,
   handleExportLogs: state.handleExportLogs,
   handleHapticsToggle: state.handleHapticsToggle,
+  handleDataSaverToggle: state.handleDataSaverToggle,
   handleIceTransportPolicyChange: state.handleIceTransportPolicyChange,
   handleSpeakerDefaultToggle: state.handleSpeakerDefaultToggle,
   minimizeCallOnNavigate: state.minimizeCallOnNavigate,
@@ -107,6 +108,7 @@ function TabShell() {
     handleSpeakerDefaultToggle,
     handleDeveloperModeToggle,
     handleHapticsToggle,
+    handleDataSaverToggle,
     handleIceTransportPolicyChange,
     minimizeCallOnNavigate,
     startAudioCallWith,
@@ -473,6 +475,8 @@ function TabShell() {
       onToggleHaptics={handleHapticsToggle}
       iceTransportPolicy={settings.iceTransportPolicy}
       onChangeIceTransportPolicy={handleIceTransportPolicyChange}
+      dataSaverEnabled={settings.dataSaverEnabled}
+      onToggleDataSaver={handleDataSaverToggle}
       messageNotificationsEnabled={chat.messageNotificationsEnabled}
       onToggleMessageNotifications={chat.setMessageNotificationsEnabled}
       mutedPeers={chat.mutedPeers}
@@ -504,6 +508,7 @@ function TabShell() {
     handleDeveloperModeToggle,
     handleExportLogs,
     handleHapticsToggle,
+    handleDataSaverToggle,
     handleIceTransportPolicyChange,
     handleSpeakerDefaultToggle,
     isClearingMedia,
@@ -515,6 +520,7 @@ function TabShell() {
     refreshStorageUsage,
     setPeerMuted,
     settings.autoCameraLightingEnabled,
+    settings.dataSaverEnabled,
     settings.developerModeEnabled,
     settings.hapticsEnabled,
     settings.iceTransportPolicy,

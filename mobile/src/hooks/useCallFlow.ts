@@ -43,7 +43,12 @@ import {
   prefetchIceServersForCall,
   applyBitrateConstraints,
   normalizeIceTransportPolicy,
+  VIDEO_ADAPTATION_CONSTRAINTS,
 } from '../webrtcConfig';
+import {
+  INITIAL_VIDEO_ADAPTATION,
+  nextVideoAdaptation,
+} from '../call/videoAdaptation';
 import type { RecoveryTrigger } from '../call/recoveryEpisode';
 import {
   buildCallEndSummary,
@@ -350,14 +355,17 @@ function describePlacementFailure(error: unknown, callElsewhere: CallElsewhere |
 export default function useCallFlow({
   speakerEnabledByDefault = false,
   iceTransportPolicy = ICE_TRANSPORT_POLICIES.ALL,
+  dataSaverEnabled = false,
 }: {
   speakerEnabledByDefault?: boolean;
   iceTransportPolicy?: IceTransportPolicy;
+  dataSaverEnabled?: boolean;
 } = {}) {
   const activeIceTransportPolicy = normalizeIceTransportPolicy(iceTransportPolicy);
   // ─── Connection config ────────────────────────────────────────────────────
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
   const [calleeId, setCalleeId] = useState('');
+  const videoAdaptationRef = useRef(INITIAL_VIDEO_ADAPTATION);
 
   // ─── Call lifecycle state ─────────────────────────────────────────────────
   // Single source of truth for the call lifecycle: every phase change goes
@@ -782,6 +790,26 @@ export default function useCallFlow({
     renegotiate,
   });
 
+  const applyVideoAdaptation = useCallback((quality: { bars: number }) => {
+    const next = nextVideoAdaptation(videoAdaptationRef.current, {
+      bars: quality.bars,
+      dataSaverEnabled,
+      isScreenSharing,
+      nowMs: Date.now(),
+    });
+    if (next.level === videoAdaptationRef.current.level) {
+      videoAdaptationRef.current = next;
+      return;
+    }
+    videoAdaptationRef.current = next;
+    const pc = peerConnectionRef.current;
+    if (pc) applyBitrateConstraints(pc, VIDEO_ADAPTATION_CONSTRAINTS[next.level]).catch(() => {});
+  }, [dataSaverEnabled, isScreenSharing, peerConnectionRef]);
+
+  useEffect(() => {
+    if (!isInCall) videoAdaptationRef.current = INITIAL_VIDEO_ADAPTATION;
+  }, [isInCall]);
+
   const { connectionQuality, selectedCandidatePair } = useConnectionQuality({
     activeCallIdRef,
     activeIceTransportPolicy,
@@ -789,6 +817,7 @@ export default function useCallFlow({
     peerConnectionRef,
     remoteStreamRef,
     updateStatus,
+    onQualitySample: applyVideoAdaptation,
   });
   useEffect(() => {
     connectionQualityRef.current = connectionQuality;
@@ -838,9 +867,14 @@ export default function useCallFlow({
     // Apply bitrate caps now that media is flowing; best-effort.
     const pc = peerConnectionRef.current;
     if (pc) {
-      applyBitrateConstraints(pc).catch(() => {});
+      applyBitrateConstraints(
+        pc,
+        dataSaverEnabled
+          ? VIDEO_ADAPTATION_CONSTRAINTS.constrained
+          : VIDEO_ADAPTATION_CONSTRAINTS.standard,
+      ).catch(() => {});
     }
-  }, [peerConnectionRef, setCallConnectedAtMs]);
+  }, [dataSaverEnabled, peerConnectionRef, setCallConnectedAtMs]);
 
   useEffect(() => {
     markCallConnectedRef.current = markCallConnected;

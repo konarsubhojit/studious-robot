@@ -31,6 +31,7 @@ export type CallContextValue = {
   handleSpeakerDefaultToggle: AppSettings['handleSpeakerDefaultToggle'];
   handleDeveloperModeToggle: AppSettings['handleDeveloperModeToggle'];
   handleHapticsToggle: AppSettings['handleHapticsToggle'];
+  handleDataSaverToggle: AppSettings['handleDataSaverToggle'];
   handleIceTransportPolicyChange: AppSettings['handleIceTransportPolicyChange'];
   callState: CallFlow['callPhase'];
   isCallActive: boolean;
@@ -100,6 +101,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
   const callFlow = useCallFlow({
     speakerEnabledByDefault: appSettings.settings.speakerEnabledByDefault,
     iceTransportPolicy: appSettings.settings.iceTransportPolicy,
+    dataSaverEnabled: appSettings.settings.dataSaverEnabled,
   });
   useEffect(() => {
     updateStatusRef.current = callFlow.updateStatus;
@@ -242,6 +244,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       handleSpeakerDefaultToggle: appSettings.handleSpeakerDefaultToggle,
       handleDeveloperModeToggle: appSettings.handleDeveloperModeToggle,
       handleHapticsToggle: appSettings.handleHapticsToggle,
+      handleDataSaverToggle: appSettings.handleDataSaverToggle,
       handleIceTransportPolicyChange: appSettings.handleIceTransportPolicyChange,
       // Unified call state machine view
       callState,
@@ -273,6 +276,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       animatedPipStyle,
       appSettings.handleAutoLightingToggle,
       appSettings.handleDeveloperModeToggle,
+      appSettings.handleDataSaverToggle,
       appSettings.handleHapticsToggle,
       appSettings.handleIceTransportPolicyChange,
       appSettings.handleSpeakerDefaultToggle,

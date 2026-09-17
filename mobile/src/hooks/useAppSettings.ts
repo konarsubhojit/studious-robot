@@ -13,6 +13,8 @@ export type AppSettingsValues = {
   speakerEnabledByDefault: boolean;
   developerModeEnabled: boolean;
   iceTransportPolicy: IceTransportPolicy;
+  /** Reduce video data use and adapt it after sustained poor connection samples. */
+  dataSaverEnabled: boolean;
   /** Vibrate to confirm call controls and state changes. */
   hapticsEnabled: boolean;
 };
@@ -22,6 +24,7 @@ export const DEFAULT_APP_SETTINGS: AppSettingsValues = {
   speakerEnabledByDefault: true,
   developerModeEnabled: false,
   iceTransportPolicy: ICE_TRANSPORT_POLICIES.ALL,
+  dataSaverEnabled: false,
   hapticsEnabled: true,
 };
 
@@ -102,6 +105,15 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
     );
   }, [persistSetting, settings.hapticsEnabled]);
 
+  const handleDataSaverToggle = useCallback(() => {
+    const nextValue = !settings.dataSaverEnabled;
+    persistSetting(
+      'dataSaverEnabled',
+      nextValue,
+      nextValue ? 'Data saver enabled: video uses less data' : 'Data saver disabled',
+    );
+  }, [persistSetting, settings.dataSaverEnabled]);
+
   const handleIceTransportPolicyChange = useCallback(
     (policy: string) => {
       const nextPolicy = normalizeIceTransportPolicy(policy);
@@ -124,6 +136,7 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
     handleSpeakerDefaultToggle,
     handleDeveloperModeToggle,
     handleHapticsToggle,
+    handleDataSaverToggle,
     handleIceTransportPolicyChange,
   };
 }

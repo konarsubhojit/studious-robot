@@ -43,6 +43,7 @@ type UseConnectionQualityParams = {
   peerConnectionRef: RefObject<PeerConnectionLike | null>;
   remoteStreamRef: RefObject<RemoteStreamLike | null>;
   updateStatus: (message: string, severity?: 'info' | 'success' | 'warning' | 'error') => void;
+  onQualitySample?: (quality: ConnectionQuality) => void;
 };
 
 function areConnectionQualitiesEqual(left: ConnectionQuality, right: ConnectionQuality): boolean {
@@ -79,6 +80,7 @@ export default function useConnectionQuality({
   peerConnectionRef,
   remoteStreamRef,
   updateStatus,
+  onQualitySample,
 }: UseConnectionQualityParams) {
   const [connectionQuality, setConnectionQuality] = useState(NO_LINK_CONNECTION_QUALITY);
   const [selectedCandidatePair, setSelectedCandidatePair] = useState(
@@ -202,6 +204,7 @@ export default function useConnectionQuality({
           sampledQuality,
         );
         const nextQuality = qualitySmootherRef.current.reported;
+        onQualitySample?.(nextQuality);
         setConnectionQuality(current =>
           areConnectionQualitiesEqual(current, nextQuality) ? current : nextQuality,
         );
@@ -239,7 +242,7 @@ export default function useConnectionQuality({
       stopPolling();
       subscription?.remove?.();
     };
-  }, [isInCall, noteSelectedCandidatePair, peerConnectionRef, remoteStreamRef, updateStatus]);
+  }, [isInCall, noteSelectedCandidatePair, onQualitySample, peerConnectionRef, remoteStreamRef, updateStatus]);
 
   return {
     connectionQuality,
