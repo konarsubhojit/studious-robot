@@ -37,6 +37,7 @@ const opaqueObject = s.opaque();
  */
 export type CallRecord = {
   callId: string;
+  mediaType?: 'audio' | 'video';
   callerId: string;
   calleeId: string;
   status: string;
@@ -47,6 +48,7 @@ export type CallRecord = {
 const callRecord = s.object(
   {
     callId: idField,
+    mediaType: s.enum(['audio', 'video']).optional(),
     callerId: s.id().optional(),
     calleeId: s.id().optional(),
     status: s.string({ min: 1 }).optional(),
@@ -135,7 +137,11 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
   [CLIENT_EVENTS.ROOM_ANSWER]: s.object({ roomId: idField, sdp: opaqueObject }),
   [CLIENT_EVENTS.ROOM_ICE_CANDIDATE]: s.object({ roomId: idField, candidate: opaqueObject }),
 
-  [CLIENT_EVENTS.CALL_INITIATE]: s.object({ version: versionField, calleeId: idField }),
+  [CLIENT_EVENTS.CALL_INITIATE]: s.object({
+    version: versionField,
+    calleeId: idField,
+    mediaType: s.enum(['audio', 'video']).optional(),
+  }),
   [CLIENT_EVENTS.CALL_INCOMING_ACK]: s.object({
     version: versionField,
     callId: idField,

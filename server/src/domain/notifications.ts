@@ -170,6 +170,7 @@ function attemptIncomingCallPush(state: ServerState, call: CallRecord, channel: 
   pushSenders
     .sendIncomingCallPush(channel, {
       callId: call.callId,
+      mediaType: call.mediaType ?? 'video',
       callerId: call.callerId,
       ringTimeoutAt: call.ringTimeoutAt ?? null,
     })

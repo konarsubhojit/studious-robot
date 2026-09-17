@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { mediaDevices } from 'react-native-webrtc';
 import { logError, logInfo, logWarn } from '../appLogger';
 import { getMediaAccessStatus } from '../diagnostics';
@@ -28,8 +28,11 @@ export default function useLocalMedia({
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const localStreamRef = useRef(null as WebrtcMediaStream | null);
+  const mediaEpochRef = useRef(0);
+  const cameraChangeRef = useRef(false);
 
   const releaseLocalMedia = useCallback(() => {
+    mediaEpochRef.current += 1;
     const stream = localStreamRef.current;
     if (stream) {
       stream.getTracks?.().forEach(track => {
@@ -44,10 +47,23 @@ export default function useLocalMedia({
     setLocalStream(null);
   }, []);
 
-  const startLocalPreview = useCallback(async () => {
-    if (localStreamRef.current) return localStreamRef.current;
+  useEffect(() => releaseLocalMedia, [releaseLocalMedia]);
 
-    const permResult = await ensureCallPermissions();
+  const startLocalPreview = useCallback(async (mediaType: 'audio' | 'video' = 'video') => {
+    if (localStreamRef.current) {
+      if (mediaType === 'audio') {
+        localStreamRef.current.getVideoTracks().forEach(track => {
+          track.stop();
+          localStreamRef.current?.removeTrack(track);
+        });
+        setIsVideoEnabled(false);
+      }
+      return localStreamRef.current;
+    }
+
+    const epoch = mediaEpochRef.current;
+    const permResult = await ensureCallPermissions(mediaType);
+    if (epoch !== mediaEpochRef.current) return null;
     if (!permResult.ok) {
       updateStatus(permResult.message, 'error');
       return null;
@@ -61,8 +77,12 @@ export default function useLocalMedia({
     try {
       const stream = await mediaDevices.getUserMedia({
         audio: true,
-        video: { facingMode: 'user' },
+        video: mediaType === 'audio' ? false : { facingMode: 'user' },
       });
+      if (epoch !== mediaEpochRef.current || localStreamRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        return epoch === mediaEpochRef.current ? localStreamRef.current : null;
+      }
       logInfo('[CallFlow] Local media stream acquired', {
         audio: stream.getAudioTracks().length,
         video: stream.getVideoTracks().length,
@@ -70,7 +90,7 @@ export default function useLocalMedia({
       localStreamRef.current = stream;
       setLocalStream(stream);
       setIsMuted(!isTrackEnabled(stream, 'audio'));
-      setIsVideoEnabled(isTrackEnabled(stream, 'video'));
+      setIsVideoEnabled(mediaType !== 'audio' && isTrackEnabled(stream, 'video'));
       return stream;
     } catch (error) {
       logError('[CallFlow] Failed to acquire media', error);
@@ -79,7 +99,50 @@ export default function useLocalMedia({
     }
   }, [setIsMuted, updateStatus]);
 
-  const handleVideoToggle = useCallback(() => {
+  const enableCamera = useCallback(async (stream: WebrtcMediaStream) => {
+    if (cameraChangeRef.current) return;
+    cameraChangeRef.current = true;
+    let cameraStream: WebrtcMediaStream | null = null;
+    try {
+      const permissions = await ensureCallPermissions('video');
+      if (localStreamRef.current !== stream) return;
+      if (!permissions.ok) {
+        updateStatus(permissions.message, 'error');
+        return;
+      }
+        cameraStream = await mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: 'user' },
+        });
+        const [track] = cameraStream.getVideoTracks();
+        if (!track || localStreamRef.current !== stream) {
+          cameraStream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        await replaceOutgoingVideoTrackRef.current?.(track);
+        if (localStreamRef.current !== stream) {
+          cameraStream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        stream.addTrack(track);
+        setIsVideoEnabled(true);
+        setIsFrontCamera(true);
+        updateStatus('Camera enabled');
+    } catch (error) {
+        cameraStream?.getTracks().forEach(track => track.stop());
+        logError('[CallFlow] Failed to enable camera', error);
+        updateStatus(getMediaAccessStatus(error), 'error');
+    } finally {
+      cameraChangeRef.current = false;
+    }
+  }, [replaceOutgoingVideoTrackRef, updateStatus]);
+
+  const handleVideoToggle = useCallback(async () => {
+    const stream = localStreamRef.current;
+    if (stream && !stream.getVideoTracks().length) {
+      await enableCamera(stream);
+      return;
+    }
     const nextVideoEnabled = !isVideoEnabled;
     if (!setTrackEnabled(localStreamRef.current, 'video', nextVideoEnabled)) {
       updateStatus('Start preview to control video', 'error');
@@ -87,11 +150,15 @@ export default function useLocalMedia({
     }
     setIsVideoEnabled(nextVideoEnabled);
     updateStatus(nextVideoEnabled ? 'Camera enabled' : 'Camera disabled');
-  }, [isVideoEnabled, updateStatus]);
+  }, [enableCamera, isVideoEnabled, updateStatus]);
 
   const handleCameraSwitch = useCallback(async () => {
     try {
       const [videoTrack] = localStreamRef.current?.getVideoTracks?.() ?? [];
+      if (!videoTrack) {
+        updateStatus('Enable camera before switching it', 'error');
+        return;
+      }
 
       if (typeof videoTrack?._switchCamera === 'function') {
         videoTrack._switchCamera();

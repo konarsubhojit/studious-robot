@@ -67,8 +67,17 @@ describe('callService', () => {
     expect(isCallServiceAvailable()).toBe(true);
     expect(startCallService()).toBe(true);
     expect(startService).toHaveBeenCalledTimes(1);
+    expect(startService).toHaveBeenCalledWith(true);
     expect(stopCallService()).toBe(true);
     expect(stopService).toHaveBeenCalledTimes(1);
+  });
+
+  test('audio-only service startup does not declare camera use', () => {
+    Platform.OS = 'android';
+    const startService = jest.fn();
+    setCallServiceModule({ startService });
+    expect(startCallService('audio')).toBe(true);
+    expect(startService).toHaveBeenCalledWith(false);
   });
 
   test('startCallService returns false and swallows native errors', () => {

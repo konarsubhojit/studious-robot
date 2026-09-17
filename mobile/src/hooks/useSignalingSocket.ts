@@ -507,7 +507,7 @@ export default function useSignalingSocket({
           reportAnswerSent(callId);
           dispatchCallEvent(CALL_EVENTS.CONNECT);
           connectSocketHandlersRef.current.updateStatus('Connected', 'success');
-          startCallService();
+          startCallService(activeCallRef.current?.mediaType ?? 'video');
         } catch (error) {
           logError('[CallFlow] Failed to handle RTC offer', error);
           connectSocketHandlersRef.current.updateStatus('Failed to connect media', 'error');
@@ -543,7 +543,7 @@ export default function useSignalingSocket({
           }
           dispatchCallEvent(CALL_EVENTS.CONNECT);
           connectSocketHandlersRef.current.updateStatus('Connected', 'success');
-          startCallService();
+          startCallService(activeCallRef.current?.mediaType ?? 'video');
         } catch (error) {
           logError('[CallFlow] Failed to handle RTC answer', error);
           connectSocketHandlersRef.current.updateStatus('Failed to connect media', 'error');

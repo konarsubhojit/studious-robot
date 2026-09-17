@@ -59,6 +59,7 @@ function callRecordFromRow(row: any): CallRecord {
     callId: row.callId,
     callerId: row.callerId,
     calleeId: row.calleeId,
+    mediaType: row.mediaType === 'audio' ? 'audio' : 'video',
     status: row.status,
     endReason: row.endReason ?? null,
     durationSeconds: row.durationSeconds ?? null,

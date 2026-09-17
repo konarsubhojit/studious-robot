@@ -8,7 +8,7 @@ import {
 } from '../call/callStateMachine';
 import * as Telemetry from '../telemetry';
 import { emitEvent } from '../observability';
-import { stopCallService } from '../callService';
+import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useCallAudioRouting from './useCallAudioRouting';
 import useCallPresentation from './useCallPresentation';
@@ -622,6 +622,9 @@ export default function useCallFlow({
   });
 
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
+  useEffect(() => {
+    if (isInCall) startCallService(isVideoEnabled ? 'video' : 'audio');
+  }, [isInCall, isVideoEnabled]);
   const { isRegistered } = identity;
   const { audioDevices, chooseAudioOutput, handleMuteToggle, isSpeakerEnabled, resetAudioRouting } =
     useCallAudioRouting({
@@ -863,7 +866,7 @@ export default function useCallFlow({
    */
   const showIncomingCallUi = useCallback(
     /** @param call */
-    async (call: { callId: string; callerId?: string | null }) => {
+    async (call: { callId: string; callerId?: string | null; mediaType?: CallMediaType }) => {
       if (!call?.callId) return;
       if (displayedIncomingCallIdsRef.current.has(call.callId)) return;
       displayedIncomingCallIdsRef.current.add(call.callId);
@@ -890,6 +893,7 @@ export default function useCallFlow({
       const displayResult = await displayIncomingCall({
         callId: call.callId,
         callerId: call.callerId,
+        hasVideo: call.mediaType !== 'audio',
       }).catch(error => {
         logWarn('[CallFlow] displayIncomingCall failed', {
           message: errorMessage(error),
@@ -1035,7 +1039,7 @@ export default function useCallFlow({
           createdAt: callRecord.createdAt,
           durationSeconds,
           isRead: !isMissed,
-          mediaType: isCaller ? outgoingCallMediaTypeRef.current : DEFAULT_CALL_MEDIA_TYPE,
+          mediaType: callRecord?.mediaType ?? (isCaller ? outgoingCallMediaTypeRef.current : DEFAULT_CALL_MEDIA_TYPE),
         });
         recordTimelineCallRef.current(callRecord, durationSeconds);
       }
@@ -1223,7 +1227,7 @@ export default function useCallFlow({
       const pending = offerRetryRef.current;
       const attempt = pending.callId === callId ? pending.attempt + 1 : 1;
       try {
-        await startLocalPreviewRef.current?.();
+        await startLocalPreviewRef.current?.(activeCallRef.current?.mediaType ?? 'video');
         const pc = await ensurePeerConnectionRef.current?.();
         if (!pc) return;
         const offer = await pc.createOffer();
@@ -1726,11 +1730,12 @@ export default function useCallFlow({
    * device's (empty) call state clears the calls it owns, and the placement is
    * retried exactly once.
    */
-  const requestCallPlacement = useCallback(async (calleeIdToRing: string) => {
+  const requestCallPlacement = useCallback(async (calleeIdToRing: string, mediaType: CallMediaType) => {
     const initiate = () =>
       signalingRef.current?.request(CLIENT_EVENTS.CALL_INITIATE, {
         version: SIGNALING_VERSION,
         calleeId: calleeIdToRing,
+        mediaType,
       });
 
     try {
@@ -1750,7 +1755,7 @@ export default function useCallFlow({
 
   const placeCall = useCallback(
     /** @param [explicitCalleeId] */
-    async (explicitCalleeId?: string) => {
+    async (explicitCalleeId?: string, mediaType: CallMediaType = 'video') => {
       if (isPlacingCallRef.current) return;
 
       // One call at a time — including one held by another of this user's
@@ -1779,12 +1784,13 @@ export default function useCallFlow({
       const trimmedCalleeId = callee.calleeId;
 
       isPlacingCallRef.current = true;
+      outgoingCallMediaTypeRef.current = mediaType;
       setIsPlacingCall(true);
       try {
         setCallSummary(null);
         setCallDelivery(null);
 
-        const stream = await startLocalPreview();
+        const stream = await startLocalPreview(mediaType);
         if (!stream) return;
 
         // Ensure a session and socket exist.
@@ -1810,7 +1816,7 @@ export default function useCallFlow({
         }
 
         updateStatus(`Calling ${trimmedCalleeId}…`);
-        const ack = await requestCallPlacement(trimmedCalleeId);
+        const ack = await requestCallPlacement(trimmedCalleeId, mediaType);
 
         isCallerRef.current = true;
         activeCallIdRef.current = ack.call.callId;

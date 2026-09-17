@@ -45,9 +45,7 @@ describe('useCallInitiation', () => {
       await Promise.resolve();
     });
     expect(params.setCalleeId).toHaveBeenCalledWith('bob');
-    expect(params.placeCall).toHaveBeenCalledWith('bob');
-    // The call log has no other way to know which kind of call this was, so
-    // redial would otherwise always start a video call.
+    expect(params.placeCall).toHaveBeenCalledWith('bob', 'video');
     expect(params.setOutgoingCallMediaType).toHaveBeenCalledWith('video');
   });
 
@@ -66,7 +64,7 @@ describe('useCallInitiation', () => {
     expect(logError).toHaveBeenCalledWith('placeCall (video) failed', expect.any(Error));
   });
 
-  test('startAudioCallWith turns off the camera once the call connects', async () => {
+  test('startAudioCallWith requests audio from the outset and never toggles camera on connect', async () => {
     const { resultRef, params, tree } = setup({ isInCall: false });
 
     await act(async () => {
@@ -74,7 +72,7 @@ describe('useCallInitiation', () => {
       await Promise.resolve();
     });
     expect(params.setCalleeId).toHaveBeenCalledWith('bob');
-    expect(params.placeCall).toHaveBeenCalledWith('bob');
+    expect(params.placeCall).toHaveBeenCalledWith('bob', 'audio');
     expect(params.setOutgoingCallMediaType).toHaveBeenCalledWith('audio');
     expect(params.handleVideoToggle).not.toHaveBeenCalled();
 
@@ -82,7 +80,7 @@ describe('useCallInitiation', () => {
       tree.update(<TestHook resultRef={resultRef} params={{ ...params, isInCall: true }} />);
     });
 
-    expect(params.handleVideoToggle).toHaveBeenCalledTimes(1);
+    expect(params.handleVideoToggle).not.toHaveBeenCalled();
   });
 
   test('does not toggle video when isInCall flips true without a pending audio-only call', () => {

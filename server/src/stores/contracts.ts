@@ -35,6 +35,7 @@ export type PresenceRecord = { lastSeen: string | null; };
 export type UserPresenceStore = Map<string, PresenceRecord>;
 export type CallRecord = {
   callId: string;
+  mediaType?: 'audio' | 'video';
   callerId: string;
   calleeId: string;
   status: string;

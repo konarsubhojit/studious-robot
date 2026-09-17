@@ -152,6 +152,7 @@ async function createCallRecordWithShared(
   state: ServerState,
   args: {
     callerId: string;
+    mediaType?: 'audio' | 'video';
     calleeId: string;
     ringingTimeoutMs: number;
     callerDeviceId?: string | null;
@@ -237,12 +238,14 @@ async function placeCallWithShared(
     calleeId,
     ringingTimeoutMs,
     callerDeviceId = null,
+    mediaType = 'video',
     onSuperseded,
   }: {
     callerId: string;
     calleeId: string;
     ringingTimeoutMs: number;
     callerDeviceId?: string | null;
+    mediaType?: 'audio' | 'video';
     onSuperseded?: (call: CallRecord, previousStatus: string, reason: string) => void;
   }
 ): Promise<PlaceCallResult> {
@@ -277,6 +280,7 @@ async function placeCallWithShared(
 
   const call = await createCallRecordWithShared(state, {
     callerId,
+    mediaType,
     calleeId,
     ringingTimeoutMs,
     callerDeviceId,

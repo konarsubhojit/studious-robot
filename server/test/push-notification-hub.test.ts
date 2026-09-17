@@ -193,6 +193,7 @@ test('android hub payload is FCM v1 native format, data-only, and carries the ca
   assert.deepEqual(payload.message.android.data, {
     callId: 'call-abc',
     callerId: 'alice',
+    mediaType: 'video',
     type: 'call.incoming',
     deepLink: 'wetalk://call/call-abc',
     title: 'Incoming call',

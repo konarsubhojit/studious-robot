@@ -43,7 +43,7 @@ function mirrorCallToShared(state: ServerState, call: CallRecord): void {
  * (non-terminal) call, or to `unreachable` when the callee has no reachable
  * channels at all; otherwise starts in `ringing`.
  */
-function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeoutMs, callerDeviceId = null }: { callerId: string; calleeId: string; ringingTimeoutMs: number; callerDeviceId?: string | null; }): CallRecord {
+function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeoutMs, callerDeviceId = null, mediaType = 'video' }: { callerId: string; calleeId: string; ringingTimeoutMs: number; callerDeviceId?: string | null; mediaType?: 'audio' | 'video'; }): CallRecord {
   const callId = randomUUID();
   const now = new Date().toISOString();
 
@@ -80,6 +80,7 @@ function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeo
 
   const call = {
     callId,
+    mediaType,
     callerId,
     calleeId,
     status,

@@ -87,7 +87,7 @@ type UseAnswerPathParams = {
   signalingRef: MutableRef<ReturnType<typeof createSignalingClient> | null>;
   signalingUrl: string;
   socketRef: MutableRef<Socket | null>;
-  startLocalPreview: () => Promise<unknown>;
+  startLocalPreview: (mediaType?: 'audio' | 'video') => Promise<unknown>;
   triggerHaptic: (kind: 'answer') => void;
   updateStatus: UpdateStatus;
   userIdRef: MutableRef<string>;
@@ -275,8 +275,8 @@ export default function useAnswerPath({
   );
 
   const acquireMediaForAcceptedCall = useCallback(
-    async (callId: string) => {
-      const permissions = await getMissingCallPermissions().catch(() => null);
+    async (callId: string, mediaType: 'audio' | 'video' = 'video') => {
+      const permissions = await getMissingCallPermissions(mediaType).catch(() => null);
       reportAnswerStageTiming(
         callId,
         'permissions_checked',
@@ -294,7 +294,7 @@ export default function useAnswerPath({
 
       let stream = null;
       try {
-        stream = await startLocalPreview();
+        stream = await startLocalPreview(mediaType);
       } catch (error) {
         logError('[CallFlow] Local media failed after accepting call', error);
       }
@@ -422,7 +422,7 @@ export default function useAnswerPath({
       const accepted = markAnswerAccepted(call.callId);
       reportAnswerStage(call.callId, 'answer_accepted', transport, accepted?.stageMs ?? null);
 
-      await acquireMediaForAcceptedCall(call.callId);
+      await acquireMediaForAcceptedCall(call.callId, nextCall.mediaType ?? 'video');
     } catch (error) {
       const reason = (error as AnswerError)?.answerFailureReason ?? 'accept_failed';
       logError('[CallFlow] acceptIncomingCall failed', error);

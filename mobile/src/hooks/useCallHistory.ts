@@ -170,7 +170,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
           createdAt: call.createdAt,
           durationSeconds: call.durationSeconds ?? null,
           isRead: call.status !== 'missed' || Boolean(call.missedReadAt),
-          mediaType: mediaTypesRef.current[call.callId],
+          mediaType: call.mediaType ?? mediaTypesRef.current[call.callId],
         }));
         setCallHistory(previous => entries.slice(0, MAX_CALL_HISTORY).map((entry: CallHistoryEntry) => {
           const held = previous.find(row => row.callId === entry.callId);

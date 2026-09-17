@@ -24,8 +24,9 @@ class CallServiceModule(
   override fun getName(): String = NAME
 
   @ReactMethod
-  fun startService() {
+  fun startService(hasVideo: Boolean) {
     val intent = Intent(reactContext, CallForegroundService::class.java)
+    intent.putExtra("hasVideo", hasVideo)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       reactContext.startForegroundService(intent)
     } else {

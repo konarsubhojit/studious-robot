@@ -32,7 +32,7 @@ const MESSAGE = {
 };
 
 /** Keys the incoming-call push carries; renaming one is a breaking change. */
-const CALL_DATA_KEYS = ['callId', 'callerId', 'type', 'deepLink', 'title', 'body'];
+const CALL_DATA_KEYS = ['callId', 'callerId', 'mediaType', 'type', 'deepLink', 'title', 'body'];
 
 /** Keys the message push carries; the client renders the notification itself. */
 const MESSAGE_DATA_KEYS = [
@@ -103,6 +103,7 @@ test('both transports send the same data block for an incoming call', () => {
   const expected = {
     callId: 'call-abc',
     callerId: 'alice',
+    mediaType: 'video',
     type: 'call.incoming',
     deepLink: 'wetalk://call/call-abc',
     title: 'Incoming call',

@@ -56,6 +56,15 @@ describe('permissions helpers', () => {
     ]);
   });
 
+  test('audio calls neither check nor request camera permission', async () => {
+    mockCheck.mockImplementation(async (permission: string) => permission !== 'android.permission.CAMERA');
+    await expect(ensureCallPermissions('audio')).resolves.toMatchObject({ ok: true });
+    await expect(getMissingCallPermissions('audio')).resolves.toMatchObject({ camera: false, missing: [] });
+    expect(mockCheck).not.toHaveBeenCalledWith('android.permission.CAMERA');
+    expect(mockRequestMultiple).not.toHaveBeenCalled();
+    expect(getCallRuntimePermissions(33, 'audio')).not.toContain('android.permission.CAMERA');
+  });
+
   test('skips Android runtime prompts on non-Android platforms', async () => {
     Platform.OS = 'ios';
 
