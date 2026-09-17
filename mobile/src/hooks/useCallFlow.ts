@@ -523,11 +523,9 @@ export default function useCallFlow({
   /**
    * Modality the local user asked for when placing the *next* outgoing call.
    *
-   * There is no audio-only call type on the wire, so this intent is the only
-   * place the distinction exists; it is stamped onto the history entry at
-   * teardown so the call log can show the right type icon and redial in the
-   * same modality. Incoming calls keep the default, since the local user never
-   * chose one.
+   * The server should echo this in the call record; keeping the requested value
+   * locally only gives teardown a safe fallback if placement fails before the
+   * echoed record is available.
    */
   const outgoingCallMediaTypeRef = useRef(DEFAULT_CALL_MEDIA_TYPE as CallMediaType);
   const setOutgoingCallMediaType = useCallback((mediaType: CallMediaType) => {

@@ -36,11 +36,9 @@ export type CallHistoryEntry = {
   /**
    * Whether this was placed as an audio or a video call.
    *
-   * The server has no audio-only call type — `startAudioCallWith` places an
-   * ordinary call and drops the camera once it connects — so the modality is
-   * remembered on the device (see `loadCallMediaTypes`) and merged back in
-   * here. `undefined` means "not recorded on this device", which the call log
-   * renders as a video call, matching what redial will actually do.
+   * New server rows carry this field durably. `undefined` means an older cached
+   * or server row did not record it, so the call log falls back to video for
+   * mixed-version compatibility.
    */
   mediaType?: CallMediaType;
 };
@@ -72,7 +70,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
   const requests = useMemo(
     () => new RequestCoalescer(dataScope(signalingUrl, storageUserId)), [signalingUrl, storageUserId]);
   // Each entry: { callId, callerId, calleeId, direction, status, endReason,
-  //               createdAt, durationSeconds, isRead }
+  //               createdAt, durationSeconds, isRead, mediaType }
   const [callHistory, setCallHistory] = useCachedResource<CallHistoryEntry[]>(
     dataScope(signalingUrl, storageUserId), 'calls', []);
 
@@ -118,9 +116,8 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
   /**
    * Append or update a call history entry (deduplicates by callId).
    *
-   * An explicit `mediaType` is also remembered on disk, so the row still shows
-   * the right type icon — and redial still starts the right kind of call —
-   * after the log is re-fetched from the server on the next launch.
+   * An explicit `mediaType` is also remembered on disk as a legacy fallback for
+   * older cached rows that predate durable server modality.
    */
   const addToHistory = useCallback((entry: CallHistoryEntry) => {
     if (entry.mediaType && entry.callId) {

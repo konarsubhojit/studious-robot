@@ -63,7 +63,7 @@ type SocketHandlers = {
   disconnectSocket: () => void;
   sendInitialOffer: (signaling: SignalingClient, callId: string) => Promise<void>;
   updateStatus: UpdateStatus;
-  showIncomingCallUi: (call: { callId: string; callerId?: string | null }) => Promise<void>;
+  showIncomingCallUi: (call: { callId: string; callerId?: string | null; mediaType?: CallRecord['mediaType'] }) => Promise<void>;
   handleMessageReceived: (message: any) => void;
   handleMessageDeleted: (payload: any) => void;
   handleMessageReaction: (payload: any) => void;
