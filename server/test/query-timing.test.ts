@@ -417,6 +417,21 @@ test('the per-operation breakdown is sorted with the costliest operation first',
   assert.equal(second.operation, 'select');
 });
 
+test('the per-operation breakdown carries a blocking/detached split', () => {
+  const telemetry = createTelemetry();
+  telemetry.recordDbQuery(record({ operation: 'insert', kind: 'write', blocking: true }));
+  telemetry.recordDbQuery(record({ operation: 'insert', kind: 'write', blocking: false }));
+  telemetry.recordDbQuery(record({ operation: 'insert', kind: 'write', blocking: false }));
+
+  const [entry] = telemetry.getSnapshot().dbQueries;
+  assert.equal(entry.operation, 'insert');
+  assert.equal(entry.count, 3);
+  // Of the 3 samples, 2 were fire-and-forget: an outlier maxMs on this row
+  // can now be attributed to background load versus a user-facing request
+  // without re-deriving it from the raw timing records.
+  assert.equal(entry.detached, 2);
+});
+
 test('the per-operation breakdown is bounded, folding overflow into "other"', () => {
   const telemetry = createTelemetry();
   for (let i = 0; i < 150; i++) {

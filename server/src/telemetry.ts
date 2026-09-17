@@ -40,6 +40,14 @@ export type QueryOperationSnapshot = {
   count: number;
   errors: number;
   slow: number;
+  /**
+   * Of `count`, how many ran detached (fire-and-forget, `blocking: false` on
+   * the timing record) — background work nobody's request waited on, as
+   * opposed to a user-facing operation. Lets an outlier `maxMs` be attributed
+   * to background load versus request latency without re-deriving it from the
+   * raw timing records.
+   */
+  detached: number;
   totalMs: number;
   meanMs: number;
   maxMs: number;
@@ -54,6 +62,14 @@ export type MetricsSnapshot = {
    * to correlate against the journal.
    */
   signaling_errors_by_code: Record<string, number>;
+  /**
+   * `stale_call_state` acks broken down by the triggering event name, so a
+   * stale `rtc.candidate` (expected — see `holdOrRejectRtcSignal`) can be told
+   * apart from a stale `rtc.offer`/`rtc.answer` (a real race in the accept
+   * path) or a stale `call.media-state` (a regression of the
+   * `canRelayMediaState` fix). Capped the same way as `signaling_errors_by_code`.
+   */
+  signaling_errors_stale_call_state_by_event: Record<string, number>;
   histograms: Record<string, HistogramSnapshot>;
   derived: Record<string, number | null>;
   /**
@@ -90,8 +106,8 @@ export type Telemetry = {
     previousStatus: string
   ) => void;
   recordRtcBufferOutcome: (outcome: RtcBufferOutcome, count?: number) => void;
-  recordRtcRelay: (eventName: string, recipients: number | null) => void;
-  recordSignalingError: (code?: string) => void;
+  recordRtcRelay: (eventName: string, recipients: number | null, isHeartbeat?: boolean) => void;
+  recordSignalingError: (code?: string, eventName?: string) => void;
   recordMessagePersistenceFailure: () => void;
   recordCacheHit: () => void;
   recordCacheMiss: () => void;
@@ -116,11 +132,21 @@ export type RtcBufferOutcome = 'buffered' | 'replayed' | 'stranded_local' | 'str
  *
  * The relay counter exists to answer "did this frame have anywhere to go",
  * and the question is only ever asked of the three events that carry a call's
- * media negotiation. Anything else — `call.media-state`, or a future event
- * routed through the same relay — is folded into `other` so the per-event
- * breakdown can never grow without bound.
+ * media negotiation. `call.media-state` — the fourth event `handleRtcRelay`
+ * is wired to — is split into its own two heartbeat/state-change counters
+ * (see {@link recordRtcRelay}) rather than folded in here; anything else
+ * routed through the same relay in the future is what `other` is left for.
  */
 const RELAYED_RTC_EVENTS = ['rtc.offer', 'rtc.answer', 'rtc.candidate'] as const;
+
+/**
+ * The one non-SDP/ICE event `handleRtcRelay` also relays: the `call.media-state`
+ * channel, shared by the 30s liveness heartbeat and real screen-share/camera
+ * toggles. Named here (rather than only in `callHandlers.ts`) so
+ * `recordRtcRelay` can recognise it without importing the client-events
+ * constant, mirroring how `RELAYED_RTC_EVENTS` is a plain string literal too.
+ */
+const MEDIA_STATE_RELAY_EVENT = 'call.media-state';
 
 /** Histogram upper-bound buckets in milliseconds. */
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infinity];
@@ -157,6 +183,16 @@ const MAX_TRACKED_QUERY_OPERATIONS = 100;
  * than growing the snapshot without limit.
  */
 const MAX_TRACKED_SIGNALING_ERROR_CODES = 50;
+
+/**
+ * Upper bound on distinct triggering-event labels tracked for
+ * `stale_call_state` acks. Mirrors {@link MAX_TRACKED_SIGNALING_ERROR_CODES}:
+ * the event name is client-controlled input to this breakdown (it is the
+ * socket event name, from a small frozen taxonomy in practice, but nothing
+ * enforces that upstream of here), so anything past the cap folds into `other`
+ * rather than growing the snapshot without limit.
+ */
+const MAX_TRACKED_STALE_CALL_STATE_EVENTS = 50;
 
 /** Event-loop delay sampling cadence for the `/metrics` histogram. */
 const EVENT_LOOP_DELAY_SAMPLE_MS = 1_000;
@@ -311,6 +347,14 @@ function createTelemetry(): Telemetry {
     rtc_relays_offer: 0,
     rtc_relays_answer: 0,
     rtc_relays_candidate: 0,
+    // `call.media-state` relays, split by whether the frame was a 30s
+    // liveness beat or a real screen-share/camera toggle (see
+    // `recordRtcRelay`'s `isHeartbeat` parameter).
+    rtc_relays_media_heartbeat: 0,
+    rtc_relays_media_state_change: 0,
+    // A true "unanticipated event" bucket: every relayed event this instance
+    // has a named counter for is excluded above, so a non-zero reading here
+    // means something genuinely unexpected reached `handleRtcRelay`.
     rtc_relays_other: 0,
     // Of the relays whose recipients were counted, those that reached *no*
     // socket anywhere on the fleet. The emit is a room broadcast, so this is
@@ -374,6 +418,7 @@ function createTelemetry(): Telemetry {
    * `signaling_errors` counter.
    */
   const signalingErrorsByCode: Map<string, number> = new Map();
+  const staleCallStateByEvent: Map<string, number> = new Map();
 
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
   const callTimestamps: Map<string, CallTimestamp> = new Map();
@@ -610,18 +655,26 @@ function createTelemetry(): Telemetry {
    * so a frame that went nowhere used to leave no trace at all. That is the
    * failure this counts.
    *
-   * @param eventName - The relayed event; anything outside
-   *   {@link RELAYED_RTC_EVENTS} is bucketed as `other`.
+   * @param eventName - The relayed event; one of {@link RELAYED_RTC_EVENTS},
+   *   {@link MEDIA_STATE_RELAY_EVENT}, or anything else (bucketed as `other`).
    * @param recipients - How many sockets the room held, or `null` when the
    *   count was not taken. Counting costs an adapter round trip, so the caller
    *   takes it only for the one-or-two-per-call SDP frames and passes `null`
    *   for the high-rate candidate stream; a `null` still counts the relay, it
    *   just cannot contribute to `rtc_relays_no_recipient`.
+   * @param isHeartbeat - For {@link MEDIA_STATE_RELAY_EVENT} only: whether the
+   *   frame was the 30s liveness beat (`rtc_relays_media_heartbeat`) or a real
+   *   screen-share/camera toggle (`rtc_relays_media_state_change`). Ignored
+   *   for every other event. This is the same `value?.heartbeat === true`
+   *   predicate `handleRtcRelay` already evaluates for its `recordsHeartbeat`
+   *   branch, threaded through rather than recomputed here.
    */
-  function recordRtcRelay(eventName: string, recipients: number | null = null) {
+  function recordRtcRelay(eventName: string, recipients: number | null = null, isHeartbeat: boolean = false) {
     const bucket = (RELAYED_RTC_EVENTS as readonly string[]).includes(eventName)
       ? (`rtc_relays_${eventName.slice('rtc.'.length)}` as keyof typeof counters)
-      : 'rtc_relays_other';
+      : eventName === MEDIA_STATE_RELAY_EVENT
+        ? (isHeartbeat ? 'rtc_relays_media_heartbeat' : 'rtc_relays_media_state_change')
+        : 'rtc_relays_other';
     counters[bucket] += 1;
     if (recipients === 0) counters.rtc_relays_no_recipient += 1;
   }
@@ -633,8 +686,14 @@ function createTelemetry(): Telemetry {
    *   empty code is bucketed as `unknown`, and anything past
    *   {@link MAX_TRACKED_SIGNALING_ERROR_CODES} distinct codes as `other`, so
    *   the breakdown always sums to the aggregate `signaling_errors` counter.
+   * @param eventName - The socket event that was rejected. Only tracked for
+   *   `stale_call_state` — see {@link staleCallStateByEvent} — because that is
+   *   the one code whose meaning depends entirely on which event triggered it
+   *   (an expected stale `rtc.candidate` vs. a regression of a previously
+   *   fixed bug in another event). Optional so call sites that only have a
+   *   code (or none) are unaffected.
    */
-  function recordSignalingError(code?: string) {
+  function recordSignalingError(code?: string, eventName?: string) {
     counters.signaling_errors += 1;
 
     const label = typeof code === 'string' && code.length > 0 ? code : 'unknown';
@@ -644,6 +703,15 @@ function createTelemetry(): Telemetry {
         ? label
         : 'other';
     signalingErrorsByCode.set(key, (signalingErrorsByCode.get(key) ?? 0) + 1);
+
+    if (label !== 'stale_call_state') return;
+    const eventLabel = typeof eventName === 'string' && eventName.length > 0 ? eventName : 'unknown';
+    const eventKey =
+      staleCallStateByEvent.has(eventLabel) ||
+      staleCallStateByEvent.size < MAX_TRACKED_STALE_CALL_STATE_EVENTS
+        ? eventLabel
+        : 'other';
+    staleCallStateByEvent.set(eventKey, (staleCallStateByEvent.get(eventKey) ?? 0) + 1);
   }
 
   /**
@@ -703,6 +771,7 @@ function createTelemetry(): Telemetry {
         count: 0,
         errors: 0,
         slow: 0,
+        detached: 0,
         totalMs: 0,
         maxMs: 0,
       };
@@ -720,6 +789,7 @@ function createTelemetry(): Telemetry {
     entry.count += 1;
     if (!record.ok) entry.errors += 1;
     if (record.slow) entry.slow += 1;
+    if (!record.blocking) entry.detached += 1;
     entry.totalMs += record.durationMs;
     if (record.durationMs > entry.maxMs) entry.maxMs = record.durationMs;
   }
@@ -748,6 +818,7 @@ function createTelemetry(): Telemetry {
       collectedAt: new Date().toISOString(),
       counters: { ...counters },
       signaling_errors_by_code: Object.fromEntries(signalingErrorsByCode),
+      signaling_errors_stale_call_state_by_event: Object.fromEntries(staleCallStateByEvent),
       histograms: {},
       derived: {},
       dbQueries: [],

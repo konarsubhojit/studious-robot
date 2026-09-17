@@ -21,13 +21,13 @@ this is a read-only investigation, per the task's instructions.
 ### What falls into `other`
 
 `recordRtcRelay()` buckets every relayed event that is not literally
-`rtc.offer` / `rtc.answer` / `rtc.candidate`:
+`rtc.offer` / `rtc.answer` / `rtc.candidate`. Before this task's fix, this
+was the implementation:
 
 ```ts
-// server/src/telemetry.ts:123
+// server/src/telemetry.ts (pre-fix)
 const RELAYED_RTC_EVENTS = ['rtc.offer', 'rtc.answer', 'rtc.candidate'] as const;
 
-// server/src/telemetry.ts:621-625
 function recordRtcRelay(eventName: string, recipients: number | null = null) {
   const bucket = (RELAYED_RTC_EVENTS as readonly string[]).includes(eventName)
     ? (`rtc_relays_${eventName.slice('rtc.'.length)}` as keyof typeof counters)
@@ -37,9 +37,9 @@ function recordRtcRelay(eventName: string, recipients: number | null = null) {
 }
 ```
 
-`recordRtcRelay` is called from exactly one call site,
-`server/src/signaling/callHandlers.ts:315` (`logRtcRelay`), which is invoked
-from `handleRtcRelay` (`callHandlers.ts:335-451`). `handleRtcRelay` is wired to
+`recordRtcRelay` is called from exactly one call site, inside `logRtcRelay`
+(`server/src/signaling/callHandlers.ts`), which is invoked from
+`handleRtcRelay` in the same file. `handleRtcRelay` is wired to
 **four** socket events, not three
 (`server/src/signaling/connection/registerSocketHandlers.ts:416-458`):
 
@@ -48,13 +48,13 @@ from `handleRtcRelay` (`callHandlers.ts:335-451`). `handleRtcRelay` is wired to
 | `rtc.offer` | `sdp` | `rtc_relays_offer` |
 | `rtc.answer` | `sdp` | `rtc_relays_answer` |
 | `rtc.candidate` | `candidate` | `rtc_relays_candidate` |
-| **`call.media-state`** | `mediaState` | **`rtc_relays_other`** |
+| **`call.media-state`** | `mediaState` | **`rtc_relays_other`** (pre-fix; see below) |
 
-So `other` is exactly one event name: `call.media-state`
+So `other` was exactly one event name: `call.media-state`
 (`shared/signaling/events.ts:33,58`), relayed through the same generic path as
 the SDP/ICE frames because it needs the same participant/auth/rate-limit
 checks and the same "promote to `connecting_media` on first frame"
-side effect (`callHandlers.ts:416-418`).
+side effect (the `promoteToConnectingMedia` call inside `handleRtcRelay`).
 
 ### Who emits `call.media-state`, and on what trigger
 
@@ -86,9 +86,21 @@ It is proportionate to **connected call time**, not call count, and this is
 what the numbers show once the heartbeat is accounted for:
 
 - micro1: 11 `in_call` samples (`call_connect_latency_ms.count`), 768 `other`.
-  At 2 heartbeats/min per call (both peers × 1 beat/30s), 768 beats implies
-  roughly 35 cumulative connected-minutes across those 11 calls — a plausible
-  ~3 min average call, not a loop.
+  **This estimate assumes both peers of every call beat to micro1** — i.e.
+  that neither participant's socket ever lived on micro2 for these 11 calls.
+  Under that assumption, at 2 heartbeats/min per call (both peers × 1
+  beat/30s), 768 beats implies roughly 35 cumulative connected-minutes across
+  those 11 calls, a ~3 min average call. But the very next paragraph (micro2)
+  shows heartbeats route by the *sender's* socket and can split across
+  instances — so the same 768 could equally represent only micro1's *share*
+  of the beats for those calls, with the rest landing on micro2. If beats
+  split evenly, 768 implies roughly 70 cumulative connected-minutes, not 35.
+  Notably, micro1's `call_duration_ms` mean is 539s (~9 min) over 5 samples,
+  which sits awkwardly with a 3-minute estimate either way. **The only
+  claim this data actually supports is the load-bearing one: 768 is
+  proportional to connected time and consistent with heartbeat cadence, not
+  an unbounded per-render emission.** The specific cumulative-minutes / average
+  -call-length figures are not reliable from this sample and are dropped.
 - micro2: 0 local `in_call` transitions, yet still 186 `other`. This is *not*
   a contradiction: a heartbeat is emitted per-**user**, and lands on whichever
   instance currently holds that user's socket (`emitToUserSockets`,
@@ -97,7 +109,7 @@ what the numbers show once the heartbeat is accounted for:
   `registerSocketHandlers.ts:449-458`) — independent of which instance
   recorded the call's `in_call` transition in its own `state.calls` map. A
   call whose `connected` report and shared-store write happened to be handled
-  by micro1 (`handleCallConnected`, `callHandlers.ts:466-497`, "the first peer
+  by micro1 (`handleCallConnected`, `callHandlers.ts`, "the first peer
   to report wins") can still have its heartbeats observed by micro2, if that
   call's other participant's socket lives there. This is exactly the
   fleet-wide symptom described in item 5 below, now showing up a second time
@@ -109,18 +121,18 @@ actively defeats diagnosis, which is the real problem: a reviewer cannot tell
 "heartbeat load" from "a client stuck emitting on every render" without
 reading this file, which is exactly what this section had to do.
 
-### Proposed fix — split `other` into named sub-counters
+### Proposed fix — split `other` into named sub-counters — **shipped**
 
 ```ts
 // server/src/telemetry.ts — replace the single 'other' bucket
 const RELAYED_RTC_EVENTS = ['rtc.offer', 'rtc.answer', 'rtc.candidate'] as const;
-const MEDIA_STATE_EVENT = 'call.media-state';
+const MEDIA_STATE_RELAY_EVENT = 'call.media-state';
 
 function recordRtcRelay(eventName: string, recipients: number | null = null, isHeartbeat = false) {
   const bucket =
     (RELAYED_RTC_EVENTS as readonly string[]).includes(eventName)
       ? (`rtc_relays_${eventName.slice('rtc.'.length)}` as keyof typeof counters)
-      : eventName === MEDIA_STATE_EVENT
+      : eventName === MEDIA_STATE_RELAY_EVENT
         ? (isHeartbeat ? 'rtc_relays_media_heartbeat' : 'rtc_relays_media_state_change')
         : 'rtc_relays_other'; // kept as a true "unexpected event" bucket
   counters[bucket] += 1;
@@ -133,10 +145,11 @@ with two new declared counters:
 - `rtc_relays_media_heartbeat` — the 30s liveness beat (`mediaState.heartbeat === true`).
 - `rtc_relays_media_state_change` — real screen-share/camera toggles.
 
-`handleRtcRelay` already computes `value?.heartbeat === true`
-(`callHandlers.ts:439`) for the `recordsHeartbeat` branch, so the call site
-only needs to thread that same boolean into `logRtcRelay`/`recordRtcRelay`
-(`callHandlers.ts:309-330`). `rtc_relays_other` then reverts to its intended
+`handleRtcRelay` already computes `options.recordsHeartbeat === true &&
+value?.heartbeat === true` (the `isHeartbeatFrame` local, reused for both the
+`recordCallHeartbeat` gate and the telemetry call) for the `recordsHeartbeat`
+branch, so the call site only needed to thread that same boolean into
+`logRtcRelay`/`recordRtcRelay`. `rtc_relays_other` now reverts to its intended
 meaning: *an event this analysis did not anticipate at all*, which is the
 signal actually worth alarming on.
 
@@ -145,7 +158,7 @@ new parameter threaded through two internal functions). No wire format,
 schema, or persisted-data change. Existing `rtc_relays_other` consumers (none
 found outside `telemetry.ts` and its tests) would see their counter drop to
 ~0 after the split, which is a monitoring-dashboard update, not a behavioural
-one.
+one. **Status: implemented, tested in `server/test/telemetry.test.ts`.**
 
 ---
 
@@ -207,26 +220,21 @@ No other emitter was found that can address `rtc.offer`/`rtc.answer`/
 
 ### What, then, explains the remaining 5 `stale_call_state` (micro1) / the mechanism in general?
 
-This is where the evidence runs out and the honest answer is **needs more
-data**. `acknowledgeError()` logs the rejected event name
-(`server/src/signaling/ack.ts:118-121`, `event=${eventName}`) but
-`recordSignalingError(code)` (`ack.ts:114`, `telemetry.ts:530-539`) only ever
-receives the **code**, never the **event name**, so `signaling_errors_by_code`
-cannot distinguish "a stale `rtc.candidate`" (expected — see
+This was, at investigation time, where the evidence ran out — the honest
+answer was **needs more data**. `acknowledgeError()` logs the rejected event
+name (`server/src/signaling/ack.ts:120-121`, `event=${eventName}`) but
+`recordSignalingError(code)` (`ack.ts:116`, `telemetry.ts`) only ever received
+the **code**, never the **event name**, so `signaling_errors_by_code` could
+not distinguish "a stale `rtc.candidate`" (expected — see
 `holdOrRejectRtcSignal`, `callHandlers.ts:196-224`, which only *buffers*
 candidates and rejects everything else outright for a non-live call) from "a
 stale `call.media-state`" (would indicate the fix in §2 has a gap) from "a
 stale `rtc.offer`" (would indicate a race in the accept path itself). All
-three currently increment the identical `stale_call_state` counter with no
-way to tell them apart from `/metrics` alone.
+three used to increment the identical `stale_call_state` counter with no way
+to tell them apart from `/metrics` alone. **This gap is now closed** (see
+below); the next scrape will settle which of the three this was.
 
-**What would settle it:** either (a) grep the structured `console.warn` line
-`[signaling] error ack code=stale_call_state event=... socket=... user=...`
-(`ack.ts:118-121`) for these five occurrences on micro1, since the event name
-*is* logged even though it is not counted, or (b) ship the instrumentation fix
-below and wait for the next scrape.
-
-### Proposed instrumentation fix
+### Proposed instrumentation fix — shipped
 
 Track `stale_call_state` per triggering event, mirroring the existing
 per-code breakdown:
@@ -237,21 +245,38 @@ function recordSignalingError(code?: string, eventName?: string) {
   counters.signaling_errors += 1;
   const label = typeof code === 'string' && code.length > 0 ? code : 'unknown';
   ...
-  if (label === 'stale_call_state' && eventName) {
-    const evKey = staleCallStateByEvent.has(eventName) ? eventName : 'other';
+  if (label === 'stale_call_state') {
+    const evLabel = typeof eventName === 'string' && eventName.length > 0 ? eventName : 'unknown';
+    const evKey = staleCallStateByEvent.has(evLabel) || staleCallStateByEvent.size < MAX_TRACKED_STALE_CALL_STATE_EVENTS
+      ? evLabel
+      : 'other';
     staleCallStateByEvent.set(evKey, (staleCallStateByEvent.get(evKey) ?? 0) + 1);
   }
 }
 ```
 
 exposed as `signaling_errors_stale_call_state_by_event` (a small, capped map
-like `signaling_errors_by_code`), threaded from `acknowledgeError`
-(`ack.ts:114`, which already has `eventName` in scope) down to
-`recordSignalingError`.
+like `signaling_errors_by_code`, capped at `MAX_TRACKED_STALE_CALL_STATE_EVENTS`
+and overflowing to an `other` key), threaded from `acknowledgeError`
+(`ack.ts:116`, which already has `eventName` in scope) down to
+`recordSignalingError`. `eventName` stays optional on both functions, since
+`acknowledgeError` is documented as callable before `state` exists at the
+earliest guards.
+
+**Decision on scope:** tracked the per-event breakdown only for
+`stale_call_state`, not for every code. The generic version is barely more
+code and would also answer this class of question for `call_not_found` and
+`forbidden`, but every additional code doubles the cardinality of a capped
+map that is already sized for the one code this investigation actually needed
+answered. `stale_call_state` is the only code where "which event" changes the
+verdict (buffered-candidate vs. accept-path race vs. regression); the other
+codes do not have that ambiguity today. If that changes, the generic version
+is a small follow-up, not a redesign.
 
 **Blast radius:** additive counter, no behavioural change; touches
 `acknowledgeError`'s one call to `recordSignalingError` and the telemetry
-module. Low risk.
+module. Low risk. **Status: implemented, tested in
+`server/test/telemetry.test.ts`.**
 
 ---
 
@@ -287,9 +312,9 @@ case 'ringing':
 ```
 
 When the deadline passes, `finalizeCall` moves the call to `missed`
-(`calls.ts:594` for the general stale path, `calls.ts:444` for the ringing
-sweep proper), which increments `calls_missed` via
-`recordRingEnd('calls_missed', ...)` (`telemetry.ts:574`).
+(the general stale path and the ringing-sweep path in `calls.ts` both call
+it), which increments `calls_missed` via `recordRingEnd('calls_missed', ...)`
+(`telemetry.ts`).
 
 ### Missed vs cancelled vs ended — is `missed` reachable at all?
 
@@ -303,7 +328,7 @@ particular calls took**:
   `nextStatus: 'ended', reason: 'cancelled'`
   (`registerSocketHandlers.ts:372-384`) — which is a **user action**, counted
   in `recordCallEnd` as `counters.calls_cancelled += 1` when
-  `call.endReason === 'cancelled'` (`telemetry.ts:537`). This requires the
+  `call.endReason === 'cancelled'` (`telemetry.ts`). This requires the
   call to reach `ended`, not `missed`.
 - The observed ring durations (max 82126ms on micro2) are all **below** the
   120,000ms `DEFAULT_RINGING_TIMEOUT_MS`, so no call in this sample ever
@@ -323,15 +348,17 @@ The sweep polls every 5s (`RINGING_POLL_MS`), so it cannot be the reason a
 82s ring outlives its intent — 5s granularity against a 120s deadline is not
 the bottleneck. The **product** question is separate and real: is 82s of
 audible ringing (a full 82 seconds during which the callee's phone rings and
-the caller is left waiting, before *either party* gives up) too long? The
-data here — max observed voluntary cancel at 82126ms, well under the 120s
-cutoff — suggests the timeout is not obviously miscalibrated relative to how
-long real users are willing to wait before cancelling themselves; if
-anything, it means the **timeout is rarely the acting constraint** at all,
-and UX-level ring duration is bounded by user patience, not by
-`DEFAULT_RINGING_TIMEOUT_MS`. Lowering the timeout would only change outcomes
-for the (unobserved here) tail of rings that neither side ever cancels — that
-tail is exactly what `calls_missed` would show, and this sample has none.
+the caller is left waiting, before *either party* gives up) too long?
+**This cannot be answered from four ring-duration samples across two hosts in
+a 70-second window** — that is too small a sample to draw a calibration
+conclusion from, and this report is deliberately conservative about sample
+size everywhere else. The only claim the data supports is narrower: no ring
+observed in this window reached the 120s deadline (max observed voluntary
+cancel was 82126ms, still under the cutoff), so the sweep itself is not
+firing late or misbehaving for these calls. Whether 120s is well-calibrated
+for real user patience — or whether it is effectively unreachable in
+practice because users always give up first — needs the same longer
+observation window called out below, not a judgement from this sample.
 **Needs more data**: a longer observation window (hours, not 70 seconds) is
 needed to see whether `calls_missed` is ever non-zero in practice, which
 would settle whether 120s is well-calibrated or effectively unreachable in
@@ -355,7 +382,7 @@ blocking: boolean;
 ```
 
 `db_detached_queries_total` increments for **every** query issued while
-`isDetached()` is true (`queryTiming.ts:230`, `telemetry.ts:678`), and
+`isDetached()` is true (`telemetry.ts`, checked from `queryTiming.ts`), and
 `runDetached` wraps *at least three unrelated call sites*, not just call
 persistence:
 
@@ -384,7 +411,7 @@ This is the load-bearing technical question, and the answer from the code is
 Postgres/Redis client calls (`callPersistence.ts:50-60`, `security.ts:182-189`,
 `stores/redis.ts` saves), which yield to the event loop while awaiting the
 network round trip exactly like their awaited counterparts do. Node's
-`monitorEventLoopDelay` (`telemetry.ts:358-359`) measures scheduling lag
+`monitorEventLoopDelay` (from Node's `perf_hooks`, wired up in `telemetry.ts`) measures scheduling lag
 between event-loop ticks — i.e. **synchronous** CPU work that never yields —
 not time spent waiting on I/O. A detached `await pool.query(...)` cannot by
 itself produce a 2009ms `event_loop_lag_max_ms` sample; only synchronous work
@@ -452,7 +479,7 @@ instead of by elimination.
 
 ### Why the gap exists
 
-`recordCallHeartbeat`/`handleCallConnected` (`callHandlers.ts:466-497`) show
+`recordCallHeartbeat`/`handleCallConnected` (`callHandlers.ts`) show
 the `in_call` transition is recorded by whichever instance's socket receives
 the *first* `call.connected` report — which, on a fleet, need not be the same
 instance that recorded the `accepted` transition (`calls_accepted`) for the
@@ -464,7 +491,7 @@ provenance split (`server/README.md:432-440`), but the two **derived**
 ratios do not:
 
 ```ts
-// server/src/telemetry.ts:760-765
+// server/src/telemetry.ts (in getSnapshot's derived block)
 const { calls_initiated, calls_in_call, calls_ended } = snap.counters;
 snap.derived.call_connect_rate =
   calls_initiated > 0 ? Number((calls_in_call / calls_initiated).toFixed(4)) : null;
@@ -495,25 +522,10 @@ per-instance figure.
 
 ### Proposed fix
 
-Two complementary changes:
+Two complementary changes, additive-first:
 
-1. **Annotate, don't just suppress.** Keep the ratios (they are still useful
-   as rough single-instance health signals when the fleet has one instance,
-   or during debugging), but ship the missing provenance alongside them,
-   mirroring the existing latency-histogram pattern:
-
-   ```ts
-   // server/src/telemetry.ts
-   snap.derived.call_connect_rate =
-     calls_initiated > 0 ? Number((calls_in_call / calls_initiated).toFixed(4)) : null;
-   snap.derived.call_connect_rate_note =
-     'numerator and denominator may be satisfied on different instances; ' +
-     'see call_setup_latency_shared / call_connect_latency_shared for the ' +
-     'per-instance-observed subset';
-   ```
-
-   or, more usefully, compute a **second**, provably-single-instance variant
-   from the counters that already carry provenance:
+1. **Ship a second, provably-single-instance variant as the primary fix.**
+   Compute it from counters that already carry provenance:
 
    ```ts
    snap.derived.call_connect_rate_local_only =
@@ -525,35 +537,68 @@ Two complementary changes:
    using `call_connect_latency_shared` (a count of connect-latency samples
    this instance actually recorded) as the numerator instead of the
    fleet-relative `calls_in_call`, so the ratio's two terms are both
-   guaranteed local to the reporting instance.
+   guaranteed local to the reporting instance — additive, no existing field
+   renamed or removed.
 
-2. **Rename the existing fields** to make the fleet-relative nature explicit
-   rather than implicit — e.g. `call_connect_rate` → `call_connect_rate_fleet_relative`
-   — so a dashboard built against the old name breaks loudly (a schema change
-   a reader notices) instead of silently misinterpreting a per-instance read.
+   **This was checked before shipping and does not hold.**
+   `calls_accepted` increments only on the instance that itself handled the
+   `accepted` transition (`recordAcceptedCall`), but
+   `call_connect_latency_shared` can increment on an instance that never saw
+   the accept at all — that is the entire purpose of the shared-timestamp
+   path (`measureSinceAnswered` in `server/src/lib/callLatency.ts`), which
+   exists precisely so connect latency can still be observed for a call this
+   instance only saw the `in_call` side of. So the numerator is not
+   guaranteed to be a subset of the denominator's calls, and this ratio can
+   exceed 1 for the same structural reason `call_completion_rate` already
+   does. **Per the "if it is not actually skew-free, do not ship it" rule:
+   this derived field is not shipped.** `server/README.md` documents the
+   reasoning instead (see below), and no dedicated same-instance counter
+   currently exists that would fix it — building one (e.g. counting accepts
+   this instance also later saw connect, keyed by call id) is a real option
+   but is out of scope for this pass; it would need its own correctness
+   argument before shipping, for the same reason this one didn't survive
+   scrutiny.
 
-**Blast radius:** additive/renaming change to the `derived` block of
-`/metrics`. Renaming is a breaking change for any existing scraper/dashboard
-keyed on the old field names, which is intentional here — anyone currently
-trusting `call_connect_rate` per-instance is trusting a number this
-investigation shows to be unreliable, and a silent behavioural-only fix would
-leave that trust in place. If a non-breaking rollout is required, ship the
-new field names alongside the old ones for one release before removing the
-old ones.
+   Separately, an **annotation-only** option remains available and is
+   non-breaking as prose: adding a `_note` string field to `/metrics` was
+   considered and dropped — a sentence of English does not survive
+   Prometheus's text-exposition translation of a JSON payload into typed
+   metric lines, so it would either be silently dropped or mis-typed as a
+   metric itself. That explanation belongs in `server/README.md`, not in the
+   scrape payload, and has been added there.
+
+2. **A later, possible step: rename the existing fields** to make the
+   fleet-relative nature explicit rather than implicit — e.g.
+   `call_connect_rate` → `call_connect_rate_fleet_relative` — so a dashboard
+   built against the old name breaks loudly instead of silently
+   misinterpreting a per-instance read. **This is demoted from the primary
+   recommendation.** Breaking a metrics contract is how observability
+   disappears mid-incident: a dashboard that suddenly reads `null`/`NaN` for
+   a renamed field during exactly the kind of multi-instance investigation
+   this report describes is worse than a documented caveat. If a rename is
+   pursued later, ship the new name alongside the old one for at least one
+   release before removing the old one, and prefer documentation
+   (`server/README.md`'s provenance table) as the primary mitigation until
+   there is a trustworthy local-only replacement to point dashboards at.
+
+**Blast radius:** documentation-only for this pass (updated `server/README.md`
+provenance table); no new derived field shipped, no rename performed, no
+wire-format change. The rename remains available as a possible, clearly
+breaking, future step and is not implemented here.
 
 ---
 
 ## Instrumentation gaps (would have made 1, 3 and 5 diagnosable without reading source)
 
-| Gap | Would have settled |
-| --- | --- |
-| `rtc_relays_other` collapses `call.media-state` heartbeats and real state-change toggles into one bucket (§1) | Whether "other" is heartbeat load (proportional to connected-minutes) or a genuine unexpected-event/loop bug, without opening `telemetry.ts` |
-| `signaling_errors_by_code` has no per-triggering-event breakdown, even though `acknowledgeError` already logs the event name (§2) | Whether the 5 `stale_call_state` acks are stale candidates (expected), stale offers/answers (a real race), or stale media-state (a regression of the fixed bug) |
-| No metric distinguishes "a ring ended because the timeout fired" from "a ring ended because a user acted first, just before the timeout would have" (§3) | Whether `DEFAULT_RINGING_TIMEOUT_MS` is well-calibrated or effectively unreachable — currently only inferable by comparing `call_ring_duration_ms.max` against the (unexposed-in-metrics) configured timeout value |
-| `/metrics` does not expose the configured timeout values themselves (`DEFAULT_RINGING_TIMEOUT_MS`, `DEFAULT_MEDIA_CONNECT_TIMEOUT_MS`, etc.) | Same as above — a scrape currently cannot even state what the sweep's threshold *is* without reading `config.ts`, so "82s ring, is that close to timing out?" is unanswerable from `/metrics` alone |
-| `dbQueries` per-operation breakdown (`telemetry.ts:768-`) does not carry the `blocking` dimension already computed per-record | Whether the outlier `pg insert maxMs 176.61` / `redis scan maxMs 142.84` samples were detached (nobody's request paid for them) or blocking (a user-facing operation did) — currently ambiguous from the exposed breakdown even though the underlying `QueryTimingRecord.blocking` field already has the answer |
-| No synchronous-CPU-time histogram exists at all (§4) | Whether `event_loop_lag_max_ms` spikes correlate with a specific synchronous code path (e.g. the audit-log array `shift()`, JSON stringify bursts) rather than with query *volume*, which this report could only rule out, not confirm a replacement cause for |
-| `calls_accepted`/`calls_in_call`/`calls_ended` used in derived ratios carry no same-instance guarantee (§5) | Whether `call_connect_rate` / `call_completion_rate` describe this instance's calls or a fleet-relative artefact — currently indistinguishable without independently checking the `_shared`/`_local` latency counters |
+| Gap | Would have settled | Status |
+| --- | --- | --- |
+| `rtc_relays_other` collapses `call.media-state` heartbeats and real state-change toggles into one bucket (§1) | Whether "other" is heartbeat load (proportional to connected-minutes) or a genuine unexpected-event/loop bug, without opening `telemetry.ts` | **Closed** — `rtc_relays_media_heartbeat` / `rtc_relays_media_state_change` shipped; `rtc_relays_other` now a true unexpected-event bucket |
+| `signaling_errors_by_code` has no per-triggering-event breakdown, even though `acknowledgeError` already logs the event name (§2) | Whether the 5 `stale_call_state` acks are stale candidates (expected), stale offers/answers (a real race), or stale media-state (a regression of the fixed bug) | **Closed** — `signaling_errors_stale_call_state_by_event` shipped |
+| No metric distinguishes "a ring ended because the timeout fired" from "a ring ended because a user acted first, just before the timeout would have" (§3) | Whether `DEFAULT_RINGING_TIMEOUT_MS` is well-calibrated or effectively unreachable — currently only inferable by comparing `call_ring_duration_ms.max` against the (unexposed-in-metrics) configured timeout value | **Open** — not addressed this pass; `missed` vs `cancelled` is already distinguishable by end reason, but no metric surfaces "how close to timing out" a resolved ring was |
+| `/metrics` does not expose the configured timeout values themselves (`DEFAULT_RINGING_TIMEOUT_MS`, `DEFAULT_MEDIA_CONNECT_TIMEOUT_MS`, etc.) | Same as above — a scrape currently cannot even state what the sweep's threshold *is* without reading `config.ts`, so "82s ring, is that close to timing out?" is unanswerable from `/metrics` alone | **Open** — not addressed this pass |
+| `dbQueries` per-operation breakdown does not carry the `blocking` dimension already computed per-record | Whether the outlier `pg insert maxMs 176.61` / `redis scan maxMs 142.84` samples were detached (nobody's request paid for them) or blocking (a user-facing operation did) — currently ambiguous from the exposed breakdown even though the underlying `QueryTimingRecord.blocking` field already has the answer | **Closed** — each `dbQueries` entry now carries a `detached` count |
+| No synchronous-CPU-time histogram exists at all (§4) | Whether `event_loop_lag_max_ms` spikes correlate with a specific synchronous code path (e.g. the audit-log array `shift()`, JSON stringify bursts) rather than with query *volume*, which this report could only rule out, not confirm a replacement cause for | **Deferred** — design considerations documented in §4 and the PR description; tracked as a separate follow-up so it does not hold back the cheaper fixes above |
+| `calls_accepted`/`calls_in_call`/`calls_ended` used in derived ratios carry no same-instance guarantee (§5) | Whether `call_connect_rate` / `call_completion_rate` describe this instance's calls or a fleet-relative artefact — currently indistinguishable without independently checking the `_shared`/`_local` latency counters | **Open, documented** — the obvious same-instance replacement (`call_connect_latency_shared / calls_accepted`) was checked and found not to be skew-free either (see §5), so nothing was shipped; `server/README.md` now states which existing ratios are fleet-relative so readers are not misled in the meantime |
 
 ---
 
