@@ -19,6 +19,8 @@ import { verboseLog } from '../../lib/verbose.ts';
 import { decideRoomJoin, normaliseReportedActiveCallIds } from './state.ts';
 import { leaveRoom, logCallCorrelation, scheduleParticipantDisconnectCleanup } from './lifecycle.ts';
 
+const SOCKET_SESSION_RECHECK_MS = 1000;
+
 function registerSocketHandlers(
   io: import('socket.io').Server,
   { state, ringingTimeoutMs, participantDisconnectGraceMs = DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS }: {
@@ -63,9 +65,15 @@ function registerSocketHandlers(
         next();
         return;
       }
+      const lastCheckedAt = socket.data.sessionCheckedAt;
+      if (typeof lastCheckedAt === 'number' && Date.now() - lastCheckedAt < SOCKET_SESSION_RECHECK_MS) {
+        next();
+        return;
+      }
       state.sessionState.get(sessionId)
         .then((session) => {
           if (session) {
+            socket.data.sessionCheckedAt = Date.now();
             next();
             return;
           }

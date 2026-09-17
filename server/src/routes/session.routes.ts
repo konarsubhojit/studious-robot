@@ -57,6 +57,32 @@ async function reauthenticationRequiredForDevice({
   return !Number.isFinite(authTimeMs) || authTimeMs <= revokedAtMs;
 }
 
+function sessionRateLimitKey(req: express.Request): string {
+  const requestedUserId = normaliseId(req.body?.userId) ?? 'unknown-user';
+  const requestedDeviceId = normaliseId(req.body?.deviceId) ?? 'unknown-device';
+  return `${requestedUserId}:${requestedDeviceId}:${req.ip ?? 'unknown-ip'}`;
+}
+
+function rejectRateLimitedSession(
+  state: import('../stores/contracts.ts').ServerState,
+  res: express.Response,
+  key: string,
+  actor?: string | null
+): boolean {
+  const rateCheck = state.sessionRateLimiter.check(key);
+  if (rateCheck.allowed) return false;
+  state.auditLog.record({
+    event: 'session.rate_limited',
+    actor: actor ?? null,
+    outcome: 'rejected',
+  });
+  res.status(429).json({
+    error: 'too many session requests',
+    retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
+  });
+  return true;
+}
+
 /**
  * Session lifecycle: create, inspect, and rotate signaling sessions.
  *
@@ -71,6 +97,9 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
   const router = express.Router();
 
   router.post(API_ROUTES.SESSION, async (req, res) => {
+    if (rejectRateLimitedSession(state, res, sessionRateLimitKey(req), normaliseId(req.body?.userId))) {
+      return;
+    }
     let externalIdentity;
     try {
       externalIdentity = verifyIdToken
@@ -186,6 +215,9 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
+    if (rejectRateLimitedSession(state, res, `refresh:${session.userId}:${session.deviceId}`, session.userId)) {
+      return;
+    }
 
     res.status(200).json(session);
   });
@@ -217,6 +249,9 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       platform: session.platform,
       ...issueSessionTimestamps(sessionTtlMs),
     };
+    // The pair of checks brackets the shared-store write: if a remote revocation
+    // lands while refresh is rotating the token, revocation wins and any freshly
+    // saved session is removed before the client can use it.
     if (await reauthenticationRequiredForDevice({
       state,
       userId: session.userId,

@@ -168,12 +168,9 @@ async function resolveSocketIdentityAsync(
   const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth ?? {} : {};
   const sessionId = normaliseId(auth.sessionId);
   const localSession = sessionId ? state.sessions.get(sessionId) : null;
+  const shouldReadShared = !localSession && Boolean(sessionId && state.sessionState);
   const sharedSession =
-    sessionId && state.sessionState ? await state.sessionState.get(sessionId) : null;
-  if (state.sessionState && sessionId && !sharedSession && localSession) {
-    state.sessions.delete(sessionId);
-    state.userSessions.get(localSession.userId)?.delete(sessionId);
-  }
+    shouldReadShared && sessionId && state.sessionState ? await state.sessionState.get(sessionId) : null;
   if (sharedSession && sessionId) {
     state.sessions.set(sessionId, sharedSession);
   }

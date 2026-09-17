@@ -330,6 +330,12 @@ const DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
  */
 const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Per-subject cap for session mint/refresh attempts. Override with `SESSION_RATE_LIMIT`. */
+const DEFAULT_SESSION_RATE_LIMIT = 30;
+
+/** Window for session mint/refresh rate limiting. Override with `SESSION_RATE_WINDOW_MS`. */
+const DEFAULT_SESSION_RATE_WINDOW_MS = 60_000;
+
 /**
  * Upper bound applied to a shared-store session key that carries no explicit
  * expiry (`SESSION_TTL_MS=0`).
@@ -444,6 +450,8 @@ export {
   DEFAULT_STALE_DEVICE_MAX_AGE_MS,
   DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS,
   DEFAULT_SESSION_TTL_MS,
+  DEFAULT_SESSION_RATE_LIMIT,
+  DEFAULT_SESSION_RATE_WINDOW_MS,
   DEFAULT_SESSION_SWEEP_INTERVAL_MS,
   SHARED_SESSION_MAX_TTL_MS,
   SHARED_CALL_MAX_TTL_MS,

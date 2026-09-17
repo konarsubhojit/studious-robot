@@ -169,6 +169,7 @@ export type ServerState = Stores & {
   db: import('../../db/client.ts').Database | null;
   auditLog: AuditLog;
   callInitRateLimiter: RateLimiter;
+  sessionRateLimiter: RateLimiter;
   rtcRateLimiter: RateLimiter;
   turnCredentialsRateLimiter: RateLimiter;
   messageSendRateLimiter: RateLimiter;
