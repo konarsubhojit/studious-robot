@@ -28,6 +28,13 @@ jobs:
     name: Build APK(s)
     runs-on: ubuntu-latest
 
+    # A successful run takes well under 20 minutes. Without a timeout a stuck
+    # Gradle JVM (an out-of-memory daemon that never exits, for example) holds
+    # the runner for GitHub's default 6-hour job limit before being cancelled,
+    # so the failure is both invisible and expensive. Bound the job, and the
+    # build step more tightly still, so the remaining steps report the failure.
+    timeout-minutes: 60
+
     defaults:
       run:
         working-directory: mobile
@@ -117,6 +124,7 @@ jobs:
       # for local builds via gradle.properties; CI overrides with the flag so the
       # build is 2-4× faster without affecting local or production distribution.
       - name: Assemble release APK
+        timeout-minutes: 40
         env:
           SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
           ROOM_ID: ${{ secrets.ROOM_ID }}

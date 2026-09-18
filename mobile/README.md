@@ -539,6 +539,14 @@ guards the configuration itself, and
 `android/app/build/outputs/mapping/release/` holds the R8 mapping plus the
 `resources.txt` report listing every resource that was dropped.
 
+R8 loads the entire class graph into the Gradle JVM, so `org.gradle.jvmargs` in
+`android/gradle.properties` allots it 4 GiB of heap and 1 GiB of metaspace —
+well above the React Native template's 2 GiB/512 MiB, which is not enough for
+this dependency set. An undersized JVM does not fail cleanly: R8 dies and the
+daemon then spins on `OutOfMemoryError: Metaspace` without exiting, so the build
+hangs. `-XX:+ExitOnOutOfMemoryError` is set as a backstop, and the CI job caps
+itself with `timeout-minutes` rather than relying on GitHub's 6-hour limit.
+
 ## Other scripts
 
 ```bash

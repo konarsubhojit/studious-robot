@@ -15,6 +15,23 @@ const keepXml = readFileSync(
   path.join(ANDROID_DIR, 'app', 'src', 'main', 'res', 'raw', 'keep_wetalk.xml'),
   'utf8',
 );
+const gradleProperties = readFileSync(path.join(ANDROID_DIR, 'gradle.properties'), 'utf8');
+
+/** `org.gradle.jvmargs`, split into individual flags. */
+function jvmArgs(): string[] {
+  const match = gradleProperties.match(/^org\.gradle\.jvmargs=(.*)$/m);
+  if (!match) throw new Error('no org.gradle.jvmargs in gradle.properties');
+  return match[1].trim().split(/\s+/);
+}
+
+/** A `-Xmx`/`-XX:MaxMetaspaceSize` size, in MiB. */
+function sizeMiB(flag: string): number {
+  const arg = jvmArgs().find(candidate => candidate.startsWith(flag));
+  if (!arg) throw new Error(`no ${flag} in org.gradle.jvmargs`);
+  const match = arg.slice(flag.length).match(/^(\d+)([gGmM])$/);
+  if (!match) throw new Error(`cannot parse size from ${arg}`);
+  return Number(match[1]) * (match[2].toLowerCase() === 'g' ? 1024 : 1);
+}
 
 describe('android release shrinking', () => {
   test('the release build shrinks code and resources', () => {
@@ -57,5 +74,15 @@ describe('android release shrinking', () => {
     expect(existsSync(path.join(ANDROID_DIR, 'app', 'src', 'main', 'res', 'raw', 'keep.xml'))).toBe(
       false,
     );
+  });
+
+  test('the Gradle JVM is sized for R8', () => {
+    // R8 holds the whole class graph in memory. Undersized, it does not fail
+    // cleanly: the daemon spins on OutOfMemoryError: Metaspace and never
+    // exits, so the build hangs until CI cancels the job hours later.
+    expect(sizeMiB('-Xmx')).toBeGreaterThanOrEqual(4096);
+    expect(sizeMiB('-XX:MaxMetaspaceSize=')).toBeGreaterThanOrEqual(1024);
+    // The backstop for that hang: kill the JVM rather than thrash in it.
+    expect(jvmArgs()).toContain('-XX:+ExitOnOutOfMemoryError');
   });
 });
