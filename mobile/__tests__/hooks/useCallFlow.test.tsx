@@ -185,6 +185,7 @@ jest.mock('../../src/webrtcConfig', () => ({
   // The real parser: the point of these tests is that the TURN summary the
   // call logs matches the list handed to RTCPeerConnection.
   getTurnServerEndpoints: jest.requireActual('../../src/webrtcConfig').getTurnServerEndpoints,
+  VIDEO_ADAPTATION_CONSTRAINTS: jest.requireActual('../../src/webrtcConfig').VIDEO_ADAPTATION_CONSTRAINTS,
   applyBitrateConstraints: jest.fn(async () => {}),
   normalizeIceTransportPolicy: jest.fn(value => (value === 'relay' ? 'relay' : 'all')),
   resetIceServersForCallCache: jest.fn(),
@@ -2844,12 +2845,9 @@ describe('useCallFlow chat', () => {
       }
     });
 
-    const sendPromise = act(async () => {
+    await act(async () => {
       await resultRef.current.sendMessage('bob', 'hi there');
     });
-    // Immediately after invocation (before the ack resolves within the same
-    // act batch) the optimistic message should already be present.
-    await sendPromise;
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -3241,7 +3239,9 @@ describe('useCallFlow chat', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    tree.update(<TestHook resultRef={resultRef} />);
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
     expect(resultRef.current.isPlacingCall).toBe(true);
     expect(resolveMedia).toBeDefined();
 
@@ -4153,7 +4153,7 @@ describe('useCallFlow chat', () => {
       // comes back, rather than being lost with the reconnect.
       await act(async () => {
         jest.setSystemTime(Date.now() + 31000);
-        await connectHandler?.();
+        connectHandler?.();
         await Promise.resolve();
       });
       expect(heartbeatEmits(emits)).toHaveLength(before + 1);
@@ -4316,7 +4316,10 @@ describe('useCallFlow chat', () => {
       const beforeConnect = heartbeatEmits(emits).length;
       expect(beforeConnect).toBeGreaterThanOrEqual(beforeReconnect);
       await act(async () => {
-        await connectHandler?.();
+        connectHandler?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
         jest.advanceTimersByTime(30000);
         await Promise.resolve();
       });
@@ -4729,7 +4732,10 @@ describe('useCallFlow chat', () => {
       socketMock.connected = true;
       const connectHandler = getSocketHandler('connect');
       await act(async () => {
-        await connectHandler?.();
+        connectHandler?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
         jest.advanceTimersByTime(1000);
         await Promise.resolve();
       });
@@ -4774,7 +4780,10 @@ describe('useCallFlow chat', () => {
       socketMock.connected = true;
       const connectHandler = getSocketHandler('connect');
       await act(async () => {
-        await connectHandler?.();
+        connectHandler?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
         jest.advanceTimersByTime(5000);
         await Promise.resolve();
       });
@@ -5270,7 +5279,7 @@ describe('useCallFlow answer path', () => {
     await act(async () => {
       const accepted = resultRef.current.acceptIncomingCall();
       await Promise.resolve();
-      jest.advanceTimersByTime(6000);
+      await jest.advanceTimersByTimeAsync(6000);
       await accepted;
     });
     act(() => {
