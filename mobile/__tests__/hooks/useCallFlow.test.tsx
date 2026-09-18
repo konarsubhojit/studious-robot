@@ -185,6 +185,7 @@ jest.mock('../../src/webrtcConfig', () => ({
   // The real parser: the point of these tests is that the TURN summary the
   // call logs matches the list handed to RTCPeerConnection.
   getTurnServerEndpoints: jest.requireActual('../../src/webrtcConfig').getTurnServerEndpoints,
+  VIDEO_ADAPTATION_CONSTRAINTS: jest.requireActual('../../src/webrtcConfig').VIDEO_ADAPTATION_CONSTRAINTS,
   applyBitrateConstraints: jest.fn(async () => {}),
   normalizeIceTransportPolicy: jest.fn(value => (value === 'relay' ? 'relay' : 'all')),
   resetIceServersForCallCache: jest.fn(),
@@ -313,12 +314,25 @@ function TestHook({ resultRef, options }: any) {
   return null;
 }
 
-function renderHook(options?: any) {
+async function flushAsyncEffects() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+async function renderHook(options?: any) {
   const resultRef: { current: any; } = { current: null };
   let tree: any;
-  act(() => {
+  await act(async () => {
     tree = renderer.create(<TestHook resultRef={resultRef} options={options} />);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
   });
+  await flushAsyncEffects();
   return { resultRef, tree };
 }
 
@@ -340,38 +354,39 @@ beforeEach(() => {
 });
 
 describe('useCallFlow', () => {
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAsyncEffects();
     jest.clearAllMocks();
     jest.useRealTimers();
     mockChurnMessagingIdentity = false;
     delete ((global as any)).fetch;
   });
 
-  test('initialises with idle callPhase', () => {
-    const { resultRef } = renderHook();
+  test('initialises with idle callPhase', async () => {
+    const { resultRef } = await renderHook();
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
     expect(resultRef.current.isInCall).toBe(false);
     expect(resultRef.current.activeCall).toBeNull();
     expect(resultRef.current.incomingCall).toBeNull();
   });
 
-  test('initialises connectionQuality with no-link defaults', () => {
-    const { resultRef } = renderHook();
+  test('initialises connectionQuality with no-link defaults', async () => {
+    const { resultRef } = await renderHook();
     expect(resultRef.current.connectionQuality).toEqual({
       bars: 0,
       label: 'No link',
     });
   });
 
-  test('exposes identity setters', () => {
-    const { resultRef } = renderHook();
+  test('exposes identity setters', async () => {
+    const { resultRef } = await renderHook();
     expect(typeof resultRef.current.setUserId).toBe('function');
     expect(typeof resultRef.current.setCalleeId).toBe('function');
     expect(typeof resultRef.current.setSignalingUrl).toBe('function');
   });
 
-  test('exposes all required call action callbacks', () => {
-    const { resultRef } = renderHook();
+  test('exposes all required call action callbacks', async () => {
+    const { resultRef } = await renderHook();
     const required = [
       'placeCall',
       'cancelOutgoingCall',
@@ -385,8 +400,8 @@ describe('useCallFlow', () => {
     }
   });
 
-  test('exposes all required in-call control callbacks', () => {
-    const { resultRef } = renderHook();
+  test('exposes all required in-call control callbacks', async () => {
+    const { resultRef } = await renderHook();
     const required = [
       'handleMuteToggle',
       'handleVideoToggle',
@@ -401,8 +416,8 @@ describe('useCallFlow', () => {
     }
   });
 
-  test('wires the Picture-in-Picture window controls to mute and hang up', () => {
-    const { resultRef } = renderHook();
+  test('wires the Picture-in-Picture window controls to mute and hang up', async () => {
+    const { resultRef } = await renderHook();
     const compactOptions = (useCompactCallView as jest.Mock).mock.calls.at(-1)?.[1];
 
     expect(compactOptions.isMuted).toBe(false);
@@ -418,8 +433,8 @@ describe('useCallFlow', () => {
     });
   });
 
-  test('setUserId updates the userId state', () => {
-    const { resultRef, tree } = renderHook();
+  test('setUserId updates the userId state', async () => {
+    const { resultRef, tree } = await renderHook();
     act(() => {
       resultRef.current.setUserId('alice');
     });
@@ -427,6 +442,7 @@ describe('useCallFlow', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
     expect(resultRef.current.userId).toBe('alice');
   });
 
@@ -437,7 +453,7 @@ describe('useCallFlow', () => {
       json: async () => ({ sessionId: 'sess-2', userId: 'alice' }),
     })) as any);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       await resultRef.current.registerUser({
         userId: 'alice',
@@ -449,7 +465,7 @@ describe('useCallFlow', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -474,7 +490,7 @@ describe('useCallFlow', () => {
       json: async () => ({ code: 'identity_claimed' }),
     })) as any);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     let caught: any;
     await act(async () => {
       await resultRef.current
@@ -491,7 +507,7 @@ describe('useCallFlow', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -512,7 +528,7 @@ describe('useCallFlow', () => {
       json: async () => ({ sessionId: 'sess-9', userId: 'alice' }),
     })) as any);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       await resultRef.current.registerUser({
         userId: 'alice',
@@ -537,7 +553,7 @@ describe('useCallFlow', () => {
       throw new Error('network down');
     }) as any);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       await resultRef.current
         .registerUser({
@@ -556,8 +572,8 @@ describe('useCallFlow', () => {
     expect(resultRef.current.status.severity).toBe('error');
   });
 
-  test('setCalleeId updates the calleeId state', () => {
-    const { resultRef, tree } = renderHook();
+  test('setCalleeId updates the calleeId state', async () => {
+    const { resultRef, tree } = await renderHook();
     act(() => {
       resultRef.current.setCalleeId('bob');
     });
@@ -568,7 +584,7 @@ describe('useCallFlow', () => {
   });
 
   test('placeCall sets error status when calleeId is empty', async () => {
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       await resultRef.current.placeCall();
     });
@@ -579,7 +595,7 @@ describe('useCallFlow', () => {
   });
 
   test('placeCall sets error status when userId is empty', async () => {
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     act(() => {
       resultRef.current.setCalleeId('bob');
     });
@@ -617,30 +633,30 @@ describe('useCallFlow', () => {
     }
   });
 
-  test('initialises callHistory as an empty array', () => {
-    const { resultRef } = renderHook();
+  test('initialises callHistory as an empty array', async () => {
+    const { resultRef } = await renderHook();
     expect(Array.isArray(resultRef.current.callHistory)).toBe(true);
     expect(resultRef.current.callHistory).toHaveLength(0);
   });
 
-  test('initialises missedCallCount as 0', () => {
-    const { resultRef } = renderHook();
+  test('initialises missedCallCount as 0', async () => {
+    const { resultRef } = await renderHook();
     expect(resultRef.current.missedCallCount).toBe(0);
   });
 
-  test('exposes markMissedCallsRead and fetchCallHistory as functions', () => {
-    const { resultRef } = renderHook();
+  test('exposes markMissedCallsRead and fetchCallHistory as functions', async () => {
+    const { resultRef } = await renderHook();
     expect(typeof resultRef.current.markMissedCallsRead).toBe('function');
     expect(typeof resultRef.current.fetchCallHistory).toBe('function');
   });
 
-  test('exposes searchUsers as a function', () => {
-    const { resultRef } = renderHook();
+  test('exposes searchUsers as a function', async () => {
+    const { resultRef } = await renderHook();
     expect(typeof resultRef.current.searchUsers).toBe('function');
   });
 
   test('searchUsers resolves to an empty array when there is no session', async () => {
-    const { resultRef } = renderHook();
+    const { resultRef } = await renderHook();
     let users;
     await act(async () => {
       users = await resultRef.current.searchUsers('bob');
@@ -685,7 +701,7 @@ describe('useCallFlow', () => {
       return { ok: true, status: 200, json: async () => ({}) };
     }) as any);
 
-    const { resultRef } = renderHook();
+    const { resultRef } = await renderHook();
     // Setting the userId triggers the presence-connect effect, which mints a
     // session (s1) via POST /session.
     await act(async () => {
@@ -728,7 +744,7 @@ describe('useCallFlow', () => {
       });
     }) as any);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
 
     act(() => {
       resultRef.current.setCalleeId('alice');
@@ -736,6 +752,7 @@ describe('useCallFlow', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
     await act(async () => {
       jest.advanceTimersByTime(400);
     });
@@ -787,8 +804,8 @@ describe('useCallFlow', () => {
     });
   });
 
-  test('markMissedCallsRead is safe to call on an empty history', () => {
-    const { resultRef, tree } = renderHook();
+  test('markMissedCallsRead is safe to call on an empty history', async () => {
+    const { resultRef, tree } = await renderHook();
     act(() => {
       resultRef.current.markMissedCallsRead();
     });
@@ -799,8 +816,8 @@ describe('useCallFlow', () => {
     expect(resultRef.current.missedCallCount).toBe(0);
   });
 
-  test('dismissCallSummary clears callSummary', () => {
-    const { resultRef, tree } = renderHook();
+  test('dismissCallSummary clears callSummary', async () => {
+    const { resultRef, tree } = await renderHook();
     // callSummary starts null; dismissing a null summary is safe.
     act(() => {
       resultRef.current.dismissCallSummary();
@@ -811,8 +828,8 @@ describe('useCallFlow', () => {
     expect(resultRef.current.callSummary).toBeNull();
   });
 
-  test('presentation updates preserve action identity and do not change call phase', () => {
-    const { resultRef, tree } = renderHook();
+  test('presentation updates preserve action identity and do not change call phase', async () => {
+    const { resultRef, tree } = await renderHook();
     const { updateStatus, dismissCallSummary, handleSwapStreams } = resultRef.current;
 
     act(() => {
@@ -858,13 +875,13 @@ describe('rehydrateCallFromPush', () => {
     delete ((global as any)).fetch;
   });
 
-  test('exposes rehydrateCallFromPush as a function', () => {
-    const { resultRef } = renderHook();
+  test('exposes rehydrateCallFromPush as a function', async () => {
+    const { resultRef } = await renderHook();
     expect(typeof resultRef.current.rehydrateCallFromPush).toBe('function');
   });
 
   test('defers rehydration and stores pendingPushCallId when userId is not set', async () => {
-    const { resultRef } = renderHook();
+    const { resultRef } = await renderHook();
     // userId is empty – rehydrateCallFromPush should not call fetch yet
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-123');
@@ -886,7 +903,7 @@ describe('rehydrateCallFromPush', () => {
         json: async () => ({}),
       });
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
 
     // Await so the presence effect (createOrGetSession → fetch /session) completes.
     await act(async () => {
@@ -895,6 +912,7 @@ describe('rehydrateCallFromPush', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-does-not-exist');
@@ -927,13 +945,14 @@ describe('rehydrateCallFromPush', () => {
         json: async () => fakeCall,
       });
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-456');
@@ -968,13 +987,14 @@ describe('rehydrateCallFromPush', () => {
         json: async () => fakeCall,
       });
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-789');
@@ -1010,13 +1030,14 @@ describe('rehydrateCallFromPush', () => {
         json: async () => fakeCall,
       });
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-declined');
@@ -1050,13 +1071,14 @@ describe('rehydrateCallFromPush', () => {
         json: async () => fakeCall,
       });
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-ended');
@@ -1093,13 +1115,14 @@ describe('rehydrateCallFromPush', () => {
         json: async () => fakeCall,
       });
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-accepted');
@@ -1134,13 +1157,14 @@ describe('rehydrateCallFromPush', () => {
         json: async () => fakeCall,
       });
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-in-call');
@@ -1167,13 +1191,14 @@ describe('rehydrateCallFromPush', () => {
         json: async () => ({}),
       });
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.rehydrateCallFromPush('call-server-error');
@@ -1237,7 +1262,7 @@ describe('useCallFlow handleCameraSwitch hardening', () => {
     const { mediaDevices } = require('react-native-webrtc');
     (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue(stream);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       await resultRef.current.startLocalPreview();
     });
@@ -1273,7 +1298,7 @@ describe('useCallFlow handleCameraSwitch hardening', () => {
       .mockResolvedValueOnce(stream) // startLocalPreview
       .mockResolvedValueOnce(newStream); // camera switch fallback
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       await resultRef.current.startLocalPreview();
     });
@@ -1334,7 +1359,7 @@ describe('useCallFlow handleCameraSwitch hardening', () => {
       getStats: jest.fn().mockResolvedValue(new Map()),
     }));
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       await resultRef.current.startLocalPreview();
     });
@@ -1402,7 +1427,7 @@ describe('useCallFlow incoming-call ringing', () => {
       json: async () => ({ sessionId: 'sess-ring', userId: 'alice' }),
     })) as any);
 
-    const { resultRef, tree } = renderHook(options);
+    const { resultRef, tree } = await renderHook(options);
     // Setting userId triggers the presence effect → createOrGetSession → connectSocket.
     await act(async () => {
       resultRef.current.setUserId('alice');
@@ -1411,7 +1436,7 @@ describe('useCallFlow incoming-call ringing', () => {
       tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
     // Flush async socket-connection work.
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
@@ -1432,7 +1457,7 @@ describe('useCallFlow incoming-call ringing', () => {
       await handler({ call: fakeCall });
     });
     // Flush microtask queue so the async showIncomingCallUi resolves.
-    await act(async () => {});
+    await flushAsyncEffects();
 
     const { displayIncomingCall } = require('../../src/callKeep');
     expect(displayIncomingCall).toHaveBeenCalledTimes(1);
@@ -1455,7 +1480,7 @@ describe('useCallFlow incoming-call ringing', () => {
       act(() => {
         tree.update(<TestHook resultRef={resultRef} />);
       });
-      await act(async () => {});
+      await flushAsyncEffects();
     }
 
     expect(io).toHaveBeenCalledTimes(1);
@@ -1473,6 +1498,7 @@ describe('useCallFlow incoming-call ringing', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.INCOMING_RINGING);
     expect(resultRef.current.incomingCall).toEqual(fakeCall);
@@ -1487,11 +1513,11 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await handler({ call: fakeCall });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     await act(async () => {
       await handler({ call: fakeCall });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     const { displayIncomingCall } = require('../../src/callKeep');
     expect(displayIncomingCall).toHaveBeenCalledTimes(1);
@@ -1519,7 +1545,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await handler({ call: fakeCall });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     expect(startIncomingRingtone).toHaveBeenCalledTimes(1);
   });
@@ -1536,7 +1562,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await handler({ call: { callId: 'call-silent', callerId: 'iris' } });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     const { displayIncomingCall } = require('../../src/callKeep');
     expect(displayIncomingCall).toHaveBeenCalled();
@@ -1553,7 +1579,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await handler({ call: { callId: 'call-buzz', callerId: 'ivan' } });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     expect(triggerHaptic).toHaveBeenCalledWith('incomingRing');
   });
@@ -1569,7 +1595,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await handler({ call: { callId: 'call-ck', callerId: 'frank' } });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     expect(startIncomingRingtone).not.toHaveBeenCalled();
   });
@@ -1733,7 +1759,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await handler({ call: fakeCall });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -1776,7 +1802,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await handler({ call: fakeCall });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -1818,7 +1844,7 @@ describe('useCallFlow incoming-call ringing', () => {
         call: { callId: 'call-state', callerId: 'irene' },
       });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -1875,7 +1901,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await incomingHandler({ call: { callId: 'call-live', callerId: 'irene' } });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     const stateHandler = getSocketHandler('call.state_changed');
     await act(async () => {
@@ -1902,7 +1928,7 @@ describe('useCallFlow incoming-call ringing', () => {
         call: { callId: 'call-ended', callerId: 'joe' },
       });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     const stateHandler = getSocketHandler('call.state_changed');
     await act(async () => {
@@ -2042,7 +2068,7 @@ describe('useCallFlow incoming-call ringing', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
     // Flush the replay effect and the async acceptIncomingCall it triggers.
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -2341,7 +2367,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await act(async () => {
       await incomingHandler({ call: { callId: 'call-shared', callerId: 'irene' } });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -2434,14 +2460,14 @@ describe('useCallFlow session lifecycle', () => {
       json: async () => ({ sessionId: 'sess-stale', userId: 'alice' }),
     })) as any);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -2468,7 +2494,7 @@ describe('useCallFlow session lifecycle', () => {
     await act(async () => {
       await handler({ sessionId: 'sess-stale' });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     // A new session was created and a second socket connection established.
     expect(global.fetch).toHaveBeenCalledWith(
@@ -2529,7 +2555,7 @@ describe('useCallFlow session lifecycle', () => {
     await act(async () => {
       await handler({ sessionId: 'sess-stale' });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     expect(ensureCallPermissions).toHaveBeenCalledTimes(1);
   });
@@ -2567,14 +2593,14 @@ describe('useCallFlow chat', () => {
       json: async () => ({ sessionId: 'sess-chat', userId: 'alice' }),
     })) as any);
 
-    const { resultRef, tree } = renderHook(options);
+    const { resultRef, tree } = await renderHook(options);
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
@@ -2607,6 +2633,7 @@ describe('useCallFlow chat', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     expect(resultRef.current.conversations).toHaveLength(2);
     expect(resultRef.current.unreadTotal).toBe(5);
@@ -2790,13 +2817,14 @@ describe('useCallFlow chat', () => {
   // ── sendMessage ────────────────────────────────────────────────────────────
 
   test('sendMessage queues the message durably when there is no connected socket', async () => {
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await flushAsyncEffects();
 
     await act(async () => {
       await resultRef.current.sendMessage('bob', 'hi there');
@@ -2844,12 +2872,9 @@ describe('useCallFlow chat', () => {
       }
     });
 
-    const sendPromise = act(async () => {
+    await act(async () => {
       await resultRef.current.sendMessage('bob', 'hi there');
     });
-    // Immediately after invocation (before the ack resolves within the same
-    // act batch) the optimistic message should already be present.
-    await sendPromise;
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -2982,7 +3007,7 @@ describe('useCallFlow chat', () => {
     });
     // Flush the effect that mirrors activeChatPeerId into the ref read by the
     // (already-registered) message.received handler.
-    await act(async () => {});
+    await flushAsyncEffects();
 
     let readRequestBody = null;
     global.fetch = (jest.fn(async (url, options) => {
@@ -3241,7 +3266,9 @@ describe('useCallFlow chat', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    tree.update(<TestHook resultRef={resultRef} />);
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
     expect(resultRef.current.isPlacingCall).toBe(true);
     expect(resolveMedia).toBeDefined();
 
@@ -3431,7 +3458,7 @@ describe('useCallFlow chat', () => {
     await act(async () => {
       await incomingHandler({ call: { callId: 'call-share-1', callerId: 'bob' } });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -3598,7 +3625,7 @@ describe('useCallFlow chat', () => {
         },
       });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     expect(offerEmits).toHaveLength(1);
     expect(sendPushReceipt).toHaveBeenCalledWith(
@@ -3615,7 +3642,7 @@ describe('useCallFlow chat', () => {
       jest.advanceTimersByTime(OFFER_ANSWER_TIMEOUT_MS);
       await Promise.resolve();
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     expect(offerEmits).toHaveLength(2);
     expect(sendPushReceipt).toHaveBeenCalledWith(
@@ -3628,7 +3655,7 @@ describe('useCallFlow chat', () => {
       jest.advanceTimersByTime(OFFER_ANSWER_TIMEOUT_MS * 3);
       await Promise.resolve();
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     expect(offerEmits).toHaveLength(3);
   });
 
@@ -3754,7 +3781,7 @@ describe('useCallFlow chat', () => {
     await act(async () => {
       await incomingHandler({ call: { callId, callerId } });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
 
     const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
     (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue({
@@ -4153,7 +4180,7 @@ describe('useCallFlow chat', () => {
       // comes back, rather than being lost with the reconnect.
       await act(async () => {
         jest.setSystemTime(Date.now() + 31000);
-        await connectHandler?.();
+        connectHandler?.();
         await Promise.resolve();
       });
       expect(heartbeatEmits(emits)).toHaveLength(before + 1);
@@ -4316,7 +4343,10 @@ describe('useCallFlow chat', () => {
       const beforeConnect = heartbeatEmits(emits).length;
       expect(beforeConnect).toBeGreaterThanOrEqual(beforeReconnect);
       await act(async () => {
-        await connectHandler?.();
+        connectHandler?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
         jest.advanceTimersByTime(30000);
         await Promise.resolve();
       });
@@ -4476,7 +4506,7 @@ describe('useCallFlow chat', () => {
       peerConnection.oniceconnectionstatechange?.();
       await Promise.resolve();
     });
-    await act(async () => {});
+    await flushAsyncEffects();
   }
 
   test('a callee whose ICE fails sends an ICE restart offer', async () => {
@@ -4538,7 +4568,7 @@ describe('useCallFlow chat', () => {
         jest.advanceTimersByTime(800);
         await Promise.resolve();
       });
-      await act(async () => {});
+      await flushAsyncEffects();
 
       // ICE still says "connected" here — that lag is exactly the audio gap
       // this restart exists to avoid.
@@ -4729,7 +4759,10 @@ describe('useCallFlow chat', () => {
       socketMock.connected = true;
       const connectHandler = getSocketHandler('connect');
       await act(async () => {
-        await connectHandler?.();
+        connectHandler?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
         jest.advanceTimersByTime(1000);
         await Promise.resolve();
       });
@@ -4759,7 +4792,7 @@ describe('useCallFlow chat', () => {
         peerConnection.oniceconnectionstatechange?.();
         await Promise.resolve();
       });
-      await act(async () => {});
+      await flushAsyncEffects();
 
       // Nothing can be negotiated with no socket, and a handoff drops the
       // socket for far longer than the debounce that scheduled this rung.
@@ -4774,11 +4807,14 @@ describe('useCallFlow chat', () => {
       socketMock.connected = true;
       const connectHandler = getSocketHandler('connect');
       await act(async () => {
-        await connectHandler?.();
+        connectHandler?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
         jest.advanceTimersByTime(5000);
         await Promise.resolve();
       });
-      await act(async () => {});
+      await flushAsyncEffects();
 
       // The rung was not spent doing nothing: the restart still happens.
       expect(peerConnection.createOffer).toHaveBeenCalledWith({ iceRestart: true });
@@ -4808,7 +4844,7 @@ describe('useCallFlow chat', () => {
         jest.advanceTimersByTime(1500);
         await Promise.resolve();
       });
-      await act(async () => {});
+      await flushAsyncEffects();
 
       expect(peerConnection.createOffer).toHaveBeenCalledTimes(2);
     } finally {
@@ -5147,14 +5183,14 @@ describe('useCallFlow answer path', () => {
 
   async function renderWithSocket() {
     if (!global.fetch) mockFetch({});
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = await renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -5166,7 +5202,7 @@ describe('useCallFlow answer path', () => {
     await act(async () => {
       await handler({ call });
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -5270,7 +5306,7 @@ describe('useCallFlow answer path', () => {
     await act(async () => {
       const accepted = resultRef.current.acceptIncomingCall();
       await Promise.resolve();
-      jest.advanceTimersByTime(6000);
+      await jest.advanceTimersByTimeAsync(6000);
       await accepted;
     });
     act(() => {
@@ -5388,11 +5424,11 @@ describe('useCallFlow answer path', () => {
     });
 
     // Flush the deferred rehydration, the replay effect and the accept it runs.
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -5430,7 +5466,7 @@ describe('useCallFlow answer path', () => {
     });
 
     const { resultRef, tree } = await renderWithSocket();
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -5606,7 +5642,7 @@ describe('useCallFlow answer path', () => {
     // Force extra renders: the replay effect re-runs whenever the accept
     // callback identity changes.
     for (let i = 0; i < 3; i += 1) {
-      await act(async () => {});
+      await flushAsyncEffects();
       act(() => {
         tree.update(<TestHook resultRef={resultRef} />);
       });
@@ -5693,7 +5729,7 @@ describe('useCallFlow answer path', () => {
     await act(async () => {
       onAnswer('call-gone');
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -5727,7 +5763,7 @@ describe('useCallFlow answer path', () => {
     await act(async () => {
       onAnswer('call-unreachable');
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
@@ -5764,7 +5800,7 @@ describe('useCallFlow answer path', () => {
     await act(async () => {
       onAnswer('call-throws');
     });
-    await act(async () => {});
+    await flushAsyncEffects();
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
