@@ -28,6 +28,13 @@ jobs:
     name: Build APK(s)
     runs-on: ubuntu-latest
 
+    # A successful run takes well under 20 minutes. Without a timeout a stuck
+    # Gradle JVM (an out-of-memory daemon that never exits, for example) holds
+    # the runner for GitHub's default 6-hour job limit before being cancelled,
+    # so the failure is both invisible and expensive. Bound the job, and the
+    # build step more tightly still, so the remaining steps report the failure.
+    timeout-minutes: 60
+
     defaults:
       run:
         working-directory: mobile
@@ -117,6 +124,7 @@ jobs:
       # for local builds via gradle.properties; CI overrides with the flag so the
       # build is 2-4× faster without affecting local or production distribution.
       - name: Assemble release APK
+        timeout-minutes: 40
         env:
           SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
           ROOM_ID: ${{ secrets.ROOM_ID }}
@@ -253,11 +261,37 @@ jobs:
             exit 1
           fi
 
+      - name: Report APK size
+        run: |
+          set -euo pipefail
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          SIZE_BYTES="$(stat -c%s "$APK_PATH")"
+          SIZE_MIB="$(awk -v b="$SIZE_BYTES" 'BEGIN { printf "%.1f", b / 1048576 }')"
+          echo "Release APK: ${SIZE_MIB} MiB (${SIZE_BYTES} bytes)"
+          {
+            echo "### Release APK"
+            echo
+            echo "| ABI | Size |"
+            echo "| --- | ---- |"
+            echo "| arm64-v8a | ${SIZE_MIB} MiB |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload release APK
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: app-release-apk
           path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 3
+          if-no-files-found: error
+
+      # R8 obfuscates the release build, so a crash report from this APK is
+      # unreadable without the mapping produced alongside it.
+      - name: Upload R8 mapping
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-release-mapping
+          path: mobile/android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 3
           if-no-files-found: error
