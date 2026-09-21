@@ -81,6 +81,6 @@
     "typescript": "^5.9.3"
   },
   "overrides": {
-    "eslint-plugin-ft-flow": "3.0.11"
+    "eslint-plugin-ft-flow": "$eslint-plugin-ft-flow"
   }
 }

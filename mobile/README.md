@@ -21,9 +21,10 @@ The React Native ESLint preset used by this app (`@react-native/eslint-config`
 0.87.x) supports ESLint 8 and 9, but not ESLint 10. Keep mobile on ESLint 9,
 even though npm warns that this ESLint line is deprecated, and run lint through
 the existing legacy `.eslintrc.js` script until the React Native preset supports
-flat config/ESLint 10. The pinned `eslint-plugin-ft-flow` override keeps the
-preset's Flow plugin compatible with ESLint 9; remove it when the preset no
-longer depends on ft-flow v2 or when the app migrates to flat config.
+flat config/ESLint 10. The `eslint-plugin-ft-flow` override upgrades the
+preset's transitive ft-flow v2 dependency to the direct 3.0.11 dependency, which
+is compatible with ESLint 9; remove it when the preset itself depends on
+ft-flow >= 3 or when the app migrates to flat config.
 
 Optional environment variables for signaling and the deprecated static TURN
 fallback (inlined at build time via `babel-plugin-transform-inline-environment-variables`):
