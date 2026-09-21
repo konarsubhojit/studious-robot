@@ -81,6 +81,8 @@
     "typescript": "^5.9.3"
   },
   "overrides": {
-    "eslint-plugin-ft-flow": "$eslint-plugin-ft-flow"
+    "@react-native/eslint-config": {
+      "eslint-plugin-ft-flow": "$eslint-plugin-ft-flow"
+    }
   }
 }

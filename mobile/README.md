@@ -24,9 +24,9 @@ the existing legacy `.eslintrc.js` script until the React Native preset supports
 flat config/ESLint 10. The lint script sets `ESLINT_USE_FLAT_CONFIG=false` via
 `cross-env` so legacy config mode also works on Windows shells. The
 `eslint-plugin-ft-flow` override upgrades the
-preset's transitive ft-flow v2 dependency to the direct 3.0.11 dependency, which
-is compatible with ESLint 9; remove it when the preset itself depends on
-ft-flow >= 3 or when the app migrates to flat config.
+preset's transitive ft-flow v2 dependency to the version declared in
+`devDependencies`, which is compatible with ESLint 9; remove it when the preset
+itself depends on ft-flow >= 3 or when the app migrates to flat config.
 
 Optional environment variables for signaling and the deprecated static TURN
 fallback (inlined at build time via `babel-plugin-transform-inline-environment-variables`):
