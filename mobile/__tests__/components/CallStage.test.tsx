@@ -184,4 +184,32 @@ describe('CallStage', () => {
       tree.root.findAll((n: any) => n.props?.children === 'Unknown').length,
     ).toBeGreaterThan(0);
   });
+
+  test('letterboxes the remote video and labels it when the peer is screen sharing', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <CallStage
+          {...createProps({ isRemoteScreenSharing: true, participantLabel: 'Ada' })}
+        />,
+      );
+    });
+
+    const stream = tree.root.findByType('SafeRTCView');
+    expect(stream.props.objectFit).toBe('contain');
+    const label = findByTestId(tree, 'remote-screen-share-label');
+    expect(label).not.toBeNull();
+    expect(label.props.accessibilityLabel).toBe('Ada is sharing their screen');
+    expect(tree.root.findAllByType('DraggablePip')).toHaveLength(1);
+  });
+
+  test('keeps the remote video filling the stage when nobody is screen sharing', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps()} />);
+    });
+
+    expect(tree.root.findByType('SafeRTCView').props.objectFit).toBe('cover');
+    expect(findByTestId(tree, 'remote-screen-share-label')).toBeNull();
+  });
 });

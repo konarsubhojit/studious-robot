@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { logError, logInfo, logWarn } from '../appLogger';
 import type { CallStatus } from '../components/StatusBanner';
 import type { ScreenShareDelivery } from '../callUx';
+import { SCREEN_SHARE_UNVERIFIED_GUIDANCE } from '../callUx';
 import { errorMessage } from '../errors';
 import {
   isScreenShareSupported,
@@ -25,11 +26,20 @@ export type UseScreenShareParams = {
 
 type MutableValue<T = any> = { current: T; };
 
+/**
+ * Target bitrate for the screen encoding (~2.5 Mbps). Comfortably above the
+ * camera's default so on-screen text stays legible under constrained
+ * bandwidth instead of being downscaled like ordinary camera video.
+ */
+const SCREEN_SHARE_MAX_BITRATE = 2_500_000;
+
 type ScreenShareResources = {
   screenStream: any;
   screenVideoTrack: any;
   cameraTrack: any;
   audioSender: any;
+  videoSender: any;
+  previousVideoParameters: any;
 };
 
 function takeScreenShareResources(refs: {
@@ -37,17 +47,23 @@ function takeScreenShareResources(refs: {
   screenVideoTrack: MutableValue;
   screenAudioSender: MutableValue;
   cameraTrack: MutableValue;
+  screenVideoSender: MutableValue;
+  previousVideoParameters: MutableValue;
 }): ScreenShareResources {
   const resources = {
     screenStream: refs.screenStream.current,
     screenVideoTrack: refs.screenVideoTrack.current,
     cameraTrack: refs.cameraTrack.current,
     audioSender: refs.screenAudioSender.current,
+    videoSender: refs.screenVideoSender.current,
+    previousVideoParameters: refs.previousVideoParameters.current,
   };
   refs.screenStream.current = null;
   refs.screenVideoTrack.current = null;
   refs.screenAudioSender.current = null;
   refs.cameraTrack.current = null;
+  refs.screenVideoSender.current = null;
+  refs.previousVideoParameters.current = null;
   return resources;
 }
 
@@ -77,12 +93,37 @@ async function removeScreenAudioSender(pc: any, audioSender: any) {
   }
 }
 
-async function restoreCameraTrack(pc: any, cameraTrack: any) {
+/**
+ * Restore the sender's pre-share encoding parameters (bitrate, degradation
+ * preference, resolution scale) captured by {@link applyScreenEncodingHints}.
+ *
+ * Guarded like its counterpart: `setParameters` may be unavailable, and a
+ * camera-only call must never be left with the screen's raised bitrate.
+ */
+async function restoreVideoSenderParameters(sender: any, previousParameters: any) {
+  if (!sender || typeof sender.setParameters !== 'function' || !previousParameters) return;
+  try {
+    await sender.setParameters(previousParameters);
+  } catch (error) {
+    logWarn('Failed to restore camera encoding parameters after screen share', {
+      message: errorMessage(error),
+    });
+  }
+}
+
+async function restoreCameraTrack(
+  pc: any,
+  cameraTrack: any,
+  videoSender: any,
+  previousVideoParameters: any,
+) {
   if (!cameraTrack) return;
   cameraTrack.enabled = true;
   try {
-    const sender = pc?.getSenders?.().find((candidate: any) => candidate.track?.kind === 'video');
+    const sender =
+      videoSender ?? pc?.getSenders?.().find((candidate: any) => candidate.track?.kind === 'video');
     if (sender) await sender.replaceTrack(cameraTrack);
+    await restoreVideoSenderParameters(sender, previousVideoParameters);
   } catch (error) {
     logWarn('Failed to restore camera track after screen share', {
       message: errorMessage(error),
@@ -131,13 +172,64 @@ function acceptedScreenCapture(
   return null;
 }
 
+/**
+ * Raise the outgoing video sender's parameters for screen content: a
+ * maintained resolution (never downscaled to save bandwidth, unlike camera
+ * video) and a bitrate high enough to keep on-screen text legible.
+ *
+ * Every step is guarded — `setParameters`/`getParameters`/`contentHint` are
+ * not available on every `react-native-webrtc` runtime — and a failure is
+ * logged rather than thrown, since a soft picture is far better than a
+ * share that fails to start.
+ *
+ * @returns the sender's parameters from before this call, to be restored by
+ *   {@link restoreVideoSenderParameters} once the share ends; `null` when
+ *   nothing was changed (unsupported runtime, or no sender to change).
+ */
+function applyScreenEncodingHints(videoTrack: any, sender: any): any {
+  if (videoTrack) {
+    try {
+      videoTrack.contentHint = 'detail';
+    } catch (error) {
+      logWarn('Failed to set screen track content hint', { message: errorMessage(error) });
+    }
+  }
+
+  if (!sender || typeof sender.setParameters !== 'function') return null;
+  try {
+    const previousParameters =
+      typeof sender.getParameters === 'function' ? sender.getParameters() : null;
+    const baseParameters = previousParameters ? { ...previousParameters } : {};
+    const encodings =
+      Array.isArray(baseParameters.encodings) && baseParameters.encodings.length
+        ? baseParameters.encodings.map((encoding: any) => ({ ...encoding }))
+        : [{}];
+    encodings[0] = {
+      ...encodings[0],
+      maxBitrate: SCREEN_SHARE_MAX_BITRATE,
+      scaleResolutionDownBy: 1,
+    };
+    sender.setParameters({
+      ...baseParameters,
+      degradationPreference: 'maintain-resolution',
+      encodings,
+    });
+    return previousParameters;
+  } catch (error) {
+    logWarn('Failed to apply screen share encoding parameters', {
+      message: errorMessage(error),
+    });
+    return null;
+  }
+}
+
 async function attachScreenVideo(pc: any, stream: any, videoTrack: any) {
-  const videoSender = pc.getSenders?.().find((sender: any) => sender.track?.kind === 'video');
-  const cameraTrack = videoSender?.track ?? null;
-  if (videoSender) await videoSender.replaceTrack(videoTrack);
-  else pc.addTrack?.(videoTrack, stream);
+  const existingSender = pc.getSenders?.().find((sender: any) => sender.track?.kind === 'video');
+  const cameraTrack = existingSender?.track ?? null;
+  const sender = existingSender ?? pc.addTrack?.(videoTrack, stream) ?? null;
+  if (existingSender) await existingSender.replaceTrack(videoTrack);
   logInfo('Screen track attached to peer connection', {
-    replacedSender: Boolean(videoSender),
+    replacedSender: Boolean(existingSender),
     trackId: videoTrack?.id ?? null,
     trackEnabled: videoTrack?.enabled !== false,
     direction: pc
@@ -145,7 +237,8 @@ async function attachScreenVideo(pc: any, stream: any, videoTrack: any) {
       ?.find((transceiver: any) => transceiver.sender?.track?.id === videoTrack?.id)?.direction ?? null,
   });
   if (cameraTrack) cameraTrack.enabled = false;
-  return cameraTrack;
+  const previousVideoParameters = applyScreenEncodingHints(videoTrack, sender);
+  return { cameraTrack, videoSender: sender, previousVideoParameters };
 }
 
 function attachScreenAudio(pc: any, stream: any, audioTrack: any) {
@@ -210,7 +303,7 @@ async function verifyScreenShareDelivery({
     });
     setScreenShareDelivery('unverified');
     setStatus(
-      'Screen sharing started, but the remote view is not confirmed yet. Open the app you want to share or minimise WeTalk once.',
+      SCREEN_SHARE_UNVERIFIED_GUIDANCE,
       'warning',
     );
     return;
@@ -234,6 +327,8 @@ function resetFailedScreenShareStart({
   screenVideoTrackRef,
   screenAudioSenderRef,
   cameraTrackRef,
+  screenVideoSenderRef,
+  previousVideoParametersRef,
   setIsScreenSharing,
   setIsScreenAudioShared,
   setScreenShareDelivery,
@@ -244,6 +339,8 @@ function resetFailedScreenShareStart({
   screenVideoTrackRef: MutableValue;
   screenAudioSenderRef: MutableValue;
   cameraTrackRef: MutableValue;
+  screenVideoSenderRef: MutableValue;
+  previousVideoParametersRef: MutableValue;
   setIsScreenSharing: (value: boolean) => void;
   setIsScreenAudioShared: (value: boolean) => void;
   setScreenShareDelivery: (value: ScreenShareDelivery) => void;
@@ -253,6 +350,8 @@ function resetFailedScreenShareStart({
   screenStreamRef.current = null;
   screenVideoTrackRef.current = null;
   screenAudioSenderRef.current = null;
+  screenVideoSenderRef.current = null;
+  previousVideoParametersRef.current = null;
   if (cameraTrackRef.current) {
     cameraTrackRef.current.enabled = true;
     cameraTrackRef.current = null;
@@ -295,6 +394,8 @@ export default function useScreenShare({
   const screenVideoTrackRef = useRef((null as any));
   const screenAudioSenderRef = useRef((null as any));
   const cameraTrackRef = useRef((null as any));
+  const screenVideoSenderRef = useRef((null as any));
+  const previousVideoParametersRef = useRef((null as any));
   const isTogglingRef = useRef(false);
   // Mirrored into state because the control has to *look* busy: the toggle
   // round-trips through a system capture prompt and (with screen audio) a
@@ -321,6 +422,8 @@ export default function useScreenShare({
         screenVideoTrack: screenVideoTrackRef,
         screenAudioSender: screenAudioSenderRef,
         cameraTrack: cameraTrackRef,
+        screenVideoSender: screenVideoSenderRef,
+        previousVideoParameters: previousVideoParametersRef,
       });
 
       if (!resources.screenStream && !resources.screenVideoTrack) {
@@ -330,7 +433,12 @@ export default function useScreenShare({
 
       const pc = peerConnectionRef.current;
       await removeScreenAudioSender(pc, resources.audioSender);
-      await restoreCameraTrack(pc, resources.cameraTrack);
+      await restoreCameraTrack(
+        pc,
+        resources.cameraTrack,
+        resources.videoSender,
+        resources.previousVideoParameters,
+      );
       restoreLocalStream(
         localStreamRef.current,
         resources.screenVideoTrack,
@@ -369,8 +477,14 @@ export default function useScreenShare({
     const { stream, videoTrack, audioTrack, audioShared, audioFallbackReason } = capture as any;
 
     try {
-      const cameraTrack = await attachScreenVideo(pc, stream, videoTrack);
+      const { cameraTrack, videoSender, previousVideoParameters } = await attachScreenVideo(
+        pc,
+        stream,
+        videoTrack,
+      );
       cameraTrackRef.current = cameraTrack;
+      screenVideoSenderRef.current = videoSender;
+      previousVideoParametersRef.current = previousVideoParameters;
       const audioSender = attachScreenAudio(pc, stream, audioTrack);
       screenStreamRef.current = stream;
       screenVideoTrackRef.current = videoTrack;
@@ -412,6 +526,8 @@ export default function useScreenShare({
         screenVideoTrackRef,
         screenAudioSenderRef,
         cameraTrackRef,
+        screenVideoSenderRef,
+        previousVideoParametersRef,
         setIsScreenSharing,
         setIsScreenAudioShared,
         setScreenShareDelivery,

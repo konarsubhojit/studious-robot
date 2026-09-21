@@ -15,6 +15,19 @@ cd mobile
 npm install
 ```
 
+## Lint tooling
+
+The React Native ESLint preset used by this app (`@react-native/eslint-config`
+0.87.x) supports ESLint 8 and 9, but not ESLint 10. Keep mobile on ESLint 9,
+even though npm warns that this ESLint line is deprecated, and run lint through
+the existing legacy `.eslintrc.js` script until the React Native preset supports
+flat config/ESLint 10. The lint script sets `ESLINT_USE_FLAT_CONFIG=false` via
+`cross-env` so legacy config mode also works on Windows shells. The
+`eslint-plugin-ft-flow` override upgrades the
+preset's transitive ft-flow v2 dependency to the version declared in
+`devDependencies`, which is compatible with ESLint 9; remove it when the preset
+itself depends on ft-flow >= 3 or when the app migrates to flat config.
+
 Optional environment variables for signaling and the deprecated static TURN
 fallback (inlined at build time via `babel-plugin-transform-inline-environment-variables`):
 
@@ -233,6 +246,45 @@ consent dialog through `getDisplayMedia` and, once granted:
   restored instantly when sharing stops (also when the user stops the share
   from the OS overlay);
 - disables the camera on/off and camera-switch buttons while sharing.
+
+### Encoding tuned for screen content
+
+Screen content (small text, sharp edges) degrades far more visibly than a face
+under the camera's default encoder settings, which favour a stable frame rate
+over resolution. `attachScreenVideo` (`src/hooks/useScreenShare.ts`) raises the
+outgoing sender's parameters for the duration of the share:
+
+- `videoTrack.contentHint = 'detail'`, so the encoder favours sharpness over
+  motion smoothness;
+- `RTCRtpSender.setParameters` with `degradationPreference:
+  'maintain-resolution'`, a raised `maxBitrate` (~2.5 Mbps) and
+  `scaleResolutionDownBy: 1`, so a constrained link drops frames rather than
+  resolution.
+
+The sender's parameters from before the share are captured and restored by
+`restoreCameraTrack` once sharing stops, so a camera-only call that follows a
+share keeps its original settings. Every step is guarded: `setParameters`,
+`getParameters` and `contentHint` are not available on every
+`react-native-webrtc` runtime, and a failure is logged with `logWarn` rather
+than thrown — a soft picture is far better than a share that fails to start.
+
+### Viewer rendering
+
+When the remote peer is sharing (`isRemoteScreenSharing` in `useCallFlow`),
+`CallStage` renders their video with `objectFit: 'contain'` instead of the
+camera's `cover` layout, so the shared content is always letterboxed rather
+than cropped, plus a small "`<name>` is sharing their screen" label. The local
+self-view keeps its usual draggable thumbnail.
+
+### In-call sharing indicator
+
+While `isScreenSharing` is true, `CallControls` shows a persistent pill above
+the Leave button instead of relying on the transient status banner: "You're
+sharing your screen" (plus "with system audio" when audio is included), an
+icon reflecting `screenShareDelivery` (a spinner while `checking`, a tick once
+`confirmed`, a warning affordance plus the existing guidance text when
+`unverified`), and a direct **Stop** action. The status banner is still used
+for one-shot events — errors, cancellation, and the system-audio fallback.
 
 ### Optional screen audio
 

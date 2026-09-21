@@ -10,7 +10,7 @@
     "start": "react-native start",
     "android": "react-native run-android",
     "ios": "react-native run-ios",
-    "lint": "eslint .",
+    "lint": "cross-env ESLINT_USE_FLAT_CONFIG=false eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest --passWithNoTests",
     "postinstall": "patch-package"
@@ -26,7 +26,7 @@
     "@react-navigation/bottom-tabs": "^7.19.1",
     "@react-navigation/native": "^7.3.16",
     "@react-navigation/native-stack": "^7.19.1",
-    "react": "19.2.3",
+    "react": "19.3.0",
     "react-native": "0.87.1",
     "react-native-callkeep": "^4.3.16",
     "react-native-fs": "^2.20.0",
@@ -46,25 +46,43 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@babel/eslint-parser": "^7.29.9",
     "@babel/preset-env": "^7.25.3",
     "@babel/runtime": "^7.25.0",
-    "@react-native-community/cli": "20.1.0",
+    "@react-native-community/cli": "20.2.0",
     "@react-native-community/cli-platform-android": "20.2.0",
     "@react-native-community/cli-platform-ios": "20.2.0",
     "@react-native/babel-preset": "0.87.1",
     "@react-native/codegen": "0.87.1",
     "@react-native/eslint-config": "0.87.1",
+    "@react-native/eslint-plugin": "^0.87.1",
     "@react-native/jest-preset": "0.87.1",
     "@react-native/metro-config": "0.87.1",
     "@types/jest": "^30.0.0",
-    "@types/react": "^19.2.18",
+    "@types/react": "^19.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.70.1",
+    "@typescript-eslint/parser": "^8.70.1",
     "babel-plugin-transform-inline-environment-variables": "^0.4.4",
-    "eslint": "^8.19.0",
+    "cross-env": "^10.1.0",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^8.10.2",
+    "eslint-plugin-eslint-comments": "^3.2.0",
+    "eslint-plugin-ft-flow": "3.0.11",
+    "eslint-plugin-jest": "^29.16.6",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-native": "^5.0.0",
     "eslint-plugin-sonarjs": "^4.2.1",
+    "hermes-eslint": "^0.37.0",
     "jest": "^30.5.1",
     "patch-package": "^8.0.1",
     "prettier": "2.8.8",
-    "react-test-renderer": "19.2.3",
-    "typescript": "^7.0.2"
+    "react-test-renderer": "19.3.0",
+    "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "@react-native/eslint-config": {
+      "eslint-plugin-ft-flow": "$eslint-plugin-ft-flow"
+    }
   }
 }
