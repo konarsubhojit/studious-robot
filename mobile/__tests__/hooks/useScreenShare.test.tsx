@@ -31,9 +31,17 @@ function makeTrack(kind: string): any {
   return { kind, enabled: true, stop: jest.fn() };
 }
 
-function setup({ renegotiate = jest.fn(() => Promise.resolve()) } = {}) {
+function setup({
+  renegotiate = jest.fn(() => Promise.resolve()),
+  senderSupportsParameters = true,
+  initialParameters = { encodings: [{ maxBitrate: 500_000 }] } as any,
+} = {}) {
   const cameraTrack = makeTrack('video');
-  const sender = { track: cameraTrack, replaceTrack: jest.fn(() => Promise.resolve()) };
+  const sender: any = { track: cameraTrack, replaceTrack: jest.fn(() => Promise.resolve()) };
+  if (senderSupportsParameters) {
+    sender.getParameters = jest.fn(() => initialParameters);
+    sender.setParameters = jest.fn();
+  }
   const audioSender = { replaceTrack: jest.fn(() => Promise.resolve()) };
   const peerConnection = {
     getSenders: jest.fn(() => [sender]),
@@ -166,6 +174,79 @@ describe('useScreenShare', () => {
     expect(screenShare.stopScreenCapture).toHaveBeenCalledWith(screenStream);
     expect(resultRef.current.isScreenSharing).toBe(false);
     expect(renegotiate).toHaveBeenCalledTimes(2);
+  });
+
+  test('applies screen-tuned encoder parameters and a detail content hint on start', async () => {
+    const screenVideoTrack = makeTrack('video');
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: screenVideoTrack,
+      audioTrack: null,
+      audioShared: false,
+    });
+    const { resultRef, sender } = setup();
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(screenVideoTrack.contentHint).toBe('detail');
+    expect(sender.setParameters).toHaveBeenCalledWith(
+      expect.objectContaining({
+        degradationPreference: 'maintain-resolution',
+        encodings: [
+          expect.objectContaining({
+            maxBitrate: 2_500_000,
+            scaleResolutionDownBy: 1,
+          }),
+        ],
+      }),
+    );
+  });
+
+  test('restores the previous encoder parameters when sharing stops', async () => {
+    const screenVideoTrack = makeTrack('video');
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: screenVideoTrack,
+      audioTrack: null,
+      audioShared: false,
+    });
+    const initialParameters = { encodings: [{ maxBitrate: 500_000 }] };
+    const { resultRef, sender } = setup({ initialParameters });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+    (sender.setParameters as jest.Mock).mockClear();
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(sender.setParameters).toHaveBeenCalledWith(initialParameters);
+  });
+
+  test('does not throw when the sender cannot report or accept encoder parameters', async () => {
+    const screenVideoTrack = makeTrack('video');
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: screenVideoTrack,
+      audioTrack: null,
+      audioShared: false,
+    });
+    const { resultRef } = setup({ senderSupportsParameters: false });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(resultRef.current.isScreenSharing).toBe(false);
   });
 
   test('removes the screen audio sender and renegotiates on stop', async () => {

@@ -46,11 +46,12 @@ function StageMedia({
   mirrorMain,
   isAudioOnly,
   isCompact,
+  isRemoteScreenSharing,
   participantLabel,
   audioStatusLabel,
   styles,
 }: Pick<CallStageProps, 'hasMainStream' | 'mainStreamUrl' | 'mirrorMain' | 'isAudioOnly' |
-  'isCompact' | 'participantLabel' | 'audioStatusLabel'> & { styles: CallStageStyles }) {
+  'isCompact' | 'isRemoteScreenSharing' | 'participantLabel' | 'audioStatusLabel'> & { styles: CallStageStyles }) {
   if (isAudioOnly) {
     return (
       <View style={styles.ambientStage} testID="call-stage-ambient">
@@ -81,14 +82,32 @@ function StageMedia({
     );
   }
   return (
-    <SafeRTCView
-      fallbackLabel="Call video unavailable"
-      style={styles.remoteStream}
-      streamURL={mainStreamUrl}
-      objectFit="cover"
-      mirror={mirrorMain}
-      zOrder={0}
-    />
+    <>
+      <SafeRTCView
+        fallbackLabel="Call video unavailable"
+        style={styles.remoteStream}
+        streamURL={mainStreamUrl}
+        // A remote screen share is letterboxed (`contain`) so no part of the
+        // shared content is ever cropped; camera video keeps filling the
+        // stage (`cover`), which is what a face benefits from and a screen
+        // does not.
+        objectFit={isRemoteScreenSharing ? 'contain' : 'cover'}
+        mirror={mirrorMain}
+        zOrder={0}
+      />
+      {isRemoteScreenSharing ? (
+        <View
+          style={styles.remoteScreenShareLabel}
+          pointerEvents="none"
+          accessibilityRole="text"
+          accessibilityLabel={`${participantLabel || 'They'} is sharing their screen`}
+          testID="remote-screen-share-label">
+          <Text style={styles.remoteScreenShareLabelText}>
+            {`${participantLabel || 'They'} is sharing their screen`}
+          </Text>
+        </View>
+      ) : null}
+    </>
   );
 }
 
@@ -172,11 +191,9 @@ export default function CallStage({
   const isLandscape = width > height;
 
   // Local presenting state takes precedence if somehow both are true at once.
-  const presenterBannerText = isScreenSharing
-    ? "You're presenting"
-    : isRemoteScreenSharing
-    ? `${participantLabel || 'They'} are presenting`
-    : null;
+  // The remote case is handled by the small label in `StageMedia` instead of
+  // this banner, per the dedicated screen-share viewer layout.
+  const presenterBannerText = isScreenSharing && !isRemoteScreenSharing ? "You're presenting" : null;
 
   return (
     <View
@@ -192,6 +209,7 @@ export default function CallStage({
         mirrorMain={mirrorMain}
         isAudioOnly={isAudioOnly}
         isCompact={isCompact}
+        isRemoteScreenSharing={isRemoteScreenSharing}
         participantLabel={participantLabel}
         audioStatusLabel={audioStatusLabel}
         styles={styles}
@@ -286,5 +304,19 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.accent,
       ...typography.hint,
       fontWeight: '700',
+    },
+    remoteScreenShareLabel: {
+      position: 'absolute',
+      bottom: spacing.sm,
+      alignSelf: 'center',
+      maxWidth: '90%',
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      backgroundColor: overlay.scrimMedium,
+    },
+    remoteScreenShareLabelText: {
+      color: colors.onOverlay,
+      ...typography.hint,
     },
   });

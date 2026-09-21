@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
-import { fontScaleCaps, spacing, typography } from '../theme';
-import { describeScreenShareDelivery } from '../callUx';
+import { fontScaleCaps, overlay, radius, spacing, typography } from '../theme';
+import { SCREEN_SHARE_UNVERIFIED_GUIDANCE } from '../callUx';
 import AudioOutputMenu from './AudioOutputMenu';
 import IconButton from './IconButton';
-import { ListItem, Sheet } from './primitives';
+import { Icon, ListItem, Sheet } from './primitives';
 import type { ScreenShareDelivery } from '../callUx';
 import type { ThemeColors } from '../theme';
 
@@ -163,6 +163,82 @@ function MediaControlButtons({
   );
 }
 
+/**
+ * Persistent in-call pill shown for as long as `isScreenSharing` is true.
+ *
+ * Replaces the one-shot status-banner text as the sharer's ongoing feedback:
+ * it names what is being shared, reflects `screenShareDelivery` with an icon
+ * (spinner while checking, a tick once confirmed, a warning affordance when
+ * the remote view could not be confirmed), and offers a direct Stop action so
+ * ending the share never requires a trip through the "More" sheet.
+ */
+function ScreenSharePill({
+  isScreenAudioShared,
+  isTogglingScreenShare,
+  screenShareDelivery,
+  onScreenShareToggle,
+  styles,
+}: Pick<CallControlsProps, 'isScreenAudioShared' | 'isTogglingScreenShare' | 'screenShareDelivery' |
+  'onScreenShareToggle'> & { styles: CallControlsStyles; }) {
+  const title = isScreenAudioShared
+    ? "You're sharing your screen with system audio"
+    : "You're sharing your screen";
+  const unverified = screenShareDelivery === 'unverified';
+  const label = unverified ? `${title}. ${SCREEN_SHARE_UNVERIFIED_GUIDANCE}` : title;
+
+  return (
+    <View
+      style={styles.sharingPill}
+      accessibilityRole="text"
+      accessibilityLabel={label}
+      testID="screen-share-indicator">
+      {screenShareDelivery === 'checking' ? (
+        <ActivityIndicator
+          size="small"
+          color={styles.sharingPillAccent.color}
+          accessibilityLabel="Checking whether they can see your screen"
+          testID="screen-share-indicator-checking"
+        />
+      ) : null}
+      {screenShareDelivery === 'confirmed' ? (
+        <Icon
+          name="check"
+          size={16}
+          color={styles.sharingPillSuccess.color}
+          testID="screen-share-indicator-confirmed"
+        />
+      ) : null}
+      {unverified ? (
+        <Icon
+          name="warning"
+          size={16}
+          color={styles.sharingPillWarning.color}
+          testID="screen-share-indicator-warning"
+        />
+      ) : null}
+      <Text
+        style={styles.sharingPillText}
+        maxFontSizeMultiplier={fontScaleCaps.control}
+        numberOfLines={unverified ? 2 : 1}
+        testID="screen-share-indicator-text">
+        {unverified ? `${title} — remote view not confirmed` : title}
+      </Text>
+      {onScreenShareToggle ? (
+        <Pressable
+          onPress={onScreenShareToggle}
+          disabled={isTogglingScreenShare}
+          accessibilityRole="button"
+          accessibilityLabel="Stop sharing your screen"
+          accessibilityState={{ disabled: isTogglingScreenShare }}
+          hitSlop={8}
+          testID="screen-share-pill-stop">
+          <Text style={styles.sharingPillStop}>Stop</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 function ScreenShareOptions({
   visible,
   onClose,
@@ -284,15 +360,16 @@ export default function CallControls({
       {isScreenSharing ? (
         // Capped: the deck hangs off `CallScreen`'s `StyleSheet.absoluteFill`
         // overlay, pinned to the bottom edge with no scroll and nothing to
-        // push. This caption sits between the primary row and `control-leave`,
+        // push. This pill sits between the primary row and `control-leave`,
         // so every line it gains drives Leave toward the screen edge — and
         // Leave is the one control that must never be hard to hit.
-        <Text
-          style={styles.sharingLabel}
-          maxFontSizeMultiplier={fontScaleCaps.control}
-          testID="screen-share-indicator">
-          {describeScreenShareDelivery(screenShareDelivery, isScreenAudioShared)}
-        </Text>
+        <ScreenSharePill
+          isScreenAudioShared={isScreenAudioShared}
+          isTogglingScreenShare={isTogglingScreenShare}
+          screenShareDelivery={screenShareDelivery}
+          onScreenShareToggle={onScreenShareToggle}
+          styles={styles}
+        />
       ) : null}
 
       <IconButton
@@ -327,9 +404,34 @@ const createStyles = (colors: ThemeColors) =>
       marginBottom: spacing.sm,
       alignItems: 'center',
     },
-    sharingLabel: {
+    sharingPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      maxWidth: '92%',
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      backgroundColor: overlay.scrimMedium,
+    },
+    sharingPillText: {
       ...typography.label,
       color: colors.textPrimary,
+      flexShrink: 1,
+    },
+    sharingPillStop: {
+      ...typography.label,
+      color: colors.danger,
+      fontWeight: '700',
+    },
+    sharingPillAccent: {
+      color: colors.accent,
+    },
+    sharingPillSuccess: {
+      color: colors.success,
+    },
+    sharingPillWarning: {
+      color: colors.warning,
     },
     mediaRow: {
       flexDirection: 'row',

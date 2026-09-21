@@ -303,6 +303,14 @@ export function smoothConnectionQuality(
 export type ScreenShareDelivery = 'idle' | 'checking' | 'confirmed' | 'unverified';
 
 /**
+ * Guidance shown when a share is running but its delivery could not be
+ * confirmed — surfaced both as the transient status-banner warning and in the
+ * persistent in-call sharing pill, so the two never drift apart.
+ */
+export const SCREEN_SHARE_UNVERIFIED_GUIDANCE =
+  'Screen sharing started, but the remote view is not confirmed yet. Open the app you want to share or minimise WeTalk once.';
+
+/**
  * The line shown under the call controls while sharing.
  *
  * Only `confirmed` promises the remote side can see anything: an unverifiable

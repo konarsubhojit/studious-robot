@@ -193,7 +193,7 @@ describe('accessibility contracts', () => {
       const tree = deck({ isScreenSharing: true, onScreenShareToggle: () => {} });
 
       const caption = tree.root.findAll(
-        (n: any) => n.type === 'Text' && n.props?.testID === 'screen-share-indicator',
+        (n: any) => n.type === 'Text' && n.props?.testID === 'screen-share-indicator-text',
       )[0];
       expect(caption.props.maxFontSizeMultiplier).toBe(fontScaleCaps.control);
     });
