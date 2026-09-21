@@ -307,7 +307,7 @@ const createStyles = (colors: ThemeColors) =>
     },
     remoteScreenShareLabel: {
       position: 'absolute',
-      bottom: spacing.sm,
+      top: spacing.sm,
       alignSelf: 'center',
       maxWidth: '90%',
       borderRadius: radius.pill,
