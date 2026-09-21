@@ -15,6 +15,15 @@ cd mobile
 npm install
 ```
 
+## Lint tooling
+
+The React Native ESLint preset used by this app (`@react-native/eslint-config`
+0.87.x) supports ESLint 8 and 9, but not ESLint 10. Keep mobile on ESLint 9 and
+run lint through the existing legacy `.eslintrc.js` script until the React Native
+preset supports flat config/ESLint 10. The `eslint-plugin-ft-flow` override keeps
+the preset's Flow plugin compatible with ESLint 9; remove it when the preset no
+longer depends on ft-flow v2 or when the app migrates to flat config.
+
 Optional environment variables for signaling and the deprecated static TURN
 fallback (inlined at build time via `babel-plugin-transform-inline-environment-variables`):
 
