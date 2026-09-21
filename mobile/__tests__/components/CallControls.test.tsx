@@ -128,8 +128,8 @@ describe('CallControls screen sharing', () => {
       }),
     );
 
-    expect(findByTestId(tree, 'screen-share-indicator').props.children).toBe(
-      'Sharing screen with audio',
+    expect(findByTestId(tree, 'screen-share-indicator-text').props.children).toBe(
+      "You're sharing your screen with system audio",
     );
 
     openMoreSheet(tree);
@@ -141,6 +141,22 @@ describe('CallControls screen sharing', () => {
     expect(findByTestId(tree, 'control-video').props.disabled).toBe(true);
   });
 
+  test('offers a direct stop action from the sharing pill', () => {
+    const onScreenShareToggle = jest.fn();
+    const tree = render(
+      createProps({
+        onScreenShareToggle,
+        isScreenSharing: true,
+      }),
+    );
+
+    act(() => {
+      findByTestId(tree, 'screen-share-pill-stop').props.onPress();
+    });
+
+    expect(onScreenShareToggle).toHaveBeenCalledTimes(1);
+  });
+
   test('the indicator settles once frames are confirmed to reach the peer', () => {
     const tree = render(
       createProps({
@@ -150,9 +166,10 @@ describe('CallControls screen sharing', () => {
       }),
     );
 
-    expect(findByTestId(tree, 'screen-share-indicator').props.children).toBe(
-      'Sharing — they can see your screen',
+    expect(findByTestId(tree, 'screen-share-indicator-text').props.children).toBe(
+      "You're sharing your screen",
     );
+    expect(findByTestId(tree, 'screen-share-indicator-confirmed')).not.toBeNull();
   });
 
   test('the indicator says it is still checking before the first frame lands', () => {
@@ -164,9 +181,22 @@ describe('CallControls screen sharing', () => {
       }),
     );
 
-    expect(findByTestId(tree, 'screen-share-indicator').props.children).toBe(
-      'Sharing screen — checking they can see it',
+    expect(findByTestId(tree, 'screen-share-indicator-checking')).not.toBeNull();
+  });
+
+  test('the indicator surfaces a warning affordance and guidance when unverified', () => {
+    const tree = render(
+      createProps({
+        onScreenShareToggle: jest.fn(),
+        isScreenSharing: true,
+        screenShareDelivery: 'unverified',
+      }),
     );
+
+    expect(findByTestId(tree, 'screen-share-indicator-text').props.children).toBe(
+      "You're sharing your screen — remote view not confirmed",
+    );
+    expect(findByTestId(tree, 'screen-share-indicator-warning')).not.toBeNull();
   });
 
   test('leave stays on the surface, never inside the More sheet', () => {
