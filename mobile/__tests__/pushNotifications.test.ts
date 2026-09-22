@@ -5,6 +5,7 @@ import {
   _extractPushType,
   addCallLinkListener,
   addChatLinkListener,
+  displayMessageReceivedInApp,
   formatMessageNotificationPreview,
   getInitialCallLink,
   getInitialChatLink,
@@ -1003,6 +1004,7 @@ describe('message push handling', () => {
     await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
 
     expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(enqueueInAppMessageNotification).not.toHaveBeenCalled();
     expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
@@ -1022,6 +1024,7 @@ describe('message push handling', () => {
     await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
 
     expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(enqueueInAppMessageNotification).not.toHaveBeenCalled();
     expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
@@ -1046,6 +1049,7 @@ describe('message push handling', () => {
     await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
 
     expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(enqueueInAppMessageNotification).not.toHaveBeenCalled();
     expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
@@ -1077,6 +1081,109 @@ describe('message push handling', () => {
       title: 'New WeTalk message',
       body: 'Open WeTalk to view it.',
     });
+  });
+
+  test('in-app banner uses the same preview privacy modes', async () => {
+    await setNotificationPreviewMode('generic');
+
+    await displayMessageReceivedInApp({
+      messageId: 'message-generic',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+      title: 'Alice',
+      body: 'Secret attachment budget.xlsx',
+      deepLink: 'wetalk://chat/alice:bob',
+    });
+
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: 'message-generic',
+        title: 'New WeTalk message',
+        body: 'Open WeTalk to view it.',
+      }),
+    );
+
+    jest.clearAllMocks();
+    enqueueInAppMessageNotificationMock.mockReturnValue(true);
+    resetMessageNotificationState();
+    await setNotificationPreviewMode('sender');
+
+    await displayMessageReceivedInApp({
+      messageId: 'message-sender',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+      title: 'Alice',
+      body: 'Secret attachment budget.xlsx',
+      deepLink: 'wetalk://chat/alice:bob',
+    });
+
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: 'message-sender',
+        title: 'alice',
+        body: 'Sent you a message',
+      }),
+    );
+  });
+
+  test('in-app banner derives attachment previews from socket messages', async () => {
+    await displayMessageReceivedInApp({
+      messageId: 'message-image',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+      type: 'image',
+      body: '',
+      deepLink: 'wetalk://chat/alice:bob',
+    });
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-image', body: '📷 Photo' }),
+    );
+
+    jest.clearAllMocks();
+    enqueueInAppMessageNotificationMock.mockReturnValue(true);
+    resetMessageNotificationState();
+
+    await displayMessageReceivedInApp({
+      messageId: 'message-file',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+      type: 'file',
+      attachment: { name: 'budget.xlsx' },
+      deepLink: 'wetalk://chat/alice:bob',
+    });
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-file', body: '📎 budget.xlsx' }),
+    );
+
+    jest.clearAllMocks();
+    enqueueInAppMessageNotificationMock.mockReturnValue(true);
+    resetMessageNotificationState();
+
+    await displayMessageReceivedInApp({
+      messageId: 'message-voice',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+      type: 'voice',
+      deepLink: 'wetalk://chat/alice:bob',
+    });
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-voice', body: '🎤 Voice message' }),
+    );
+  });
+
+  test('in-app banner deduplicates a socket copy after the push was seen', async () => {
+    markMessageSeen('message-1');
+
+    await expect(
+      displayMessageReceivedInApp({
+        messageId: 'message-1',
+        conversationId: 'alice:bob',
+        senderId: 'alice',
+        body: 'hey there',
+      }),
+    ).resolves.toEqual({ shown: false, reason: 'already_delivered' });
+
+    expect(enqueueInAppMessageNotification).not.toHaveBeenCalled();
   });
 
   test('a mute silences only that person', async () => {
