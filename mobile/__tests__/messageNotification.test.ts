@@ -10,6 +10,7 @@ import {
   setActiveConversation,
   showMessageNotification,
 } from '../src/messageNotification';
+import { logWarn } from '../src/appLogger';
 
 jest.mock('../src/appLogger', () => ({
   logError: jest.fn(),
@@ -35,7 +36,7 @@ beforeEach(() => {
   resetMessageNotificationState();
   Platform.OS = 'android';
   NativeModules.MessageNotification = {
-    show: jest.fn(async () => ({ shown: true, channelImportance: 3, messageCount: 1 })),
+    show: jest.fn(async () => ({ shown: true, channelImportance: 4, channelHasSound: true, messageCount: 1 })),
     dismiss: jest.fn(),
   };
 });
@@ -87,6 +88,23 @@ describe('showMessageNotification', () => {
     expect(hasSeenMessage('message-1')).toBe(false);
     await showMessageNotification(MESSAGE);
     expect(hasSeenMessage('message-1')).toBe(true);
+  });
+
+  test('warns when the effective Android channel cannot heads-up', async () => {
+    NativeModules.MessageNotification.show.mockResolvedValue({
+      shown: true,
+      channelImportance: 3,
+      channelHasSound: false,
+      messageCount: 1,
+    });
+
+    await showMessageNotification(MESSAGE);
+
+    expect(logWarn).toHaveBeenCalledWith('[MessageNotification] Channel may not heads-up', {
+      conversationId: 'alice:bob',
+      channelImportance: 3,
+      channelHasSound: false,
+    });
   });
 
   test('reports why nothing was shown instead of throwing', async () => {

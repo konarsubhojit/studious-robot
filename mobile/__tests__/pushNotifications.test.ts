@@ -35,6 +35,7 @@ import {
   setActiveConversation,
   showMessageNotification,
 } from '../src/messageNotification';
+import { enqueueInAppMessageNotification } from '../src/inAppMessageNotifications';
 import {
   resetNotificationPrefsForTests,
   setNotificationPreviewMode,
@@ -47,11 +48,16 @@ const globalAny = ((global) as any);
 const getInitialURLMock = (Linking.getInitialURL as jest.Mock);
 const addEventListenerMock = (Linking.addEventListener as jest.Mock);
 const showMessageNotificationMock = ((showMessageNotification) as jest.Mock);
+const enqueueInAppMessageNotificationMock = ((enqueueInAppMessageNotification) as jest.Mock);
 
 jest.mock('../src/messageNotification', () => {
   const actual = jest.requireActual('../src/messageNotification');
   return { ...actual, showMessageNotification: jest.fn() };
 });
+
+jest.mock('../src/inAppMessageNotifications', () => ({
+  enqueueInAppMessageNotification: jest.fn(() => true),
+}));
 
 jest.mock('../src/appLogger', () => ({
   flushDurableLogs: jest.fn(() => Promise.resolve()),
@@ -899,6 +905,7 @@ describe('message push handling', () => {
     expect(showMessageNotification).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: 'message-1', conversationId: 'alice:bob' }),
     );
+    expect(enqueueInAppMessageNotification).not.toHaveBeenCalled();
     expect(logBackgroundInfo).toHaveBeenCalledWith('[Push] Background message push received', {
       messageId: 'message-1',
       conversationId: 'alice:bob',
@@ -975,6 +982,7 @@ describe('message push handling', () => {
     await handleForegroundPushMessage({ data: SERVER_MESSAGE_DATA });
 
     expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(enqueueInAppMessageNotification).not.toHaveBeenCalled();
     expect(hasSeenMessage('message-1')).toBe(true);
     expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
@@ -1087,16 +1095,79 @@ describe('message push handling', () => {
     expect(hasSeenMessage('message-1')).toBe(false);
   });
 
-  test('still notifies in the foreground for another conversation', async () => {    setActiveConversation({ peerId: 'carol', conversationId: 'bob:carol' });
+  test('still notifies in the foreground for another conversation and shows the banner', async () => {    setActiveConversation({ peerId: 'carol', conversationId: 'bob:carol' });
 
     await handleForegroundPushMessage({ data: SERVER_MESSAGE_DATA });
 
     expect(showMessageNotification).toHaveBeenCalledTimes(1);
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith({
+      messageId: 'message-1',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+      deepLink: 'wetalk://chat/alice:bob',
+      title: 'alice',
+      body: 'hey there',
+    });
     expect(logInfo).toHaveBeenCalledWith('[Push] Foreground message push received', {
       messageId: 'message-1',
       conversationId: 'alice:bob',
       senderId: 'alice',
     });
+  });
+
+  test('passes attachment previews unchanged to OS notifications and the banner', async () => {
+    await handleForegroundPushMessage({
+      data: {
+        ...SERVER_MESSAGE_DATA,
+        messageId: 'message-photo',
+        body: '📷 Photo',
+      },
+    });
+
+    expect(showMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-photo', body: '📷 Photo' }),
+    );
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-photo', body: '📷 Photo' }),
+    );
+
+    jest.clearAllMocks();
+    showMessageNotificationMock.mockImplementation(async () => ({ shown: true }));
+    enqueueInAppMessageNotificationMock.mockReturnValue(true);
+
+    await handleForegroundPushMessage({
+      data: {
+        ...SERVER_MESSAGE_DATA,
+        messageId: 'message-file',
+        body: '📎 budget.xlsx',
+      },
+    });
+
+    expect(showMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-file', body: '📎 budget.xlsx' }),
+    );
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-file', body: '📎 budget.xlsx' }),
+    );
+
+    jest.clearAllMocks();
+    showMessageNotificationMock.mockImplementation(async () => ({ shown: true }));
+    enqueueInAppMessageNotificationMock.mockReturnValue(true);
+
+    await handleForegroundPushMessage({
+      data: {
+        ...SERVER_MESSAGE_DATA,
+        messageId: 'message-voice',
+        body: '🎤 Voice message',
+      },
+    });
+
+    expect(showMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-voice', body: '🎤 Voice message' }),
+    );
+    expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-voice', body: '🎤 Voice message' }),
+    );
   });
 
   test('logs unknown push types instead of silently dropping them', async () => {

@@ -482,36 +482,6 @@ export function formatMessageNotificationPreview(message: {
   if (mode === 'generic') {
     return { title: 'New WeTalk message', body: 'Open WeTalk to view it.' };
   }
-
-  function normalizeMessageNotificationPayload(message: {
-    messageId?: string | null;
-    conversationId?: string | null;
-    senderId?: string | null;
-    title?: string | null;
-    body?: string | null;
-    deepLink?: string | null;
-    type?: string;
-    deletedAt?: string | null;
-    attachment?: { name?: string | null; } | null;
-  }): MessageNotificationPayload | null {
-    const messageId = (message.messageId ?? '').trim();
-    const conversationId = (message.conversationId ?? '').trim();
-    if (!messageId || !conversationId) return null;
-
-    const senderId = (message.senderId ?? '').trim();
-    const title = (message.title ?? '').trim();
-    const body = describeMessagePreview(message) || (message.body ?? '').trim();
-    const deepLink = (message.deepLink ?? '').trim();
-
-    return {
-      messageId,
-      conversationId,
-      senderId: senderId || null,
-      title: title || senderId || 'New message',
-      body: body || 'Sent you a message',
-      deepLink: deepLink || `wetalk://chat/${conversationId}`,
-    };
-  }
   if (mode === 'sender') {
     return {
       title: message.senderId || message.title || 'New message',
@@ -519,6 +489,42 @@ export function formatMessageNotificationPreview(message: {
     };
   }
   return { title: message.title, body: message.body };
+}
+
+function normalizeMessageNotificationPayload(message: {
+  messageId?: string | null;
+  conversationId?: string | null;
+  senderId?: string | null;
+  title?: string | null;
+  body?: string | null;
+  deepLink?: string | null;
+  type?: string;
+  deletedAt?: string | null;
+  attachment?: { name?: string | null; } | null;
+}): MessageNotificationPayload | null {
+  const messageId = (message.messageId ?? '').trim();
+  const conversationId = (message.conversationId ?? '').trim();
+  if (!messageId || !conversationId) return null;
+
+  const senderId = (message.senderId ?? '').trim();
+  const title = (message.title ?? '').trim();
+  const body =
+    describeMessagePreview({
+      type: message.type,
+      body: message.body ?? undefined,
+      deletedAt: message.deletedAt,
+      attachment: message.attachment,
+    }) || (message.body ?? '').trim();
+  const deepLink = (message.deepLink ?? '').trim();
+
+  return {
+    messageId,
+    conversationId,
+    senderId: senderId || null,
+    title: title || senderId || 'New message',
+    body: body || 'Sent you a message',
+    deepLink: deepLink || `wetalk://chat/${conversationId}`,
+  };
 }
 
 /**

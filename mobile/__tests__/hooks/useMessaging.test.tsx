@@ -8,6 +8,7 @@ import {
   markMessageSeen,
   setActiveConversation,
 } from '../../src/messageNotification';
+import { displayMessageReceivedInApp } from '../../src/pushNotifications';
 import * as chatDb from '../../src/storage/chatDb';
 import { triggerHapticUnlessSilent } from '../../src/haptics';
 import { evictCachedAttachmentsForMessage } from '../../src/attachmentCache';
@@ -27,6 +28,10 @@ jest.mock('../../src/messageNotification', () => ({
   dismissMessageNotification: jest.fn(),
   markMessageSeen: jest.fn(),
   setActiveConversation: jest.fn(),
+}));
+
+jest.mock('../../src/pushNotifications', () => ({
+  displayMessageReceivedInApp: jest.fn(async () => ({ shown: true })),
 }));
 
 jest.mock('../../src/attachmentCache', () => ({
@@ -719,6 +724,10 @@ describe('useMessaging', () => {
       syncState: 'synced',
     });
     expect(resultRef.current.conversations[0].unreadCount).toBe(1);
+    expect(displayMessageReceivedInApp).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'm1', senderId: 'bob', body: 'hi' }),
+    );
+    expect(markMessageSeen).toHaveBeenCalledWith('m1');
   });
 
   test('handleMessageReceived auto-marks-read and does not bump unread when the conversation is active', async () => {
@@ -743,6 +752,8 @@ describe('useMessaging', () => {
     });
 
     expect(resultRef.current.conversations[0].unreadCount).toBe(0);
+    expect(displayMessageReceivedInApp).not.toHaveBeenCalled();
+    expect(markMessageSeen).toHaveBeenCalledWith('m1');
   });
 
   test('handleMessageReceived keeps a provisional new conversation visible when its refetch fails', async () => {

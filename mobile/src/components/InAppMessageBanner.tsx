@@ -76,15 +76,15 @@ export default function InAppMessageBanner() {
         testID="in-app-message-banner"
         style={({ pressed }) => [styles.banner, pressed && styles.pressed]}>
         <View style={styles.copy}>
-          <Text style={styles.title} numberOfLines={1} maxFontSizeMultiplier={fontScaleCaps.body}>
+          <Text style={styles.title} numberOfLines={1} maxFontSizeMultiplier={fontScaleCaps.meta}>
             {notification.title}
           </Text>
-          <Text style={styles.body} numberOfLines={2} maxFontSizeMultiplier={fontScaleCaps.body}>
+          <Text style={styles.body} numberOfLines={2} maxFontSizeMultiplier={fontScaleCaps.meta}>
             {notification.body}
           </Text>
         </View>
         <IconButton
-          icon="close"
+          icon="dismiss"
           size={32}
           onPress={dismiss}
           accessibilityLabel="Dismiss message notification"
@@ -110,7 +110,7 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
       borderRadius: 18,
-      backgroundColor: colors.surfaceElevated,
+      backgroundColor: colors.surfaceRaised,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
       shadowColor: colors.shadow,
@@ -124,7 +124,7 @@ const createStyles = (colors: ThemeColors) =>
     },
     copy: {
       flex: 1,
-      gap: spacing.xxs,
+      gap: spacing.xs,
     },
     title: {
       ...typography.body,
