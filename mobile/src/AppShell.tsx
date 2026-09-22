@@ -16,6 +16,7 @@ import CallEndSummary from './components/CallEndSummary';
 import CallScreen from './components/CallScreen';
 import { Banner } from './components/primitives';
 import FloatingCallBubble from './components/FloatingCallBubble';
+import InAppMessageBanner from './components/InAppMessageBanner';
 import InCallBanner from './components/InCallBanner';
 import IncomingCallScreen from './components/IncomingCallScreen';
 import OutgoingCallScreen from './components/OutgoingCallScreen';
@@ -276,6 +277,7 @@ export default function AppShell() {
       ) : null}
       <CallElsewhereBanner isVisible={isTabShellActive} style={styles.degradedBanner} />
       {isCallMinimizedInShell ? <MinimizedCallBanner /> : null}
+      {isTabShellActive ? <InAppMessageBanner /> : null}
       {screenContent}
       {isBubbleVisible ? <MinimizedCallBubble /> : null}
       {/* A full-screen call uses light icons because its video stage is fixed-dark

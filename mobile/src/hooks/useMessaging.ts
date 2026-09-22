@@ -15,6 +15,7 @@ import type { ChatDraft, ChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
+import { displayMessageReceivedInApp } from '../pushNotifications';
 import {
   conversationIdForPeer,
   mergePendingConversations,
@@ -955,11 +956,6 @@ export default function useMessaging({
       if (!message?.senderId) return;
       const senderId = message.senderId;
 
-      // The same message can also arrive as a push; record it so the push
-      // handler does not post a notification for a message already delivered
-      // here.
-      markMessageSeen(message.messageId);
-
       setMessagesByPeer(prev => applyIncomingMessage(prev, message));
 
       const isActiveConversation = activeChatPeerIdRef.current === senderId;
@@ -974,6 +970,7 @@ export default function useMessaging({
       if (isActiveConversation) {
         // The conversation is currently open: auto-mark-read, no unread bump,
         // and clear any notification a push already posted for it.
+        markMessageSeen(message.messageId);
         if (message.conversationId) dismissMessageNotification(message.conversationId);
         markConversationRead(senderId).catch(error => {
           logWarn('[Messaging] markConversationRead failed', {
@@ -982,6 +979,15 @@ export default function useMessaging({
         });
         return;
       }
+
+      displayMessageReceivedInApp(message).catch(error => {
+        logWarn('[Messaging] in-app message notification failed', {
+          message: errorMessage(error),
+        });
+      });
+      // The same message can also arrive as a push; record it after the in-app
+      // path has had a chance to consult the shared dedupe registry.
+      markMessageSeen(message.messageId);
     },
     [fetchConversations, markConversationRead],
   );

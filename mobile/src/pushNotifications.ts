@@ -1,5 +1,5 @@
 import { Linking, Platform } from 'react-native';
-import { API_ROUTES } from '../../shared';
+import { API_ROUTES, describeMessagePreview } from '../../shared';
 import { getApp } from '@react-native-firebase/app';
 import {
   flushDurableLogs,
@@ -21,6 +21,7 @@ import {
   markMessageSeen,
   showMessageNotification,
 } from './messageNotification';
+import { enqueueInAppMessageNotification } from './inAppMessageNotifications';
 import {
   areMessageNotificationsEnabled,
   ensureNotificationPrefsLoaded,
@@ -109,6 +110,15 @@ const MESSAGE_RECEIPT_STAGES = new Set([
 export const PUSH_TYPE_CALL = 'call.incoming';
 export const PUSH_TYPE_CALL_CANCELLED = 'call.cancelled';
 export const PUSH_TYPE_MESSAGE = 'message.received';
+
+type MessageNotificationPayload = {
+  messageId: string;
+  conversationId: string;
+  senderId: string | null;
+  title: string;
+  body: string;
+  deepLink: string;
+};
 
 /**
  * Parse a WeTalk deep-link URL into a call descriptor.
@@ -442,7 +452,7 @@ export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<s
  * too, so FCM displays nothing by itself and every field the app needs to
  * render the notification has to come out of `data`.
  */
-export function _extractMessageFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): { messageId: string; conversationId: string; senderId: string | null; title: string; body: string; deepLink: string; } | null {
+export function _extractMessageFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): MessageNotificationPayload | null {
   const data = remoteMessage?.data ?? {};
   const messageId = typeof data.messageId === 'string' ? data.messageId.trim() : '';
   const conversationId = typeof data.conversationId === 'string' ? data.conversationId.trim() : '';
@@ -471,6 +481,36 @@ export function formatMessageNotificationPreview(message: {
   const mode = getNotificationPreviewMode();
   if (mode === 'generic') {
     return { title: 'New WeTalk message', body: 'Open WeTalk to view it.' };
+  }
+
+  function normalizeMessageNotificationPayload(message: {
+    messageId?: string | null;
+    conversationId?: string | null;
+    senderId?: string | null;
+    title?: string | null;
+    body?: string | null;
+    deepLink?: string | null;
+    type?: string;
+    deletedAt?: string | null;
+    attachment?: { name?: string | null; } | null;
+  }): MessageNotificationPayload | null {
+    const messageId = (message.messageId ?? '').trim();
+    const conversationId = (message.conversationId ?? '').trim();
+    if (!messageId || !conversationId) return null;
+
+    const senderId = (message.senderId ?? '').trim();
+    const title = (message.title ?? '').trim();
+    const body = describeMessagePreview(message) || (message.body ?? '').trim();
+    const deepLink = (message.deepLink ?? '').trim();
+
+    return {
+      messageId,
+      conversationId,
+      senderId: senderId || null,
+      title: title || senderId || 'New message',
+      body: body || 'Sent you a message',
+      deepLink: deepLink || `wetalk://chat/${conversationId}`,
+    };
   }
   if (mode === 'sender') {
     return {
@@ -638,31 +678,15 @@ export async function sendPushReceipt({
  *
  * @param opts
  */
-async function displayMessagePush({ remoteMessage, message }: {
-        remoteMessage: object | null | undefined;
-        message: {
-            messageId: string;
-            conversationId: string;
-            senderId: string | null;
-            title: string;
-            body: string;
-            deepLink: string;
-        };
-    }): Promise<{ shown: boolean; reason?: string; }> {
+async function messageNotificationSuppressionReason(message: MessageNotificationPayload): Promise<string | null> {
   // The same message can arrive over both the socket and push; the socket copy
   // marks it seen, so the push must not announce it a second time.
   if (hasSeenMessage(message.messageId)) {
-    await sendPushReceipt({
-      remoteMessage,
-      messageId: message.messageId,
-      stage: 'notification_suppressed',
-      reason: 'already_delivered',
-    });
-    return { shown: false, reason: 'already_delivered' };
+    return 'already_delivered';
   }
 
   // The conversation is on screen: `useMessaging` already rendered the message
-  // in-app, so an OS notification for it would be noise. Messages for any other
+  // in-app, so any notification for it would be noise. Messages for any other
   // conversation still notify.
   if (
     isConversationOnScreen({
@@ -671,13 +695,7 @@ async function displayMessagePush({ remoteMessage, message }: {
     })
   ) {
     markMessageSeen(message.messageId);
-    await sendPushReceipt({
-      remoteMessage,
-      messageId: message.messageId,
-      stage: 'notification_suppressed',
-      reason: 'conversation_on_screen',
-    });
-    return { shown: false, reason: 'conversation_on_screen' };
+    return 'conversation_on_screen';
   }
 
   // The user's own choice, and the last thing consulted before ringing: the
@@ -686,37 +704,55 @@ async function displayMessagePush({ remoteMessage, message }: {
   // idempotent, so the cost is one read per process.
   await ensureNotificationPrefsLoaded();
 
-  if (!areMessageNotificationsEnabled()) {
-    await sendPushReceipt({
-      remoteMessage,
-      messageId: message.messageId,
-      stage: 'notification_suppressed',
-      reason: 'notifications_disabled',
-    });
-    return { shown: false, reason: 'notifications_disabled' };
-  }
+  if (!areMessageNotificationsEnabled()) return 'notifications_disabled';
+  if (isPeerMuted(message.senderId)) return 'peer_muted';
+  if (isQuietHoursActive('messages')) return 'quiet_hours';
+  return null;
+}
 
-  if (isPeerMuted(message.senderId)) {
-    await sendPushReceipt({
-      remoteMessage,
-      messageId: message.messageId,
-      stage: 'notification_suppressed',
-      reason: 'peer_muted',
-    });
-    return { shown: false, reason: 'peer_muted' };
-  }
+export async function displayMessageReceivedInApp(message: {
+  messageId?: string | null;
+  conversationId?: string | null;
+  senderId?: string | null;
+  title?: string | null;
+  body?: string | null;
+  deepLink?: string | null;
+  type?: string;
+  deletedAt?: string | null;
+  attachment?: { name?: string | null; } | null;
+}): Promise<{ shown: boolean; reason?: string; }> {
+  const payload = normalizeMessageNotificationPayload(message);
+  if (!payload) return { shown: false, reason: 'missing_message_payload' };
 
-  if (isQuietHoursActive('messages')) {
+  const suppressed = await messageNotificationSuppressionReason(payload);
+  if (suppressed) return { shown: false, reason: suppressed };
+
+  const preview = formatMessageNotificationPreview(payload);
+  const shown = enqueueInAppMessageNotification({ ...payload, ...preview });
+  if (shown) markMessageSeen(payload.messageId);
+  return shown ? { shown: true } : { shown: false, reason: 'already_queued' };
+}
+
+async function displayMessagePush({ remoteMessage, message, showInAppBanner = false }: {
+        remoteMessage: object | null | undefined;
+        message: MessageNotificationPayload;
+        showInAppBanner?: boolean;
+    }): Promise<{ shown: boolean; reason?: string; }> {
+  const suppressed = await messageNotificationSuppressionReason(message);
+  if (suppressed) {
     await sendPushReceipt({
       remoteMessage,
       messageId: message.messageId,
       stage: 'notification_suppressed',
-      reason: 'quiet_hours',
+      reason: suppressed,
     });
-    return { shown: false, reason: 'quiet_hours' };
+    return { shown: false, reason: suppressed };
   }
 
   const preview = formatMessageNotificationPreview(message);
+  if (showInAppBanner && enqueueInAppMessageNotification({ ...message, ...preview })) {
+    markMessageSeen(message.messageId);
+  }
   const result = await showMessageNotification({ ...message, ...preview }).catch(error => ({
     shown: false,
     reason: 'notification_threw',
@@ -1013,7 +1049,7 @@ async function handleForegroundMessagePush(remoteMessage: { data?: Record<string
   });
 
   await sendPushReceipt({ remoteMessage, messageId: message.messageId, stage: 'received' });
-  await displayMessagePush({ remoteMessage, message });
+  await displayMessagePush({ remoteMessage, message, showInAppBanner: true });
 
   return message;
 }

@@ -27,6 +27,7 @@ import { errorMessage } from './errors';
 
 /** Maximum number of recently-seen message ids retained for deduplication. */
 const SEEN_MESSAGE_LIMIT = 200;
+const IMPORTANCE_HIGH = 4;
 
 /**
  * Message ids already delivered to the user through the socket (or already
@@ -154,8 +155,18 @@ export async function showMessageNotification({
       conversationId,
       senderId,
       channelImportance: result.channelImportance ?? null,
+      channelHasSound: result.channelHasSound ?? null,
       messageCount: result.messageCount ?? null,
     });
+    const channelImportance = Number(result.channelImportance ?? IMPORTANCE_HIGH);
+    const channelHasSound = result.channelHasSound !== false;
+    if (channelImportance < IMPORTANCE_HIGH || !channelHasSound) {
+      logWarn('[MessageNotification] Channel may not heads-up', {
+        conversationId,
+        channelImportance,
+        channelHasSound,
+      });
+    }
     return { shown: true };
   } catch (error) {
     logError('[MessageNotification] show failed', error);
