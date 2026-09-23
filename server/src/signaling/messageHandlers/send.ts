@@ -5,7 +5,7 @@ import { isBlocked } from '../../security.ts';
 import { emitToUserSockets } from '../../domain/notifications.ts';
 import { invalidateCache, conversationsCachePrefix, messagesCachePrefix } from '../../cache.ts';
 import { acknowledgeError, acknowledgeSuccess, parseInboundPayload } from '../ack.ts';
-import { CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS } from '../../../../shared/index.ts';
+import { ATTACHMENT_RECORD_FIELDS, CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS } from '../../../../shared/index.ts';
 import { describeError } from '../../lib/errors.ts';
 import { runDetached } from '../../lib/queryTiming.ts';
 import { deliverMessage } from './delivery.ts';
@@ -22,19 +22,62 @@ type MessageSendContext = {
   state: import('../../stores/contracts.ts').ServerState;
 };
 
-function sameAcceptedSend(
+/**
+ * Compare two attachment field values, treating `null` and `undefined` as
+ * equivalent for optional fields and doing an element-wise compare for the
+ * `waveform` array rather than reference equality.
+ */
+function attachmentValuesEqual(a: unknown, b: unknown): boolean {
+  const normalisedA = a ?? null;
+  const normalisedB = b ?? null;
+  if (Array.isArray(normalisedA) || Array.isArray(normalisedB)) {
+    if (!Array.isArray(normalisedA) || !Array.isArray(normalisedB)) return false;
+    if (normalisedA.length !== normalisedB.length) return false;
+    return normalisedA.every((value, index) => value === normalisedB[index]);
+  }
+  return normalisedA === normalisedB;
+}
+
+/**
+ * Find the first `AttachmentRecord` field that differs between two accepted
+ * attachments, or `null` if they represent the same attachment.
+ *
+ * A `jsonb` round-trip through Postgres normalises key order, so this must
+ * compare fields individually rather than via `JSON.stringify` — see the
+ * caller for why that distinction matters.
+ */
+function differingAttachmentField(
+  a: import('../../../../shared/signaling/schemas.ts').AttachmentRecord | null | undefined,
+  b: import('../../../../shared/signaling/schemas.ts').AttachmentRecord | null | undefined
+): string | null {
+  const attachmentA = a ?? null;
+  const attachmentB = b ?? null;
+  if (attachmentA === null && attachmentB === null) return null;
+  if (attachmentA === null || attachmentB === null) return 'attachment';
+  for (const field of ATTACHMENT_RECORD_FIELDS) {
+    if (!attachmentValuesEqual(attachmentA[field], attachmentB[field])) {
+      return `attachment.${field}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the first field that differs between the message a client submitted
+ * and the row already stored under the same `messageId`, or `null` if they
+ * describe the same accepted send (an idempotent retry).
+ */
+function differingAcceptedSendField(
   a: import('../../messageStore.ts').StoredMessage,
   b: import('../../messageStore.ts').StoredMessage
-): boolean {
-  return (
-    a.senderId === b.senderId &&
-    a.recipientId === b.recipientId &&
-    a.conversationId === b.conversationId &&
-    a.body === b.body &&
-    a.type === b.type &&
-    a.replyTo === b.replyTo &&
-    JSON.stringify(a.attachment ?? null) === JSON.stringify(b.attachment ?? null)
-  );
+): string | null {
+  if (a.senderId !== b.senderId) return 'senderId';
+  if (a.recipientId !== b.recipientId) return 'recipientId';
+  if (a.conversationId !== b.conversationId) return 'conversationId';
+  if (a.body !== b.body) return 'body';
+  if (a.type !== b.type) return 'type';
+  if (a.replyTo !== b.replyTo) return 'replyTo';
+  return differingAttachmentField(a.attachment, b.attachment);
 }
 
 /**
@@ -63,10 +106,11 @@ async function persistAcceptedMessage(
     ? await state.messageStore.saveMessageWithStatus(message)
     : { message: await state.messageStore.saveMessage(message), inserted: true };
   const saved = result.message;
-  if (!sameAcceptedSend(saved, message)) {
+  const mismatchedField = differingAcceptedSendField(saved, message);
+  if (mismatchedField) {
     console.error(
       `[messages] rejected messageId collision messageId=${message.messageId}` +
-        ` conversationId=${message.conversationId}`
+        ` conversationId=${message.conversationId} field=${mismatchedField}`
     );
     throw new Error('messageId already belongs to a different message');
   }

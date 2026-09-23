@@ -75,6 +75,25 @@ export type AttachmentRecord = {
   thumbnailUrl?: string | null;
   waveform?: number[] | null;
 };
+
+/**
+ * The authoritative field list for {@link AttachmentRecord}, kept next to the
+ * type so callers that need to compare two attachments field-by-field (e.g.
+ * detecting a genuine `messageId` collision vs. a jsonb-round-tripped retry)
+ * have one place to source it from instead of hand-copying the field names.
+ */
+const ATTACHMENT_RECORD_FIELDS = [
+  'url',
+  'mimeType',
+  'sizeBytes',
+  'name',
+  'width',
+  'height',
+  'durationMs',
+  'thumbnailUrl',
+  'waveform',
+] as const satisfies readonly (keyof AttachmentRecord)[];
+
 const attachmentRecord = s.object(
   {
     url: s.string({ min: 1, max: 2048, trim: true }),
@@ -403,6 +422,7 @@ function parseEventPayload(eventName: string, payload: unknown, direction: 'clie
 
 export {
   ACK_SCHEMA,
+  ATTACHMENT_RECORD_FIELDS,
   CALL_TRANSITION_NOTIFICATION,
   CLIENT_EVENT_SCHEMAS,
   MAX_MESSAGE_BODY_LENGTH,

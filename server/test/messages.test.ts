@@ -76,6 +76,108 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 
 const VERSION = 1;
 
+const R2_ENV = {
+  R2_ACCOUNT_ID: 'test-account',
+  R2_BUCKET: 'wetalk-media',
+  R2_ACCESS_KEY_ID: 'test-key-id',
+  R2_SECRET_ACCESS_KEY: 'test-secret',
+};
+
+/**
+ * Apply the R2 configuration for the duration of one test, so `message.send`
+ * accepts an attachment; mirrors `messages-rich.test.ts`.
+ */
+function withR2Env(t: import('node:test').TestContext) {
+  const previous: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(R2_ENV)) {
+    previous[key] = process.env[key];
+    process.env[key] = value;
+  }
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
+
+/**
+ * Reorder an attachment's keys the way Postgres `jsonb` does: shortest key
+ * name first, alphabetically among ties — never the construction order
+ * `validateAttachment` produces. Reproduces the exact regression where
+ * `sameAcceptedSend` compared serialised strings instead of fields.
+ */
+function asJsonbAttachmentOrder(attachment: Record<string, unknown>): Record<string, unknown> {
+  const keysByJsonbOrder = Object.keys(attachment).sort((a, b) =>
+    a.length !== b.length ? a.length - b.length : a.localeCompare(b)
+  );
+  const reordered: Record<string, unknown> = {};
+  for (const key of keysByJsonbOrder) reordered[key] = attachment[key];
+  return reordered;
+}
+
+/**
+ * An in-memory `messageStore` whose `saveMessageWithStatus` mimics a `jsonb`
+ * column: the first save for a `messageId` is stored with its attachment key
+ * order scrambled the way Postgres would, and every later save for that same
+ * `messageId` returns that stored row untouched, regardless of what the retry
+ * sent.
+ */
+function asJsonbRoundTrippingMessageStore() {
+  const stored = new Map<string, any>();
+  return asMessageStore({
+    type: 'memory' as const,
+    async saveMessage(message: any) {
+      throw new Error('unused: this store only supports saveMessageWithStatus');
+    },
+    async saveMessageWithStatus(message: any) {
+      const existing = stored.get(message.messageId);
+      if (existing) return { message: existing, inserted: false };
+      const record = {
+        ...message,
+        attachment: message.attachment ? asJsonbAttachmentOrder(message.attachment) : null,
+        deliveredTo: [],
+        readAt: null,
+      };
+      stored.set(message.messageId, record);
+      return { message: record, inserted: true };
+    },
+    async listMessages() {
+      return [];
+    },
+    async searchMessages() {
+      return [];
+    },
+    markDelivered: async () => null,
+    enqueueDeliveryReceipt() {},
+    async flushDeliveryReceipts() {},
+    async listConversations() {
+      return [];
+    },
+    async markRead() {
+      return 0;
+    },
+    async deleteMessage() {
+      return null;
+    },
+    async reactToMessage() {
+      return null;
+    },
+  });
+}
+
+function imageAttachment(overrides: Record<string, unknown> = {}) {
+  return {
+    url: 'chatblobs/retry-alice_retry-bob/photo.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: 1024,
+    width: 800,
+    height: 600,
+    ...overrides,
+  };
+}
+
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -363,6 +465,122 @@ test('message.send retry with the same id returns the stored message without dup
   assert.equal(replay.message.createdAt, first.message.createdAt);
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(deliveries, 1, 'a replayed ack must not deliver the same message twice');
+});
+
+test('message.send retry with an attachment reordered like a jsonb round-trip returns the stored message without duplicate fanout', async (t) => {
+  withR2Env(t);
+  const messageStore = asJsonbRoundTrippingMessageStore();
+  const { url, teardown } = await startServer({ messageStore });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'retry-alice');
+  const bobSession = await createSession(url, 'retry-bob');
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  let deliveries = 0;
+  bob.on('message.received', () => {
+    deliveries += 1;
+  });
+
+  const payload = {
+    version: VERSION,
+    recipientId: 'retry-bob',
+    type: 'image',
+    body: '',
+    messageId: 'stable-attachment-id',
+    attachment: imageAttachment(),
+  };
+  const first = await emitWithAck(alice, 'message.send', payload);
+  assert.equal(first.ok, true, JSON.stringify(first));
+
+  const replay = await emitWithAck(alice, 'message.send', payload);
+  assert.equal(replay.ok, true, JSON.stringify(replay));
+  assert.equal(replay.message.messageId, first.message.messageId);
+  assert.equal(replay.message.attachment.url, first.message.attachment.url);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(deliveries, 1, 'a replayed ack must not deliver the same message twice');
+});
+
+test('message.send retry where an optional attachment field is undefined on one side and null on the other succeeds', async (t) => {
+  withR2Env(t);
+  const messageStore = asJsonbRoundTrippingMessageStore();
+  const { url, teardown } = await startServer({ messageStore });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'retry-alice');
+  await createSession(url, 'retry-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const payload = {
+    version: VERSION,
+    recipientId: 'retry-bob',
+    type: 'image',
+    body: '',
+    messageId: 'stable-attachment-id-2',
+    // No `thumbnailUrl`: `validateAttachment` fills it in as `null`, so the
+    // stored side always has the key. The client omitting it entirely (thus
+    // `undefined` here) must not be reported as a mismatch against `null`.
+    attachment: imageAttachment(),
+  };
+  const first = await emitWithAck(alice, 'message.send', payload);
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.equal(first.message.attachment.thumbnailUrl, null);
+
+  const replay = await emitWithAck(alice, 'message.send', payload);
+  assert.equal(replay.ok, true, JSON.stringify(replay));
+  assert.equal(replay.message.messageId, first.message.messageId);
+});
+
+test('message.send rejects a retry whose attachment genuinely differs and names the differing field', async (t) => {
+  withR2Env(t);
+  const messageStore = asJsonbRoundTrippingMessageStore();
+  const { url, teardown } = await startServer({ messageStore });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'retry-alice');
+  await createSession(url, 'retry-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const originalError = console.error;
+  const errors: string[] = [];
+  console.error = (...args: unknown[]) => {
+    errors.push(args.join(' '));
+  };
+  t.after(() => {
+    console.error = originalError;
+  });
+
+  const first = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'retry-bob',
+    type: 'image',
+    body: '',
+    messageId: 'stable-attachment-id-3',
+    attachment: imageAttachment(),
+  });
+  assert.equal(first.ok, true, JSON.stringify(first));
+
+  const changedSize = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'retry-bob',
+    type: 'image',
+    body: '',
+    messageId: 'stable-attachment-id-3',
+    attachment: imageAttachment({ sizeBytes: 2048 }),
+  });
+  assert.equal(changedSize.ok, false);
+  assert.equal(changedSize.error.code, 'internal_error');
+  assert.ok(
+    errors.some((line) => line.includes('field=attachment.sizeBytes')),
+    `expected the rejection log to name the differing field, got: ${JSON.stringify(errors)}`
+  );
 });
 
 test('message.send rejects duplicate ids reused by another sender or body', async (t) => {
