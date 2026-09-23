@@ -155,14 +155,6 @@ R2_BUCKET=wetalk-chat
 R2_ACCESS_KEY_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 R2_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 R2_PUBLIC_BASE_URL=https://media.example.com   # bucket's public/CDN origin
-# Exposing that bucket (custom domain or r2.dev) makes every attachment readable
-# by anyone who learns its URL — R2 public access is bucket-wide, so the download
-# authorization is only a boundary when the bytes live in a bucket with no public
-# binding. Point new uploads at one here (reads still fall back to R2_BUCKET):
-# R2_BUCKET_PRIVATE=wetalk-chat-private
-# Retired base URLs, so attachments stored under them still resolve. R2's own
-# hostnames (pub-*.r2.dev, *.r2.cloudflarestorage.com) already do:
-# R2_PUBLIC_BASE_URL_LEGACY=https://media.old.example,https://cdn.older.example
 # R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com  # optional override
 R2_PRESIGN_TTL_SECONDS=300     # optional, default shown (max 3600)
 

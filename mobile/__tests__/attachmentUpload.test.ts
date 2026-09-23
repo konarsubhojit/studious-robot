@@ -181,7 +181,7 @@ describe('attachmentUpload', () => {
         conversationId: 'conv-1',
         key: 'chatblobs/conv-1/x.png',
         uploadUrl: 'https://r2.example/upload',
-        publicUrl: 'https://cdn.example/chatblobs/conv-1/x.png',
+        reference: 'chatblobs/conv-1/x.png',
         expiresAt: '2024-01-01T00:00:00.000Z',
         headers: {
           'Cache-Control': 'public, max-age=31536000, immutable',
@@ -339,7 +339,7 @@ describe('attachmentUpload', () => {
         conversationId: 'conv-1',
         key: 'chatblobs/conv-1/x.png',
         uploadUrl: 'https://r2.example/upload',
-        publicUrl: 'https://cdn.example/chatblobs/conv-1/x.png',
+        reference: 'chatblobs/conv-1/x.png',
         expiresAt: '2024-01-01T00:00:00.000Z',
         headers: {
           'Cache-Control': 'public, max-age=31536000, immutable',
@@ -374,7 +374,7 @@ describe('attachmentUpload', () => {
       xhr.onload();
 
       await expect(promise).resolves.toEqual({
-        url: payload.publicUrl,
+        url: payload.reference,
         mimeType: 'image/png',
         sizeBytes: 1024,
         width: 800,
@@ -389,7 +389,7 @@ describe('attachmentUpload', () => {
           conversationId: 'conv-1',
           key: 'chatblobs/conv-1/archive.zip',
           uploadUrl: 'https://r2.example/upload',
-          publicUrl: 'https://cdn.example/chatblobs/conv-1/archive.zip',
+          reference: 'chatblobs/conv-1/archive.zip',
           expiresAt: '2024-01-01T00:00:00.000Z',
           headers: {
             'Content-Type': mimeType,

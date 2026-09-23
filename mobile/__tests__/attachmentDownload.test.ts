@@ -106,21 +106,6 @@ describe('attachmentDownload', () => {
     expect(describeAttachmentDownloadResult(result)).toMatch(/connection/i);
   });
 
-  test('distinguishes a transfer that broke mid-flight from one that never connected', async () => {
-    (RNFS.downloadFile as jest.Mock).mockImplementation((options: any) => {
-      options.progress({ bytesWritten: 8 * 1024 * 1024, contentLength: 19120588 });
-      return { promise: Promise.reject(new Error('Software caused connection abort')) };
-    });
-
-    const result = await downloadAttachment({ url: 'https://media.test/chatblobs/c/big.zip' });
-
-    expect(result).toMatchObject({ success: false, reason: 'transfer-interrupted' });
-    expect(result.message).not.toMatch(/reach the file server/i);
-    expect(result.message).toMatch(/stopped partway/i);
-    // A broken transfer is worth another tap, unlike a missing object.
-    expect(isAttachmentDownloadRetryable('transfer-interrupted')).toBe(true);
-  });
-
   test('refuses an attachment with no URL, or one that is not http(s)', async () => {
     await expect(downloadAttachment({})).resolves.toMatchObject({
       success: false,

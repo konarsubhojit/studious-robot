@@ -21,7 +21,6 @@ const R2_ENV = {
   R2_BUCKET: 'wetalk-media',
   R2_ACCESS_KEY_ID: 'test-key-id',
   R2_SECRET_ACCESS_KEY: 'test-secret',
-  R2_PUBLIC_BASE_URL: 'https://media.example.test',
 };
 
 /**
@@ -95,10 +94,10 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 
 const VERSION = 1;
 
-/** A well-formed image attachment pointing at this deployment's blob prefix. */
+/** A well-formed image attachment referencing this deployment's blob prefix. */
 function imageAttachment(overrides = {}) {
   return {
-    url: `${R2_ENV.R2_PUBLIC_BASE_URL}/chatblobs/rich-alice:rich-bob/photo.jpg`,
+    url: 'chatblobs/rich-alice_rich-bob/photo.jpg',
     mimeType: 'image/jpeg',
     sizeBytes: 1024,
     width: 800,
@@ -117,7 +116,6 @@ test('presign produces the known SigV4 signature with cache control', () => {
       accessKeyId: 'test-key-id',
       secretAccessKey: 'test-secret',
       endpoint: 'https://test-account.r2.cloudflarestorage.com',
-      publicBaseUrl: 'https://media.example.test',
       ttlSeconds: 300,
     },
     key: 'chatblobs/alice%3Abob/00000000-0000-4000-8000-000000000000.jpg',
@@ -132,7 +130,7 @@ test('presign produces the known SigV4 signature with cache control', () => {
   );
 });
 
-test('attachment deletion refuses a URL outside the managed prefix', async () => {
+test('attachment deletion refuses a reference outside the managed prefix', async () => {
   let requests = 0;
   const removed = await deleteAttachmentObject({
     config: {
@@ -141,7 +139,6 @@ test('attachment deletion refuses a URL outside the managed prefix', async () =>
       accessKeyId: 'test-key-id',
       secretAccessKey: 'test-secret',
       endpoint: 'https://test-account.r2.cloudflarestorage.com',
-      publicBaseUrl: R2_ENV.R2_PUBLIC_BASE_URL,
       ttlSeconds: 300,
     },
     url: 'https://attacker.example/private.jpg',
@@ -168,7 +165,7 @@ test('presign rejects an unauthenticated caller', async (t) => {
   assert.equal(res.status, 401);
 });
 
-test('presign returns a chatblobs URL and binds the size and MIME type', async (t) => {
+test('presign returns an opaque chatblobs reference and binds the size and MIME type', async (t) => {
   withR2Env(t);
   const { url, teardown } = await startServer();
   t.after(teardown);
@@ -184,20 +181,16 @@ test('presign returns a chatblobs URL and binds the size and MIME type', async (
   );
 
   assert.equal(res.status, 200);
-  // All chat media is served from one shared prefix on the public base URL.
-  assert.ok(
-    res.body.publicUrl.startsWith(`${R2_ENV.R2_PUBLIC_BASE_URL}/chatblobs/`),
-    res.body.publicUrl
-  );
-  assert.match(res.body.publicUrl, /\.jpg$/);
-  assert.match(res.body.key, /^chatblobs\/rich-alice_rich-bob\/[^/]+\.jpg$/);
+  // The stored reference is the object key, not a fetchable link: all chat
+  // media lives under one shared prefix inside a bucket with no public
+  // binding.
+  assert.equal(res.body.reference, res.body.key);
+  assert.match(res.body.reference, /^chatblobs\/rich-alice_rich-bob\/[^/]+\.jpg$/);
   assert.ok(!res.body.key.includes('%'));
 
   const uploadUrl = new URL(res.body.uploadUrl);
-  const publicUrl = new URL(res.body.publicUrl);
   assert.equal(uploadUrl.host, 'test-account.r2.cloudflarestorage.com');
-  assert.equal(uploadUrl.pathname, `/${R2_ENV.R2_BUCKET}${publicUrl.pathname}`);
-  assert.equal(publicUrl.pathname, `/${res.body.key}`);
+  assert.equal(uploadUrl.pathname, `/${R2_ENV.R2_BUCKET}/${res.body.key}`);
   assert.equal(uploadUrl.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
   // Cache policy, size, and MIME type are part of the signature, so object
   // storage rejects an upload that changes any of them.
@@ -348,7 +341,7 @@ test('download mints a short-lived, participant-scoped URL for the object owner'
   assert.equal(peerRes.status, 200);
 });
 
-test('download accepts a legacy publicUrl for migration compatibility', async (t) => {
+test('download accepts the stored reference under the legacy `url` parameter', async (t) => {
   withR2Env(t);
   const { url, teardown } = await startServer();
   t.after(teardown);
@@ -365,31 +358,11 @@ test('download accepts a legacy publicUrl for migration compatibility', async (t
 
   const res = await getJson(
     url,
-    `/attachments/download?peerId=rich-bob&url=${encodeURIComponent(presigned.body.publicUrl)}`,
+    `/attachments/download?peerId=rich-bob&url=${encodeURIComponent(presigned.body.reference)}`,
     session
   );
   assert.equal(res.status, 200);
   assert.ok(res.body.downloadUrl);
-
-  // A URL stored under an earlier `R2_PUBLIC_BASE_URL` (the bucket's r2.dev
-  // URL, before the custom domain) points at the same key and must still
-  // resolve — the object never moved, only the hostname in front of it.
-  const legacyHostUrl = `https://pub-63e944cb94da5108597.r2.dev/${presigned.body.key}`;
-  const legacy = await getJson(
-    url,
-    `/attachments/download?peerId=rich-bob&url=${encodeURIComponent(legacyHostUrl)}`,
-    session
-  );
-  assert.equal(legacy.status, 200);
-  assert.ok(legacy.body.downloadUrl);
-
-  // Widening the accepted hosts does not accept an arbitrary one.
-  const foreign = await getJson(
-    url,
-    `/attachments/download?peerId=rich-bob&url=${encodeURIComponent(`https://attacker.example/${presigned.body.key}`)}`,
-    session
-  );
-  assert.equal(foreign.status, 400);
 });
 
 test('download refuses a key from another conversation (guessed or cross-conversation)', async (t) => {
@@ -575,16 +548,14 @@ test('message.send rejects an attachment that is not a managed upload', async (t
   assert.equal(oversized.ok, false);
   assert.equal(oversized.error.code, 'bad_request');
 
-  // A URL that starts with the blob prefix but climbs back out of it once a
-  // proxy normalises the path is not a managed upload either.
+  // A reference that starts with the blob prefix but climbs back out of it
+  // once a proxy normalises the path is not a managed upload either.
   const traversal = await emitWithAck(alice, 'message.send', {
     version: VERSION,
     recipientId: 'rich-bob',
     body: '',
     type: 'image',
-    attachment: imageAttachment({
-      url: `${R2_ENV.R2_PUBLIC_BASE_URL}/chatblobs/../private/secret.jpg`,
-    }),
+    attachment: imageAttachment({ url: 'chatblobs/../private/secret.jpg' }),
   });
   assert.equal(traversal.ok, false);
   assert.equal(traversal.error.code, 'bad_request');

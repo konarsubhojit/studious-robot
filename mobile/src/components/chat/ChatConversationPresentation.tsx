@@ -40,6 +40,7 @@ import { describeAttachmentDownloadResult, isAttachmentDownloadRetryable } from 
 import type { CallActivity, ChatMessage } from '../../hooks/useMessaging';
 import type { ReactElement, ReactNode } from 'react';
 import type { MediaViewerItem } from '../MediaViewer';
+import { useAttachmentUri } from '../../attachmentUri';
 import type { ThemeColors } from '../../theme';
 import type { PeerPresence } from '../../types/directory';
 import type { AttachmentDownloadReason } from '../../attachmentDownload';
@@ -738,6 +739,9 @@ function ImageMessageBody({
  onOpenMedia,
 }: Pick<RenderMessageBodyProps, 'message' | 'isOwn' | 'styles' | 'onOpenMedia'>) {
  const textStyle = isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer;
+ // Stored references are opaque: the bytes are only reachable through a
+ // short-lived link this exchanges them for.
+ const imageUri = useAttachmentUri(message.attachment?.thumbnailUrl || message.attachment?.url);
  return (
    <BubbleContent
      media={
@@ -748,7 +752,7 @@ function ImageMessageBody({
          accessibilityHint={onOpenMedia ? 'Opens the photo fullscreen' : undefined}
          testID="chat-message-image-open">
          <Image
-           source={{ uri: message.attachment?.thumbnailUrl || message.attachment?.url }}
+           source={{ uri: imageUri }}
            style={styles.attachmentImage}
            resizeMode="cover"
            accessibilityLabel={message.body || 'Photo'}
@@ -770,6 +774,7 @@ function VideoMessageBody({
  onOpenMedia,
 }: Pick<RenderMessageBodyProps, 'message' | 'isOwn' | 'styles' | 'onOpenMedia'>) {
  const textStyle = isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer;
+ const thumbnailUri = useAttachmentUri(message.attachment?.thumbnailUrl);
  return (
    <BubbleContent
      media={
@@ -782,7 +787,7 @@ function VideoMessageBody({
          testID="chat-message-video">
          {message.attachment?.thumbnailUrl ? (
            <Image
-             source={{ uri: message.attachment.thumbnailUrl }}
+             source={{ uri: thumbnailUri }}
              style={styles.attachmentImage}
              resizeMode="cover"
              accessibilityLabel={message.attachment?.name || 'Video'}

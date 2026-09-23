@@ -5,12 +5,11 @@ import { normaliseId } from '../lib/normalize.ts';
 import { deriveConversationId } from '../messageStore.ts';
 import { isBlocked } from '../security.ts';
 import {
-  attachmentKeyFromUrl,
+  attachmentKeyFromReference,
   attachmentScopeFromKey,
-  attachmentUrlHost,
   createAttachmentKey,
+  describeR2Misconfiguration,
   loadR2Config,
-  publiclyReadableAttachmentVariable,
   presignAttachmentDownload,
   presignAttachmentUpload,
   validateAttachmentRequest,
@@ -21,19 +20,15 @@ import {
  *
  * `POST /attachments/presign` hands an authenticated client a short-lived,
  * size- and MIME-bound upload URL for Cloudflare R2, plus the object `key`
- * (and, for backwards compatibility, a `publicUrl` built from it) the client
- * stores on the `message.send` that follows. The client uploads directly to
- * storage, so no binary ever travels through the signaling server.
+ * and the `reference` the client stores on the `message.send` that follows.
+ * The client uploads directly to storage, so no binary ever travels through
+ * the signaling server.
  *
- * `publicUrl`/`key` is meant to be an opaque reference rather than a
- * fetchable link: `GET /attachments/download` exchanges it for a short-lived,
- * participant-authorized `downloadUrl` — see that route for the authorization
- * rule. Whether the reference is *also* fetchable without that exchange is a
- * property of the bucket, not of this router (R2 public access is bucket-wide),
- * which is why a deployment without `R2_BUCKET_PRIVATE` is warned about at
- * startup. This also covers messages sent before this endpoint existed, and
- * those stored under a previous `R2_PUBLIC_BASE_URL`: their stored URL still
- * resolves (`attachmentKeyFromUrl`), so old history is not silently broken.
+ * The stored `reference` is the object key — an opaque handle, not a
+ * fetchable link. `GET /attachments/download` exchanges it for a short-lived,
+ * participant-authorized `downloadUrl`; see that route for the authorization
+ * rule. That rule is only a boundary while the bucket has no public binding,
+ * which is why a leftover `R2_PUBLIC_BASE_URL` is reported at startup.
  *
  * @param ctx
  */
@@ -46,23 +41,19 @@ function createAttachmentsRouter({ state, env = process.env }: {
 
   if (!config) {
     console.log('[attachments] R2 is not configured — attachment uploads are disabled');
-  } else {
-    const publiclyReadable = publiclyReadableAttachmentVariable(config);
-    if (publiclyReadable) {
-      console.warn(
-        `[attachments] ${publiclyReadable}=${config.publicBaseUrl} exposes the attachment bucket: ` +
-          'anyone who learns an object URL can fetch it without a session, so the authorization ' +
-          'performed by GET /attachments/download is advisory. R2 public access is bucket-level, ' +
-          'so set R2_BUCKET_PRIVATE to a bucket with no public binding (see deploy/README.md).'
-      );
-    }
+  }
+  // Loud at startup, naming the variable at fault: a half-configured or
+  // publicly-served bucket otherwise shows up as a per-upload 503, or not at
+  // all until someone notices the bytes are world-readable.
+  for (const problem of describeR2Misconfiguration(env)) {
+    console.error(`[attachments] ${problem}`);
   }
 
   /**
    * POST /attachments/presign
    *
    * Body: { peerId, type: 'image'|'file'|'voice', mimeType, sizeBytes }
-   * Response 200: { conversationId, key, uploadUrl, publicUrl, expiresAt, headers }
+   * Response 200: { conversationId, key, uploadUrl, reference, expiresAt, headers }
    */
   router.post(API_ROUTES.ATTACHMENTS_PRESIGN, async (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -147,21 +138,16 @@ function createAttachmentsRouter({ state, env = process.env }: {
    * GET /attachments/download
    *
    * Query: { peerId, key } — `key` is the object key from `POST
-   * /attachments/presign` (or, for messages sent before this endpoint
-   * existed, the full legacy `publicUrl`; both resolve to the same object).
+   * /attachments/presign`; `url` carries the same value for clients that
+   * still send the stored reference under that name.
    * Response 200: { downloadUrl, expiresAt }
    *
-   * This is the only path this server offers for turning a stored attachment
-   * reference into bytes, and it never trusts a client-declared conversation
-   * id — the expected key scope is recomputed from the caller's own session
-   * and the `peerId` they claim, so a caller can only ever obtain a grant for
-   * a conversation it is actually part of. It is the *sole* path only when
-   * the bucket has no public binding (`R2_BUCKET_PRIVATE`); otherwise the
-   * startup warning applies.
-   *
-   * A stored `url` is resolved by its key path rather than an exact base-URL
-   * match, so attachments sent under a previous `R2_PUBLIC_BASE_URL` still
-   * resolve — the derived key is scope-checked exactly the same way.
+   * This is the only path that turns a stored attachment reference into
+   * bytes, and it never trusts a client-declared conversation id — the
+   * expected key scope is recomputed from the caller's own session and the
+   * `peerId` they claim, so a caller can only ever obtain a grant for a
+   * conversation it is actually part of. It is the *only* path as long as the
+   * bucket has no public binding (see `server/src/attachments.ts`).
    */
   router.get(API_ROUTES.ATTACHMENTS_DOWNLOAD, async (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -208,20 +194,24 @@ function createAttachmentsRouter({ state, env = process.env }: {
     }
 
     const rawKeyParam = req.query?.key;
+    // A `key` is checked by the scope comparison below rather than here, so a
+    // key outside the prefix stays the same "not your object" 403 it has
+    // always been. A `url` carries the stored reference and is derived —
+    // there is nothing to compare until it resolves to a key.
     const key =
       typeof rawKeyParam === 'string' && rawKeyParam.trim()
         ? rawKeyParam.trim()
-        : attachmentKeyFromUrl(config, req.query?.url);
+        : attachmentKeyFromReference(config, req.query?.url, {
+          // Host only, never the reference itself: enough to tell a leftover
+          // public URL from a malformed key without logging user content.
+          onUnresolved: ({ reason, host }) => {
+            console.warn(
+              `[attachments] could not resolve an attachment reference: ${reason} ` +
+                  `(host=${host ?? 'none'})`
+            );
+          },
+        });
     if (!key) {
-      if (req.query?.url) {
-        // Host only: enough to tell an unknown host from a stale base URL,
-        // without putting a user's attachment URL in the logs.
-        console.warn(
-          '[attachments] could not resolve a stored attachment URL — ' +
-            `host=${attachmentUrlHost(req.query.url) ?? 'unparseable'} ` +
-            `configuredBaseUrl=${config.publicBaseUrl}`
-        );
-      }
       res.status(400).json({ error: 'key must reference a managed attachment' });
       return;
     }
@@ -244,15 +234,7 @@ function createAttachmentsRouter({ state, env = process.env }: {
       return;
     }
 
-    let presigned;
-    try {
-      presigned = await presignAttachmentDownload({ config, key });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[attachments] download presign failed: ${message}`);
-      res.status(503).json({ error: 'could not presign download' });
-      return;
-    }
+    const presigned = presignAttachmentDownload({ config, key });
 
     state.auditLog.record({
       event: 'attachment.download_granted',

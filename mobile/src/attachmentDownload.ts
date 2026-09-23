@@ -48,14 +48,21 @@ function extensionForMimeType(mimeType: string | null | undefined): string {
 }
 
 /**
- * @returns the last path segment, or '' when `url` is unparseable.
+ * @returns the last path segment, or '' when there is none.
  */
 function filenameFromUrl(url: string | null | undefined): string {
+  if (typeof url !== 'string' || !url) return '';
   try {
-    const parsed = new URL((url as string));
+    const parsed = new URL(url);
     return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() ?? '');
   } catch {
-    return '';
+    // Not a URL: an attachment reference is an opaque `chatblobs/…` key, and
+    // its last segment is still the most descriptive name available.
+    try {
+      return decodeURIComponent(url.split('/').filter(Boolean).pop() ?? '');
+    } catch {
+      return '';
+    }
   }
 }
 
@@ -105,7 +112,6 @@ export type AttachmentDownloadReason =
   | 'not-found'
   | 'server-error'
   | 'network'
-  | 'transfer-interrupted'
   | 'storage'
   | 'cancelled';
 
@@ -142,17 +148,12 @@ export type AttachmentDownloadResult = {
 /**
  * Turn a transport failure or an HTTP status into a reason code.
  *
- * The distinctions that matter in practice: a `401`/`403` means storage
- * refused the fetch (an authorization/bucket problem no client change can
- * fix); a transport error with **no bytes written** means the device never
- * reached storage at all; and a transport error *after* bytes had arrived is
- * a transfer that broke mid-flight — a different fault (a dropped link, or a
- * signed URL that expired during a long download) that must not be reported
- * as "could not reach the file server".
+ * The distinction that matters in practice: a `401`/`403` means the object in
+ * R2 is not publicly readable (a bucket-policy/CORS problem no client change
+ * can fix), while a transport error means the device could not reach storage
+ * at all.
  */
-function classifyFailure({ statusCode, error, bytesWritten = 0 }: {
-  statusCode?: number; error?: unknown; bytesWritten?: number;
-}): AttachmentDownloadReason {
+function classifyFailure({ statusCode, error }: { statusCode?: number; error?: unknown; }): AttachmentDownloadReason {
   if (typeof statusCode === 'number' && statusCode > 0) {
     if (statusCode === 401 || statusCode === 403) return 'unauthorized';
     if (statusCode === 404 || statusCode === 410) return 'not-found';
@@ -161,7 +162,7 @@ function classifyFailure({ statusCode, error, bytesWritten = 0 }: {
   }
   const message = describeError(error);
   if (/permission|EACCES|ENOSPC|EROFS|write/i.test(message)) return 'storage';
-  return bytesWritten > 0 ? 'transfer-interrupted' : 'network';
+  return 'network';
 }
 
 /**
@@ -195,16 +196,12 @@ async function downloadToTarget(
   },
 ): Promise<AttachmentDownloadResult> {
   const path = `${target.directory}/${fileName}`;
-  // How far the transfer got, so a failure after bytes arrived is not
-  // reported as one where storage was never reached.
-  let bytesReceived = 0;
   try {
     const job = RNFS.downloadFile({
       fromUrl: url,
       toFile: path,
       progressDivider: 5,
       progress: ({ bytesWritten, contentLength }: { bytesWritten?: number; contentLength?: number; }) => {
-        bytesReceived = Math.max(bytesReceived, bytesWritten ?? 0);
         if (!contentLength || contentLength <= 0) return;
         const fraction = Math.min(1, Math.max(0, (bytesWritten ?? 0) / contentLength));
         logVerbose('[Attachments] download progress', { fileName, fraction });
@@ -236,12 +233,11 @@ async function downloadToTarget(
       return { success: false, path, reason: 'cancelled' };
     }
     const statusCode = (error as { statusCode?: number })?.statusCode;
-    const reason = classifyFailure({ statusCode, error, bytesWritten: bytesReceived });
+    const reason = classifyFailure({ statusCode, error });
     logWarn('[Attachments] download attempt failed', {
       label: target.label,
       reason,
       statusCode,
-      bytesWritten: bytesReceived,
       error,
     });
     return { success: false, error, reason, statusCode };
@@ -287,6 +283,53 @@ async function downloadWithFallback({ url, fileName, onProgress, permission, isC
 }
 
 /**
+ * Exchange the stored attachment reference for the URL bytes are fetched from.
+ *
+ * The reference identifies the object for caching and de-duplication but is
+ * never fetched directly once download authorization is wired up: the bytes
+ * are only reachable through the short-lived link the server mints for this
+ * one request. Whatever the reference looked like — an opaque object key, or
+ * a sender-supplied `file://` on a deployment with no resolver — only an
+ * HTTP(S) URL is ever handed to the downloader, so a download can never
+ * become a local-file copy.
+ */
+async function authorizeFetchUrl({ url, resolveFetchUrl, isCancelled }: {
+    url: string;
+    resolveFetchUrl?: (url: string) => Promise<string>;
+    isCancelled: () => boolean;
+}): Promise<{ url: string; } | { failure: AttachmentDownloadResult; }> {
+  const abandon = (): { failure: AttachmentDownloadResult; } => {
+    const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
+    return { failure: { ...abandoned, message: describeAttachmentDownloadResult(abandoned) } };
+  };
+  let fetchUrl = url;
+  if (resolveFetchUrl) {
+    try {
+      fetchUrl = await resolveFetchUrl(url);
+    } catch (error) {
+      if (isCancelled()) return abandon();
+      const statusCode = (error as { status?: number; })?.status;
+      const reason = classifyFailure({ statusCode, error });
+      logWarn('[Attachments] download authorization failed', { reason, statusCode });
+      return {
+        failure: { success: false, error, reason, statusCode, message: describeAttachmentDownloadResult({ reason }) },
+      };
+    }
+  }
+  if (isCancelled()) return abandon();
+  if (!/^https?:\/\//i.test(fetchUrl)) {
+    logWarn('[Attachments] download refused an unsupported URL scheme', { host: hostOf(fetchUrl) });
+    const refused: AttachmentDownloadResult = {
+      success: false,
+      reason: 'unsupported-url',
+      error: new Error('Unsupported attachment URL'),
+    };
+    return { failure: { ...refused, message: describeAttachmentDownloadResult(refused) } };
+  }
+  return { url: fetchUrl };
+}
+
+/**
  * Download a previously sent/received chat attachment into the most accessible
  * device storage location available.
  *
@@ -322,13 +365,6 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
     logWarn('[Attachments] download skipped: no URL on the attachment', { mimeType });
     return { success: false, reason: 'missing-url', error: new Error('Missing attachment URL') };
   }
-  // Only ever fetch over HTTP(S): a sender-supplied `file://` (or any other
-  // scheme) would turn a download into a local-file copy.
-  if (!/^https?:\/\//i.test(url)) {
-    logWarn('[Attachments] download refused an unsupported URL scheme', { host: hostOf(url) });
-    return { success: false, reason: 'unsupported-url', error: new Error('Unsupported attachment URL') };
-  }
-
   const fileName = attachmentDownloadFileName({ name, url, mimeType, now });
 
   // Set before the first await, for the lifetime of the whole call: cancelling
@@ -362,29 +398,9 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
     return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
   }
 
-  // The stored reference (`url`) is never fetched directly once download
-  // authorization is wired up: it identifies the object for caching, but the
-  // bytes are only reachable through the short-lived link the server just
-  // minted for this specific request.
-  let fetchUrl = url;
-  if (resolveFetchUrl) {
-    try {
-      fetchUrl = await resolveFetchUrl(url);
-    } catch (error) {
-      if (cancelled) {
-        const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
-        return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
-      }
-      const statusCode = (error as { status?: number; })?.status;
-      const reason = classifyFailure({ statusCode, error });
-      logWarn('[Attachments] download authorization failed', { reason, statusCode });
-      return { success: false, error, reason, statusCode, message: describeAttachmentDownloadResult({ reason }) };
-    }
-  }
-  if (cancelled) {
-    const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
-    return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
-  }
+  const authorized = await authorizeFetchUrl({ url, resolveFetchUrl, isCancelled: () => cancelled });
+  if ('failure' in authorized) return authorized.failure;
+  const fetchUrl = authorized.url;
 
   const permission = await ensureDownloadPermission();
   if (!permission.granted) {
@@ -436,8 +452,6 @@ const FAILURE_MESSAGES: Record<AttachmentDownloadReason, string> = {
   'not-found': 'This file is no longer available on the server',
   'server-error': 'The file server could not deliver this attachment. Try again later.',
   network: 'Could not reach the file server. Check your connection and try again.',
-  'transfer-interrupted':
-    'The download stopped partway through. Try again, ideally on a stronger connection.',
   storage: 'Could not save the file to device storage. Free up space and try again.',
   cancelled: 'Download cancelled',
 };

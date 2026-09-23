@@ -227,7 +227,7 @@ test('erasure removes the attachment objects the erased messages referenced', as
     recipientId: 'delete-peer',
     body: 'file',
     type: 'file',
-    attachment: { url: 'https://cdn.example/chatblobs/conv-1/object.pdf' } as any,
+    attachment: { url: 'chatblobs/conv-1/object.pdf' } as any,
   });
 
   const { url, runAccountDeletionSweep, teardown } = await startServer({
@@ -243,13 +243,11 @@ test('erasure removes the attachment objects the erased messages referenced', as
   process.env.R2_BUCKET = 'chat';
   process.env.R2_ACCESS_KEY_ID = 'key';
   process.env.R2_SECRET_ACCESS_KEY = 'secret';
-  process.env.R2_PUBLIC_BASE_URL = 'https://cdn.example';
   process.env.R2_ENDPOINT = 'https://storage.example';
   t.after(() => {
     delete process.env.R2_BUCKET;
     delete process.env.R2_ACCESS_KEY_ID;
     delete process.env.R2_SECRET_ACCESS_KEY;
-    delete process.env.R2_PUBLIC_BASE_URL;
     delete process.env.R2_ENDPOINT;
   });
 

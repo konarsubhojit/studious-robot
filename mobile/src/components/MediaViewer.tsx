@@ -21,6 +21,7 @@ import useReducedMotion from '../hooks/useReducedMotion';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { loadVideoComponent } from '../videoPlayback';
+import { useAttachmentUri } from '../attachmentUri';
 import IconButton from './IconButton';
 import { Icon } from './primitives';
 import type { ThemeColors } from '../theme';
@@ -98,6 +99,9 @@ function MediaViewerContent({
   onVideoError: (error: unknown) => void;
   onImageError: () => void;
 }) {
+  // The bytes live in a private bucket, so the item's reference is exchanged
+  // for a short-lived authorized link before anything is rendered.
+  const uri = useAttachmentUri(item?.url);
   if (!item) {
     return (
       <Text style={styles.message} testID={`${testID}-empty`}>
@@ -122,7 +126,7 @@ function MediaViewerContent({
     }
     return (
       <VideoComponent
-        source={{ uri: item.url }}
+        source={{ uri }}
         style={styles.media}
         controls
         // A call owns the audio route; a video that autoplayed into it
@@ -138,7 +142,7 @@ function MediaViewerContent({
     <GestureDetector gesture={mediaGesture}>
       <Animated.View style={[styles.mediaWrapper, animatedMediaStyle]}>
         <Image
-          source={{ uri: item.url }}
+          source={{ uri }}
           style={styles.media}
           resizeMode="contain"
           accessibilityLabel={item.name || 'Photo'}
