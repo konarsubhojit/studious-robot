@@ -209,7 +209,6 @@ function createServer(opts: CreateServerOptions = {}) {
   const cache = opts.cache ?? createMemoryCache();
 
   const state: import('../stores/contracts.ts').ServerState = {
-    rooms: stores.rooms,
     /** userId → claimed-identity record */
     users: stores.users,
     sessions: stores.sessions,

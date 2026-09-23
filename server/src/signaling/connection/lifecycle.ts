@@ -1,25 +1,5 @@
-import { SERVER_EVENTS } from '../../../../shared/index.ts';
 import { endCallsForDisconnectedParticipant } from '../../domain/calls.ts';
 import { notifyCallTransition } from '../../domain/notifications.ts';
-
-function leaveRoom(
-  socket: import('socket.io').Socket,
-  roomId: string,
-  rooms: Map<string, Set<string>>
-) {
-  const room = rooms.get(roomId);
-  if (!room) return;
-
-  room.delete(socket.id);
-  void socket.leave(roomId);
-  console.log(`[signaling] leave: socket ${socket.id} left room "${roomId}" (size=${room.size})`);
-
-  if (room.size === 0) {
-    rooms.delete(roomId);
-  } else {
-    socket.to(roomId).emit(SERVER_EVENTS.PEER_LEFT, { id: socket.id });
-  }
-}
 
 function scheduleParticipantDisconnectCleanup(
   io: import('socket.io').Server,
@@ -47,7 +27,6 @@ function logCallCorrelation(socket: import('socket.io').Socket, callId: string, 
 }
 
 export {
-  leaveRoom,
   logCallCorrelation,
   scheduleParticipantDisconnectCleanup,
 };

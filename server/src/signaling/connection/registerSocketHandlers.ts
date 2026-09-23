@@ -1,4 +1,4 @@
-import { MAX_ROOM_SIZE, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } from '../../config.ts';
+import { DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } from '../../config.ts';
 import { normaliseId, sanitizeForLog } from '../../lib/normalize.ts';
 import { isBlocked } from '../../security.ts';
 import { resolveSocketIdentityAsync } from '../../lib/auth.ts';
@@ -16,8 +16,8 @@ import { registerMessageHandlers } from '../messageHandlers.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from '../ack.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, TRANSPORT_EVENTS } from '../../../../shared/index.ts';
 import { verboseLog } from '../../lib/verbose.ts';
-import { decideRoomJoin, normaliseReportedActiveCallIds } from './state.ts';
-import { leaveRoom, logCallCorrelation, scheduleParticipantDisconnectCleanup } from './lifecycle.ts';
+import { normaliseReportedActiveCallIds } from './state.ts';
+import { logCallCorrelation, scheduleParticipantDisconnectCleanup } from './lifecycle.ts';
 
 const SOCKET_SESSION_RECHECK_MS = 1000;
 
@@ -113,77 +113,6 @@ function registerSocketHandlers(
         callId: payload?.callId ?? null,
         version: payload?.version ?? null,
       });
-    });
-
-    let currentRoom: string | null = null;
-
-    socket.on(CLIENT_EVENTS.JOIN_ROOM, (roomId) => {
-      const room = typeof roomId === 'string' ? state.rooms.get(roomId) : undefined;
-      const decision = decideRoomJoin({
-        sessionId: socket.data.identity.sessionId,
-        roomId,
-        currentRoom,
-        roomSize: room?.size ?? 0,
-        maxRoomSize: MAX_ROOM_SIZE,
-      });
-      if (decision.action === 'ignore') return;
-      if (decision.action === 'room_full') {
-        console.log(
-          `[signaling] room-full: socket ${socket.id} rejected from room "${roomId}" (size=${room?.size ?? 0})`
-        );
-        socket.emit(SERVER_EVENTS.ROOM_FULL, { roomId });
-        return;
-      }
-
-      const nextRoomId = roomId as string;
-      let resolvedRoom = room;
-      if (!resolvedRoom) {
-        resolvedRoom = new Set();
-        state.rooms.set(nextRoomId, resolvedRoom);
-      }
-
-      if (decision.leaveRoomId !== null) {
-        leaveRoom(socket, decision.leaveRoomId, state.rooms);
-      }
-
-      currentRoom = nextRoomId;
-      resolvedRoom.add(socket.id);
-      void socket.join(nextRoomId);
-      console.log(
-        `[signaling] join: socket ${socket.id} joined room "${nextRoomId}" (size=${resolvedRoom.size})`
-      );
-      socket.to(nextRoomId).emit(SERVER_EVENTS.PEER_JOINED, { id: socket.id });
-    });
-
-    socket.on(CLIENT_EVENTS.ROOM_OFFER, (payload = {}) => {
-      if (!socket.data.identity.sessionId || payload?.roomId !== currentRoom) return;
-      const parsed = parseInboundPayload(socket, undefined, CLIENT_EVENTS.ROOM_OFFER, payload);
-      if (!parsed) return;
-      console.log(`[signaling] relay offer: from ${socket.id} in room "${parsed.roomId}"`);
-      socket.to(parsed.roomId).emit(SERVER_EVENTS.ROOM_OFFER, { from: socket.id, sdp: parsed.sdp });
-    });
-
-    socket.on(CLIENT_EVENTS.ROOM_ANSWER, (payload = {}) => {
-      if (!socket.data.identity.sessionId || payload?.roomId !== currentRoom) return;
-      const parsed = parseInboundPayload(socket, undefined, CLIENT_EVENTS.ROOM_ANSWER, payload);
-      if (!parsed) return;
-      console.log(`[signaling] relay answer: from ${socket.id} in room "${parsed.roomId}"`);
-      socket.to(parsed.roomId).emit(SERVER_EVENTS.ROOM_ANSWER, { from: socket.id, sdp: parsed.sdp });
-    });
-
-    socket.on(CLIENT_EVENTS.ROOM_ICE_CANDIDATE, (payload = {}) => {
-      if (!socket.data.identity.sessionId || payload?.roomId !== currentRoom) return;
-      const parsed = parseInboundPayload(
-        socket,
-        undefined,
-        CLIENT_EVENTS.ROOM_ICE_CANDIDATE,
-        payload
-      );
-      if (!parsed) return;
-      console.log(`[signaling] relay ice-candidate: from ${socket.id} in room "${parsed.roomId}"`);
-      socket
-        .to(parsed.roomId)
-        .emit(SERVER_EVENTS.ROOM_ICE_CANDIDATE, { from: socket.id, candidate: parsed.candidate });
     });
 
     socket.on(CLIENT_EVENTS.CALL_INITIATE, async (payload = {}, ack) => {
@@ -491,10 +420,6 @@ function registerSocketHandlers(
 
     socket.on(TRANSPORT_EVENTS.DISCONNECT, (reason) => {
       const identity = socket.data.identity;
-      if (currentRoom !== null) {
-        leaveRoom(socket, currentRoom, state.rooms);
-        currentRoom = null;
-      }
       removeConnection(state, identity?.userId, socket.id);
       const remainingConnections = identity?.userId
         ? state.userConnections.get(identity.userId)?.size ?? 0
@@ -518,6 +443,5 @@ function registerSocketHandlers(
 }
 
 export {
-  leaveRoom,
   registerSocketHandlers,
 };

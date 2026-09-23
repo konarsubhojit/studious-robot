@@ -276,21 +276,78 @@ const RECIPIENT_COUNTED_EVENTS = new Set<string>([
 ]);
 
 /**
+ * How long the relay path will wait for the adapter's recipient count before
+ * giving up on it.
+ *
+ * `fetchSockets()` is a Redis round trip on a multi-instance fleet. It is
+ * useful when it is fast and worthless when it is not: an SDP frame that sat
+ * behind a multi-second adapter timeout is worse than one relayed without a
+ * recipient count. 200ms is generous for a healthy adapter and cheap for a
+ * degraded one.
+ */
+const RECIPIENT_LOOKUP_TIMEOUT_MS = 200;
+
+/** Repeat the recipient-lookup-failed log line at most this often. */
+const RECIPIENT_LOOKUP_LOG_INTERVAL_MS = 60_000;
+
+/** Process-wide, so the rate limit applies across every relayed call. */
+let lastRecipientLookupFailureLoggedAt = 0;
+
+/** Exposed for tests: forget the last time the failure log fired. */
+function resetRecipientLookupRateLimit(): void {
+  lastRecipientLookupFailureLoggedAt = 0;
+}
+
+/**
+ * Resolve/reject with `promise`, or reject on our own after `timeoutMs` —
+ * whichever comes first.
+ *
+ * `promise` is not abandoned when the timeout wins: its settlement is still
+ * consumed here (silently), so a late resolution or rejection never becomes
+ * an unhandled promise rejection.
+ */
+function raceAgainstTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+/**
  * How many sockets the user's room holds, across every instance.
  *
- * @returns the count, or `null` when it was not taken (high-rate event) or
- *   could not be taken (the adapter failed). `null` is deliberately distinct
- *   from `0`: "nobody was there" is a finding, "we did not look" is not.
+ * @returns the count, or `null` when it was not taken (high-rate event), took
+ *   too long (`RECIPIENT_LOOKUP_TIMEOUT_MS`), or could not be taken (the
+ *   adapter failed). `null` is deliberately distinct from `0`: "nobody was
+ *   there" is a finding, "we did not look" is not.
  */
 async function countRoomRecipients(io: any, userId: string, eventName: string): Promise<number | null> {
   if (!RECIPIENT_COUNTED_EVENTS.has(eventName)) return null;
   try {
-    const sockets = await io.in(userRoom(userId)).fetchSockets();
+    const sockets = await raceAgainstTimeout(
+      io.in(userRoom(userId)).fetchSockets(),
+      RECIPIENT_LOOKUP_TIMEOUT_MS
+    );
     return Array.isArray(sockets) ? sockets.length : null;
   } catch (error: unknown) {
     // Never gate the relay on the diagnostic: a frame that cannot be counted
-    // must still be forwarded.
-    console.error(`[signaling] rtc.relay recipient lookup failed: ${describeError(error)}`);
+    // (or counted quickly enough) must still be forwarded. The adapter being
+    // slow or unhealthy is worth knowing about, but not once per relay.
+    const now = Date.now();
+    if (now - lastRecipientLookupFailureLoggedAt >= RECIPIENT_LOOKUP_LOG_INTERVAL_MS) {
+      lastRecipientLookupFailureLoggedAt = now;
+      console.error(`[signaling] rtc.relay recipient lookup failed: ${describeError(error)}`);
+    }
     return null;
   }
 }
@@ -513,4 +570,7 @@ export {
   handleSocketCallTransition,
   handleRtcRelay,
   handleCallConnected,
+  countRoomRecipients,
+  resetRecipientLookupRateLimit,
+  RECIPIENT_LOOKUP_TIMEOUT_MS,
 };

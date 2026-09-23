@@ -5,4 +5,4 @@
  * existing import paths stable.
  */
 
-export { registerSocketHandlers, leaveRoom } from './connection/registerSocketHandlers.ts';
+export { registerSocketHandlers } from './connection/registerSocketHandlers.ts';

@@ -155,7 +155,6 @@ any failure.  Run them before opening a pull request.
 | `server` | `test/telemetry.test.ts`              | Metrics counters and derived rates                           |
 | `server` | `test/query-timing.test.ts`           | SQL/Redis query timing, slow-query threshold, per-operation breakdown |
 | `server` | `test/security.test.ts`               | Rate limiting and blocklist                                  |
-| `server` | `test/signaling.test.ts`              | Legacy join-room signaling                                   |
 | `server` | `test/health.test.ts`                 | Health endpoint                                              |
 | `server` | `test/fanout-probe.test.ts`           | Cross-instance fan-out probe: peer discovery, staleness, mixed transports |
 | `mobile` | `__tests__/hooks/useCallFlow.test.tsx` | Call phases, push rehydration (all terminal + ringing states), camera switch |

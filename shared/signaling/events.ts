@@ -9,11 +9,6 @@
 
 /** Events the client sends to the server. */
 const CLIENT_EVENTS = Object.freeze({
-  // Legacy room-based signaling (pre call.* protocol).
-  JOIN_ROOM: 'join-room',
-  ROOM_OFFER: 'offer',
-  ROOM_ANSWER: 'answer',
-  ROOM_ICE_CANDIDATE: 'ice-candidate',
   // Server-authoritative call lifecycle.
   CALL_INITIATE: 'call.initiate',
   CALL_INCOMING_ACK: 'call.incoming.ack',
@@ -40,13 +35,6 @@ const CLIENT_EVENTS = Object.freeze({
 
 /** Events the server sends to the client. */
 const SERVER_EVENTS = Object.freeze({
-  // Legacy room-based signaling.
-  PEER_JOINED: 'peer-joined',
-  PEER_LEFT: 'peer-left',
-  ROOM_FULL: 'room-full',
-  ROOM_OFFER: 'offer',
-  ROOM_ANSWER: 'answer',
-  ROOM_ICE_CANDIDATE: 'ice-candidate',
   // Call lifecycle.
   CALL_INCOMING: 'call.incoming',
   CALL_RINGING: 'call.ringing',
