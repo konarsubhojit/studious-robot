@@ -1876,7 +1876,9 @@ describe('ChatConversationScreen attachments', () => {
     expect(open).not.toBeNull();
     const download = findByTestId(tree, 'chat-attachment-download');
     expect(download).not.toBeNull();
+    expect(download.props.icon).toBe('attachmentDownload');
     expect(download.props.accessibilityLabel).toBe('Download attachment');
+    expect(download.props.accessibilityHint).toBe('Saves this attachment to your device');
 
     act(() => {
       open.props.onPress();
@@ -2025,7 +2027,7 @@ describe('ChatConversationScreen attachments', () => {
     expect(findByTestId(tree, 'chat-attachment-download')).not.toBeNull();
   });
 
-  test('shows download progress as a percentage, then idle again once the download succeeds', async () => {
+  test('shows download progress, then persists the saved Downloads destination', async () => {
     let resolveDownload: ((result: any) => void) | undefined;
     let reportProgress: ((fraction: number) => void) | undefined;
     const onDownloadAttachment = jest.fn((_message: any, onProgress: any) => {
@@ -2076,11 +2078,46 @@ describe('ChatConversationScreen attachments', () => {
     expect(text.some((value: string) => value.includes('42%'))).toBe(true);
 
     await act(async () => {
-      resolveDownload?.({ success: true });
+      resolveDownload?.({ success: true, label: 'Downloads' });
     });
 
     expect(findByTestId(tree, 'chat-attachment-download-progress')).toBeNull();
     expect(findByTestId(tree, 'chat-attachment-download')).not.toBeNull();
+    expect(findByTestId(tree, 'chat-attachment-download-result').props.children).toBe(
+      'Saved attachment to Downloads',
+    );
+  });
+
+  test.each([
+    [{ success: true, label: 'app external storage' }, 'Saved attachment to app external storage'],
+    [{ success: true, label: 'Downloads', fromCache: true }, 'Attachment already saved to Downloads'],
+  ])('persists truthful download destination wording for %j', async (result, expected) => {
+    const onDownloadAttachment = jest.fn(() => Promise.resolve(result));
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.pdf',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment,
+    });
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-download').props.onPress();
+    });
+
+    expect(findByTestId(tree, 'chat-attachment-download-result').props.children).toBe(expected);
   });
 
   test('shows a failed state when an attachment download fails', async () => {
@@ -2196,6 +2233,11 @@ describe('ChatConversationScreen attachments', () => {
     const retryable = findByTestId(tree, 'chat-attachment-download-failed');
     expect(retryable).not.toBeNull();
     expect(typeof retryable.props.onPress).toBe('function');
+    expect(
+      retryable
+        .findAll((node: any) => typeof node.props?.children === 'string')
+        .map((node: any) => node.props.children),
+    ).toContain('Could not reach the file server. Check your connection and try again. · Tap to retry');
 
     onDownloadAttachment.mockResolvedValueOnce({ success: true });
     await act(async () => {

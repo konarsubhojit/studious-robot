@@ -1,4 +1,5 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import type { Insets } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
@@ -19,6 +20,7 @@ export type IconButtonProps = {
   disabled?: boolean;
   loading?: boolean;
   size?: number;
+  hitSlop?: Insets | number;
   testID?: string;
   accessibilityLabel?: string;
   accessibilityHint?: string;
@@ -44,6 +46,7 @@ export default function IconButton({
   disabled = false,
   loading = false,
   size = 64,
+  hitSlop,
   testID,
   accessibilityLabel,
   accessibilityHint,
@@ -83,6 +86,7 @@ export default function IconButton({
         accessibilityLabel={accessibilityLabel ?? label ?? icon}
         accessibilityHint={accessibilityHint}
         accessibilityState={{ disabled: isDisabled, busy: loading, selected }}
+        hitSlop={hitSlop}
         testID={testID}
         android_ripple={{
           color: variant === 'default' || variant === 'muted' ? colors.ripple : colors.rippleOnAccent,
