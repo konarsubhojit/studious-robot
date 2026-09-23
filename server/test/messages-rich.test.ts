@@ -336,7 +336,7 @@ test('download mints a short-lived, participant-scoped URL for the object owner'
   );
   assert.equal(res.status, 200);
   assert.ok(res.body.downloadUrl);
-  assert.equal(new URL(res.body.downloadUrl).searchParams.get('X-Amz-Expires'), '120');
+  assert.equal(new URL(res.body.downloadUrl).searchParams.get('X-Amz-Expires'), '900');
   assert.ok(Date.parse(res.body.expiresAt) > Date.now());
   // The peer who received the message is equally authorized to fetch it.
   const peerSession = await createSession(url, 'rich-bob', 'device-rich-bob-2');
@@ -370,6 +370,26 @@ test('download accepts a legacy publicUrl for migration compatibility', async (t
   );
   assert.equal(res.status, 200);
   assert.ok(res.body.downloadUrl);
+
+  // A URL stored under an earlier `R2_PUBLIC_BASE_URL` (the bucket's r2.dev
+  // URL, before the custom domain) points at the same key and must still
+  // resolve — the object never moved, only the hostname in front of it.
+  const legacyHostUrl = `https://pub-63e944cb94da5108597.r2.dev/${presigned.body.key}`;
+  const legacy = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&url=${encodeURIComponent(legacyHostUrl)}`,
+    session
+  );
+  assert.equal(legacy.status, 200);
+  assert.ok(legacy.body.downloadUrl);
+
+  // Widening the accepted hosts does not accept an arbitrary one.
+  const foreign = await getJson(
+    url,
+    `/attachments/download?peerId=rich-bob&url=${encodeURIComponent(`https://attacker.example/${presigned.body.key}`)}`,
+    session
+  );
+  assert.equal(foreign.status, 400);
 });
 
 test('download refuses a key from another conversation (guessed or cross-conversation)', async (t) => {
