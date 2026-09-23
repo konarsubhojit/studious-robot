@@ -105,6 +105,7 @@ export type AttachmentDownloadReason =
   | 'not-found'
   | 'server-error'
   | 'network'
+  | 'transfer-interrupted'
   | 'storage'
   | 'cancelled';
 
@@ -141,12 +142,17 @@ export type AttachmentDownloadResult = {
 /**
  * Turn a transport failure or an HTTP status into a reason code.
  *
- * The distinction that matters in practice: a `401`/`403` means the object in
- * R2 is not publicly readable (a bucket-policy/CORS problem no client change
- * can fix), while a transport error means the device could not reach storage
- * at all.
+ * The distinctions that matter in practice: a `401`/`403` means storage
+ * refused the fetch (an authorization/bucket problem no client change can
+ * fix); a transport error with **no bytes written** means the device never
+ * reached storage at all; and a transport error *after* bytes had arrived is
+ * a transfer that broke mid-flight — a different fault (a dropped link, or a
+ * signed URL that expired during a long download) that must not be reported
+ * as "could not reach the file server".
  */
-function classifyFailure({ statusCode, error }: { statusCode?: number; error?: unknown; }): AttachmentDownloadReason {
+function classifyFailure({ statusCode, error, bytesWritten = 0 }: {
+  statusCode?: number; error?: unknown; bytesWritten?: number;
+}): AttachmentDownloadReason {
   if (typeof statusCode === 'number' && statusCode > 0) {
     if (statusCode === 401 || statusCode === 403) return 'unauthorized';
     if (statusCode === 404 || statusCode === 410) return 'not-found';
@@ -155,7 +161,7 @@ function classifyFailure({ statusCode, error }: { statusCode?: number; error?: u
   }
   const message = describeError(error);
   if (/permission|EACCES|ENOSPC|EROFS|write/i.test(message)) return 'storage';
-  return 'network';
+  return bytesWritten > 0 ? 'transfer-interrupted' : 'network';
 }
 
 /**
@@ -189,12 +195,16 @@ async function downloadToTarget(
   },
 ): Promise<AttachmentDownloadResult> {
   const path = `${target.directory}/${fileName}`;
+  // How far the transfer got, so a failure after bytes arrived is not
+  // reported as one where storage was never reached.
+  let bytesReceived = 0;
   try {
     const job = RNFS.downloadFile({
       fromUrl: url,
       toFile: path,
       progressDivider: 5,
       progress: ({ bytesWritten, contentLength }: { bytesWritten?: number; contentLength?: number; }) => {
+        bytesReceived = Math.max(bytesReceived, bytesWritten ?? 0);
         if (!contentLength || contentLength <= 0) return;
         const fraction = Math.min(1, Math.max(0, (bytesWritten ?? 0) / contentLength));
         logVerbose('[Attachments] download progress', { fileName, fraction });
@@ -226,11 +236,12 @@ async function downloadToTarget(
       return { success: false, path, reason: 'cancelled' };
     }
     const statusCode = (error as { statusCode?: number })?.statusCode;
-    const reason = classifyFailure({ statusCode, error });
+    const reason = classifyFailure({ statusCode, error, bytesWritten: bytesReceived });
     logWarn('[Attachments] download attempt failed', {
       label: target.label,
       reason,
       statusCode,
+      bytesWritten: bytesReceived,
       error,
     });
     return { success: false, error, reason, statusCode };
@@ -425,6 +436,8 @@ const FAILURE_MESSAGES: Record<AttachmentDownloadReason, string> = {
   'not-found': 'This file is no longer available on the server',
   'server-error': 'The file server could not deliver this attachment. Try again later.',
   network: 'Could not reach the file server. Check your connection and try again.',
+  'transfer-interrupted':
+    'The download stopped partway through. Try again, ideally on a stronger connection.',
   storage: 'Could not save the file to device storage. Free up space and try again.',
   cancelled: 'Download cancelled',
 };
