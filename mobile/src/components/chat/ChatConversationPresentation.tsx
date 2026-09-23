@@ -70,12 +70,15 @@ export type AttachmentActionResult = {
   reason?: AttachmentDownloadReason;
   message?: string;
   retryable?: boolean;
+  label?: string;
+  fromCache?: boolean;
 };
 export type AttachmentOpenAction = AttachmentDownloadAction;
 type AttachmentActionKind = 'download' | 'open';
 /** Per-message attachment download state: idle is the absence of an entry. */
 export type AttachmentDownloadState =
   | { status: 'downloading'; progress: number; action?: AttachmentActionKind }
+  | { status: 'completed'; label: string; fromCache?: boolean }
   | {
       status: 'failed';
       reason?: AttachmentDownloadReason;
@@ -505,7 +508,6 @@ function TransferProgress({ label, progress, styles, progressTestID, onCancel, c
 
 function AttachmentIdleActions({
  message,
- textStyle,
  styles,
  onDownloadAttachment,
  onOpenAttachment,
@@ -513,21 +515,21 @@ function AttachmentIdleActions({
  showOpenAction,
 }: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment' | 'onOpenAttachment' |
   'isAttachmentOpenerSupported'> & {
- textStyle: object;
  showOpenAction?: boolean;
 }) {
   if (!showOpenAction) {
    return (
-     <Pressable
-       onPress={() => onDownloadAttachment?.(message)}
-       accessibilityRole="button"
-       accessibilityLabel="Download attachment"
-       accessibilityHint="Saves this attachment to your device"
-       hitSlop={touchSlop(12)}
-       style={styles.attachmentDownloadButton}
-       testID="chat-attachment-download">
-       <Text style={[textStyle, styles.attachmentDownloadText]}>Download</Text>
-     </Pressable>
+     <View style={styles.attachmentDownloadButton}>
+       <IconButton
+         icon="attachmentDownload"
+         size={32}
+         onPress={() => onDownloadAttachment?.(message)}
+         accessibilityLabel="Download attachment"
+         accessibilityHint="Saves this attachment to your device"
+         hitSlop={touchSlop(12)}
+         testID="chat-attachment-download"
+       />
+     </View>
    );
   }
 
@@ -551,18 +553,15 @@ function AttachmentIdleActions({
          {canOpen ? 'Open' : 'Open unavailable'}
        </Text>
      </Pressable>
-     <Pressable
+     <IconButton
+       icon="attachmentDownload"
+       size={32}
        onPress={() => onDownloadAttachment?.(message)}
-       accessibilityRole="button"
        accessibilityLabel="Download attachment"
        accessibilityHint="Saves this attachment to your device"
        hitSlop={touchSlop(12)}
-       style={styles.attachmentSecondaryButton}
-       testID="chat-attachment-download">
-       <Text style={[textStyle, styles.attachmentDownloadText, styles.attachmentSecondaryText]}>
-         Download
-       </Text>
-     </Pressable>
+       testID="chat-attachment-download"
+     />
    </View>
   );
 }
@@ -620,7 +619,6 @@ function AttachmentFailure({
       {failure}
       <AttachmentIdleActions
         message={message}
-        textStyle={textStyle}
         styles={styles}
         onDownloadAttachment={onDownloadAttachment}
         onOpenAttachment={undefined}
@@ -687,15 +685,21 @@ function AttachmentDownload({
  }
 
  return (
-   <AttachmentIdleActions
-     message={message}
-     textStyle={textStyle}
-     styles={styles}
-     onDownloadAttachment={onDownloadAttachment}
-     onOpenAttachment={onOpenAttachment}
-     isAttachmentOpenerSupported={isAttachmentOpenerSupported}
-     showOpenAction={showOpenAction}
-   />
+    <View>
+      <AttachmentIdleActions
+        message={message}
+        styles={styles}
+        onDownloadAttachment={onDownloadAttachment}
+        onOpenAttachment={onOpenAttachment}
+        isAttachmentOpenerSupported={isAttachmentOpenerSupported}
+        showOpenAction={showOpenAction}
+      />
+      {downloadState?.status === 'completed' ? (
+        <Text style={styles.attachmentDownloadResult} testID="chat-attachment-download-result">
+          {describeAttachmentDownloadResult({ success: true, ...downloadState })}
+        </Text>
+      ) : null}
+    </View>
  );
 }
 
@@ -2379,6 +2383,16 @@ function ChatConversationScreen({
                 },
               };
             }
+            if (action === 'download' && result?.success && result.label) {
+              return {
+                ...prev,
+                [messageId]: {
+                  status: 'completed',
+                  label: result.label,
+                  fromCache: result.fromCache,
+                },
+              };
+            }
             if (!(messageId in prev)) return prev;
             const next = { ...prev };
             delete next[messageId];
@@ -2937,16 +2951,10 @@ const createStyles = (colors: ThemeColors) =>
     attachmentOpenTextDisabled: {
       color: colors.textMuted,
     },
-    attachmentSecondaryButton: {
-      paddingVertical: 2,
-    },
-    attachmentDownloadText: {
-      fontWeight: '700',
-      textDecorationLine: 'underline',
-    },
-    attachmentSecondaryText: {
-      ...typography.hint,
-      opacity: 0.82,
+    attachmentDownloadResult: {
+      ...typography.label,
+      color: colors.textMuted,
+      marginTop: spacing.xs,
     },
     attachmentFailureStack: {
       gap: spacing.xs,
