@@ -18,6 +18,7 @@
     "db:check": "drizzle-kit check",
     "db:migrate": "drizzle-kit migrate",
     "db:rebuild-conversations": "node scripts/rebuild-conversations.ts",
+    "db:rewrite-attachment-hosts": "node scripts/rewrite-attachment-hosts.ts",
     "db:backfill-body-lower": "node scripts/backfill-message-body-lower.ts"
   },
   "dependencies": {

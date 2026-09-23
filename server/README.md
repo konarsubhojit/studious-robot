@@ -169,9 +169,11 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-04` | Notification Hubs REST API version used in the `api-version` query parameter. |
 | `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Chat history lives in the same Postgres database as everything else, so this is only needed when `DATABASE_URL` is deliberately absent. Development and tests still default to memory. |
 | `R2_ACCOUNT_ID` | _(unset)_ | Cloudflare account id, used to derive the R2 S3 endpoint (`https://<id>.r2.cloudflarestorage.com`). Not needed when `R2_ENDPOINT` is set explicitly. |
-| `R2_BUCKET` | _(unset)_ | R2 bucket holding chat media. |
+| `R2_BUCKET` | _(unset)_ | R2 bucket holding chat media. Exposed publicly (custom domain or `r2.dev`) it serves every attachment to anyone who learns a URL — see `R2_BUCKET_PRIVATE`. |
+| `R2_BUCKET_PRIVATE` | _(unset)_ | Optional second bucket with **no** public binding. When set, new uploads are written here and downloads resolve it first, falling back to `R2_BUCKET` so attachments stored before the switch keep working. This is what makes `GET /attachments/download` the only way to reach attachment bytes. |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | _(unset)_ | R2 API token credentials used to sign upload URLs. |
 | `R2_PUBLIC_BASE_URL` | _(unset)_ | Public origin the bucket (or its CDN hostname) is served from. Chat media lives under `<base>/chatblobs/…`, and only URLs under that prefix are accepted on `message.send`. |
+| `R2_PUBLIC_BASE_URL_LEGACY` | _(unset)_ | Comma-separated base URLs this deployment published attachments under before. Stored URLs are resolved by key path, so R2's own hostnames (`pub-….r2.dev`, `<account>.r2.cloudflarestorage.com`) already resolve; list retired custom domains/CDN hostnames here. Arbitrary hosts are never accepted. |
 | `R2_ENDPOINT` | derived from `R2_ACCOUNT_ID` | Override for the S3-compatible endpoint (custom domain, or a local S3 stand-in). |
 | `R2_PRESIGN_TTL_SECONDS` | `300` | Lifetime of a presigned upload URL, capped at `3600`. |
 | `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
@@ -196,6 +198,9 @@ referencing the returned `publicUrl`.
 - The object key is **server-generated**, so a caller cannot overwrite another conversation's media.
 - `cache-control`, `content-length`, and `content-type` are part of the signature: every object stores `public, max-age=31536000, immutable`, and an upload that exceeds the size cap or changes its MIME type is rejected by R2 itself, not only by the client. The same allowlist and caps (10 MB images, 16 MB voice notes, 25 MB files — see `shared/messages.ts`) are re-checked on `message.send`.
 - When R2 is not configured the endpoint answers `503` and attachment messages are refused; the rest of chat is unaffected.
+- `GET /attachments/download` mints a short-lived signed `GET` after re-deriving the expected key scope from the caller's session and claimed peer. A stored URL is resolved by its key path, so messages sent under a previous `R2_PUBLIC_BASE_URL` still download; the host must still be the configured base URL, one listed in `R2_PUBLIC_BASE_URL_LEGACY`, or an R2 hostname.
+- That authorization only bounds access if the bucket is not publicly readable. R2 public access is bucket-level, so a bucket behind a custom domain or `r2.dev` serves the same bytes unauthenticated — set `R2_BUCKET_PRIVATE` (the server warns at startup otherwise). See [`deploy/README.md`](../deploy/README.md).
+- `npm run db:rewrite-attachment-hosts` normalises stored URLs onto the current base URL. It is a dry run unless `--apply` is passed, and is never required: resolution already tolerates older hosts.
 
 ## Push notifications
 

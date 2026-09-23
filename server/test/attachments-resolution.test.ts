@@ -18,6 +18,7 @@ import {
   presignAttachmentDownload,
   publiclyReadableAttachmentVariable,
 } from '../src/attachments.ts';
+import { rewriteAttachmentHosts } from '../scripts/rewrite-attachment-hosts.ts';
 
 const BASE_ENV = {
   R2_ACCOUNT_ID: 'test-account',
@@ -144,4 +145,58 @@ test('download still mints a link for the private bucket when neither probe answ
     }) as unknown as typeof fetch,
   });
   assert.equal(new URL(downloadUrl).pathname, `/chat-private/${KEY}`);
+});
+
+// ─── scripts/rewrite-attachment-hosts.ts ──────────────────────────────────────
+
+/**
+ * A pool double returning `rows` for the scan and recording every statement.
+ */
+function fakeRewritePool(rows: { message_id: string; url: string; }[]) {
+  const statements: { sql: string; params?: unknown[]; }[] = [];
+  const client = {
+    async query(sql: string, params?: unknown[]) {
+      statements.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+      return { rows: sql.includes('SELECT') ? rows : [] };
+    },
+    release() {},
+  };
+  return {
+    statements,
+    pool: {
+      async connect() {
+        return client;
+      },
+      async end() {},
+    },
+  };
+}
+
+test('the rewrite script reports without writing until --apply is passed', async () => {
+  const config = configFor();
+  const rows = [
+    { message_id: 'm-legacy', url: `https://pub-63e944cb94da5108597.r2.dev/${KEY}` },
+    { message_id: 'm-current', url: `${BASE_ENV.R2_PUBLIC_BASE_URL}/${KEY}` },
+    { message_id: 'm-foreign', url: `https://attacker.example/${KEY}` },
+  ];
+
+  const dry = fakeRewritePool(rows);
+  const dryRun = await rewriteAttachmentHosts(dry.pool, { config });
+  assert.deepEqual(dryRun, {
+    scanned: 3,
+    rewritten: 1,
+    alreadyCurrent: 1,
+    unresolved: 1,
+    applied: false,
+  });
+  assert.equal(dry.statements.at(-1)?.sql, 'ROLLBACK');
+  assert.ok(!dry.statements.some((statement) => statement.sql.startsWith('UPDATE')));
+
+  const applied = fakeRewritePool(rows);
+  const applyRun = await rewriteAttachmentHosts(applied.pool, { config, apply: true });
+  assert.equal(applyRun.rewritten, 1);
+  assert.equal(applied.statements.at(-1)?.sql, 'COMMIT');
+  const updates = applied.statements.filter((statement) => statement.sql.startsWith('UPDATE'));
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0]?.params, ['m-legacy', `${BASE_ENV.R2_PUBLIC_BASE_URL}/${KEY}`]);
 });
