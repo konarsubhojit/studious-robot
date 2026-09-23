@@ -35,7 +35,7 @@ Besides the call/session/contact routes, the chat surface adds:
 
 | `POST /account/delete` | body: none | `202 { status, requestedAt, scheduledFor, completedAt }` | Queues this account for erasure and returns when it becomes due (`ACCOUNT_DELETION_GRACE_MS`, 7 days by default). Idempotent: repeating the request does not extend the grace period. `GET /account/delete` reports the queued request (`{ status: 'none' }` when there is none) and `DELETE /account/delete` cancels one that has not run yet (`404` when nothing is pending). The erasure itself runs in a background sweep — see `src/domain/accountDeletion.ts` for what it cascades across. `401` without a valid session, `429` when the request limit is exhausted. |
 
-| `POST /attachments/presign` | body `{ peerId, type, mimeType, sizeBytes }` | `200 { conversationId, key, uploadUrl, publicUrl, expiresAt, headers }` | Mints a short-lived Cloudflare R2 upload URL for a chat attachment (see [Attachments](#attachments)). `401` without a valid session, `400` for a disallowed `type`/`mimeType` or an oversized `sizeBytes`, `429` when the message rate limit is exhausted, `503` when R2 is not configured. |
+| `POST /attachments/presign` | body `{ peerId, type, mimeType, sizeBytes }` | `200 { conversationId, key, uploadUrl, reference, expiresAt, headers }` | Mints a short-lived Cloudflare R2 upload URL for a chat attachment (see [Attachments](#attachments)). `401` without a valid session, `400` for a disallowed `type`/`mimeType` or an oversized `sizeBytes`, `429` when the message rate limit is exhausted, `503` when R2 is not configured. |
 
 With `include=calls` the page becomes a unified conversation timeline: calls between the same two users are merged in and every entry carries a `type` discriminator — a message contributes its own type (`text`, `image`, `file`, `voice`, `system`), or `call` for `{ type, callId, conversationId, direction, status, endReason, durationSeconds, createdAt }`. The `before` cursor stays exact across the merged stream (`messageStore.nextTimestamp()` guarantees strictly-increasing message timestamps, and ties are broken by entry id). The parameter is opt-in, so omitting it returns exactly the payload it always did, and a blocked (or blocking) peer's calls are filtered out just like their conversation is in `GET /conversations`.
 
@@ -169,9 +169,9 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-04` | Notification Hubs REST API version used in the `api-version` query parameter. |
 | `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Chat history lives in the same Postgres database as everything else, so this is only needed when `DATABASE_URL` is deliberately absent. Development and tests still default to memory. |
 | `R2_ACCOUNT_ID` | _(unset)_ | Cloudflare account id, used to derive the R2 S3 endpoint (`https://<id>.r2.cloudflarestorage.com`). Not needed when `R2_ENDPOINT` is set explicitly. |
-| `R2_BUCKET` | _(unset)_ | R2 bucket holding chat media. |
+| `R2_BUCKET` | _(unset)_ | R2 bucket holding chat media. Must **not** be publicly readable — no custom domain, no `r2.dev` URL (see [`deploy/README.md`](../deploy/README.md)). |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | _(unset)_ | R2 API token credentials used to sign upload URLs. |
-| `R2_PUBLIC_BASE_URL` | _(unset)_ | Public origin the bucket (or its CDN hostname) is served from. Chat media lives under `<base>/chatblobs/…`, and only URLs under that prefix are accepted on `message.send`. |
+| `R2_PUBLIC_BASE_URL` | _(removed)_ | Obsolete: attachments are not publicly addressable. Still being set is logged as a misconfiguration at startup, because it usually means the bucket is publicly served. |
 | `R2_ENDPOINT` | derived from `R2_ACCOUNT_ID` | Override for the S3-compatible endpoint (custom domain, or a local S3 stand-in). |
 | `R2_PRESIGN_TTL_SECONDS` | `300` | Lifetime of a presigned upload URL, capped at `3600`. |
 | `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
@@ -190,9 +190,10 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 Chat media never travels through the signaling server. `POST
 /attachments/presign` returns a short-lived, S3 SigV4-signed `PUT` URL for
 Cloudflare R2; the client uploads directly, then sends a `message.send`
-referencing the returned `publicUrl`.
+referencing the returned `reference`.
 
-- Every object lives under one shared prefix — `<R2_PUBLIC_BASE_URL>/chatblobs/<conversationId>/<uuid>.<ext>` — so a deployment only points a single bucket/CDN hostname at chat media, and `message.send` can reject any URL outside it.
+- The bucket is **private**: nothing in it is fetchable without a signature, so `GET /attachments/download` — session-checked, block-checked, rate-limited, and scope-recomputed from the caller's own identity — is the only way to turn a stored reference into bytes. Exposing the bucket through a custom domain or its `r2.dev` URL makes every attachment readable by anyone who learns its key and bypasses all of that; R2 public access is bucket-level, so a private prefix inside a public bucket does not exist.
+- A message stores the object **key** (`chatblobs/<conversationId>/<uuid>.<ext>`) as an opaque reference rather than a URL, and `message.send` rejects anything outside that prefix.
 - The object key is **server-generated**, so a caller cannot overwrite another conversation's media.
 - `cache-control`, `content-length`, and `content-type` are part of the signature: every object stores `public, max-age=31536000, immutable`, and an upload that exceeds the size cap or changes its MIME type is rejected by R2 itself, not only by the client. The same allowlist and caps (10 MB images, 16 MB voice notes, 25 MB files — see `shared/messages.ts`) are re-checked on `message.send`.
 - When R2 is not configured the endpoint answers `503` and attachment messages are refused; the rest of chat is unaffected.
