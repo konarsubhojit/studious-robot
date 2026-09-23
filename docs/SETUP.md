@@ -148,13 +148,16 @@ ALLOW_IN_MEMORY_MESSAGE_STORE=false
 # ── Chat attachments (Cloudflare R2) ────────────────────────────────────────
 # When set, clients can upload photos, files and voice notes through presigned
 # R2 URLs. Everything is stored under the shared `chatblobs/` prefix, and only
-# URLs under `<R2_PUBLIC_BASE_URL>/chatblobs/` are accepted on `message.send`.
+# keys under `chatblobs/` are accepted on `message.send`.
+# The bucket MUST NOT be publicly readable: no custom domain, no r2.dev URL.
+# Public access is bucket-level, so a shared-with-a-public-site bucket makes
+# every attachment fetchable by anyone who learns its key, bypassing
+# GET /attachments/download. Use a dedicated private bucket.
 # Leave unset to keep chat text-only: /attachments/presign then answers 503.
 R2_ACCOUNT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-R2_BUCKET=wetalk-chat
+R2_BUCKET=wetalk-attachments               # private bucket, no public binding
 R2_ACCESS_KEY_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 R2_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-R2_PUBLIC_BASE_URL=https://media.example.com   # bucket's public/CDN origin
 # R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com  # optional override
 R2_PRESIGN_TTL_SECONDS=300     # optional, default shown (max 3600)
 

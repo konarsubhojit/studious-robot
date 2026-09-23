@@ -147,7 +147,7 @@ export async function presignAttachment({
         sizeBytes: number;
     }): Promise<{
     conversationId: string; key: string; uploadUrl: string;
-    publicUrl: string; expiresAt: string; headers: Record<string, string>;
+    reference: string; expiresAt: string; headers: Record<string, string>;
 }> {
   const trimmedUrl = (signalingUrl ?? '').trim();
   logInfo('[Attachments] presign requested', { type, mimeType, sizeBytes });
@@ -321,7 +321,9 @@ export async function uploadAttachment({
 
   logInfo('[Attachments] uploaded', { type, mimeType: validatedMimeType, sizeBytes });
   return {
-    url: presigned.publicUrl,
+    // The stored reference is the object key, not a fetchable URL: bytes are
+    // only reachable through `GET /attachments/download`.
+    url: presigned.reference,
     mimeType: validatedMimeType,
     sizeBytes,
     ...(name ? { name } : {}),

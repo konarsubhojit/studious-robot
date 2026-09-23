@@ -3,11 +3,16 @@
  *
  * Message bodies never carry binary data: the client asks for a short-lived
  * presigned `PUT` URL, uploads straight to object storage, and then sends a
- * `message.send` that references the resulting public URL.
+ * `message.send` carrying the *reference* to the stored object.
  *
- * Everything is served from one shared prefix — `<public base>/chatblobs/…` —
- * because all chat media lives in the same bucket, so a deployment only has to
- * point one hostname (bucket domain or CDN) at it.
+ * That reference is the object key (`chatblobs/<scope>/<uuid>.<ext>`) and is
+ * deliberately **not** a fetchable URL. The bucket holding chat media must
+ * have no public binding — no custom domain, no `r2.dev` — because R2 public
+ * access is bucket-level, not per-prefix: a bucket exposed publicly serves
+ * every object in it to anyone who learns a URL, which bypasses the session,
+ * block, rate-limit and conversation-scope checks `GET /attachments/download`
+ * performs. A UUID in a key is not a security boundary; keys travel through
+ * push payloads, exports and client logs.
  *
  * The presigned URL is the *enforcement point*, not just a convenience:
  * `cache-control`, `content-length`, and `content-type` are part of the
@@ -34,13 +39,19 @@ const MAX_PRESIGN_TTL_SECONDS = 3600;
 /**
  * How long a presigned *download* URL stays valid, in seconds.
  *
- * Deliberately much shorter than an upload TTL: a download link is minted on
- * every viewing/opening/downloading attempt (see `GET /attachments/download`),
- * so there is no reason for one to outlive the request that asked for it by
- * much, and a short TTL bounds how long a link that leaks (a forwarded chat
- * export, a proxy log) stays useful to whoever it leaked to.
+ * Still far shorter than an upload TTL — a download link is minted on every
+ * viewing/opening/downloading attempt (see `GET /attachments/download`), so a
+ * link that leaks (a forwarded chat export, a proxy log) should stop being
+ * useful quickly. It nevertheless has to outlive the *transfer* it was minted
+ * for, not just the request that asked for it: R2 rejects the remainder of an
+ * in-flight `GET` the moment the signature expires, which is how a real
+ * 18 MiB (19,120,588 byte) attachment on a mobile link turned into an opaque
+ * failure part-way through at the previous 120s. 15 minutes covers the
+ * largest attachment this server accepts (25 MB, see `shared/messages.ts`) at
+ * roughly 30 KB/s — a bad mobile link rather than a broken one — while
+ * keeping the exposure window of a leaked link in minutes, not hours.
  */
-const DOWNLOAD_PRESIGN_TTL_SECONDS = 120;
+const DOWNLOAD_PRESIGN_TTL_SECONDS = 900;
 const ATTACHMENT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 /** File extension per accepted MIME type, purely cosmetic for the object key. */
@@ -65,26 +76,45 @@ const EXTENSION_BY_MIME_TYPE = Object.freeze({
 });
 
 /**
+ * Resolved R2 configuration for attachment storage.
+ *
+ * There is no public base URL: the bucket is reached only through presigned
+ * requests, and what a message stores is an object key, not a link.
+ */
+type R2Config = {
+  accountId: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  endpoint: string;
+  ttlSeconds: number;
+};
+
+/** Environment variables that must all be present for attachments to work. */
+const REQUIRED_R2_VARIABLES = Object.freeze([
+  'R2_BUCKET',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+]);
+
+/**
  * Read the R2 configuration from the environment.
  *
  * @returns `null` when R2 is not configured, in which
  *   case attachment uploads are simply unavailable and the rest of chat is
  *   unaffected.
  */
-function loadR2Config(env: Record<string, string | undefined> = process.env): {
-    accountId: string; bucket: string; accessKeyId: string;
-    secretAccessKey: string; endpoint: string; publicBaseUrl: string;
-    ttlSeconds: number;
-} | null {
+function loadR2Config(env: Record<string, string | undefined> = process.env): R2Config | null {
   const accountId = env.R2_ACCOUNT_ID?.trim();
   const bucket = env.R2_BUCKET?.trim();
   const accessKeyId = env.R2_ACCESS_KEY_ID?.trim();
   const secretAccessKey = env.R2_SECRET_ACCESS_KEY?.trim();
-  const publicBaseUrl = env.R2_PUBLIC_BASE_URL?.trim().replace(/\/+$/, '');
-  if (!bucket || !accessKeyId || !secretAccessKey || !publicBaseUrl) return null;
+  if (!bucket || !accessKeyId || !secretAccessKey) return null;
 
   // The account-scoped endpoint is derivable from the account id; an explicit
-  // `R2_ENDPOINT` (custom domain, or a MinIO/S3 stand-in in development) wins.
+  // `R2_ENDPOINT` (a MinIO/S3 stand-in in development) wins. Either way this
+  // is the S3 API endpoint, which requires a signature — never a public
+  // domain in front of the bucket.
   const explicitEndpoint = env.R2_ENDPOINT?.trim().replace(/\/+$/, '');
   if (!explicitEndpoint && !accountId) return null;
   const endpoint = explicitEndpoint || `https://${accountId}.r2.cloudflarestorage.com`;
@@ -95,7 +125,44 @@ function loadR2Config(env: Record<string, string | undefined> = process.env): {
       ? Math.min(Math.floor(requestedTtl), MAX_PRESIGN_TTL_SECONDS)
       : DEFAULT_PRESIGN_TTL_SECONDS;
 
-  return { accountId: accountId ?? '', bucket, accessKeyId, secretAccessKey, endpoint, publicBaseUrl, ttlSeconds };
+  return { accountId: accountId ?? '', bucket, accessKeyId, secretAccessKey, endpoint, ttlSeconds };
+}
+
+/**
+ * Explain why attachment storage is unusable or unsafe, if it is.
+ *
+ * Silence is only correct when nothing about R2 is configured (a text-only
+ * deployment). A *half*-configured one, or one still pointing at a publicly
+ * served bucket, has to say so at startup naming the variable at fault —
+ * otherwise the first symptom is a `503` per upload, or bytes quietly
+ * readable by anyone holding a URL.
+ *
+ * @returns messages to log, most serious first; empty when all is well.
+ */
+function describeR2Misconfiguration(env: Record<string, string | undefined> = process.env): string[] {
+  const problems: string[] = [];
+  const present = REQUIRED_R2_VARIABLES.filter((name) => env[name]?.trim());
+  const missing = REQUIRED_R2_VARIABLES.filter((name) => !env[name]?.trim());
+
+  if (present.length && missing.length) {
+    problems.push(
+      `attachment storage is half-configured: set ${missing.join(', ')} (attachments stay disabled until then)`
+    );
+  }
+  if (present.length && !env.R2_ENDPOINT?.trim() && !env.R2_ACCOUNT_ID?.trim()) {
+    problems.push(
+      'attachment storage has no endpoint: set R2_ACCOUNT_ID (or R2_ENDPOINT) to reach the S3 API'
+    );
+  }
+  if (env.R2_PUBLIC_BASE_URL?.trim()) {
+    problems.push(
+      'R2_PUBLIC_BASE_URL is set and ignored: attachments are served only through ' +
+        'GET /attachments/download. If that hostname still fronts the attachments bucket, ' +
+        'every attachment is readable by anyone who learns its key — R2 public access is ' +
+        'bucket-level, so move chat media to a bucket with no custom domain and no r2.dev binding'
+    );
+  }
+  return problems;
 }
 
 /**
@@ -173,7 +240,7 @@ function encodeSegment(segment: string): string {
  * storage rather than by this server.
  */
 function presignObjectRequest({ config, method, key, signedHeaderValues = {}, now = new Date() }: {
-        config: NonNullable<ReturnType<typeof loadR2Config>>; method: string; key: string;
+        config: R2Config; method: string; key: string;
         signedHeaderValues?: Record<string, string>; now?: Date;
     }): { url: string; expiresAt: string; } {
   const endpoint = new URL(config.endpoint);
@@ -238,13 +305,17 @@ function presignObjectRequest({ config, method, key, signedHeaderValues = {}, no
  * the size cap, and the MIME allowlist are therefore enforced by object
  * storage, not only by this server or the client.
  *
+ * The `reference` returned alongside is what the client stores on the
+ * message: the object key, not a link. Nothing but
+ * `GET /attachments/download` can turn it into bytes.
+ *
  * @param params
  */
 function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new Date() }: {
         config: ReturnType<typeof loadR2Config>; key: string; mimeType: string;
         sizeBytes: number; now?: Date;
     }): {
-    uploadUrl: string; publicUrl: string; expiresAt: string;
+    uploadUrl: string; reference: string; expiresAt: string;
     headers: Record<string, string>; key: string;
 } {
   if (!config) throw new Error('presignAttachmentUpload: R2 is not configured');
@@ -264,7 +335,7 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
   return {
     key,
     uploadUrl: signed.url,
-    publicUrl: `${config.publicBaseUrl}/${key.split('/').map(encodeSegment).join('/')}`,
+    reference: key,
     expiresAt: signed.expiresAt,
     // The client must replay these verbatim, or R2 rejects the signature.
     headers: {
@@ -278,11 +349,11 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
 /**
  * Presign a short-lived download (`GET`) of an existing object.
  *
- * This is the authorization boundary the upload flow's `publicUrl` on its own
- * cannot provide: the bucket behind `config.publicBaseUrl` is not readable
- * without a valid signature, so a client can only ever fetch bytes for a key
- * this deployment agreed, per request, to hand out — never by guessing or
- * replaying an old public link.
+ * This is the authorization boundary the stored reference on its own cannot
+ * provide: the bucket is not readable without a valid signature, so a client
+ * can only ever fetch bytes for a key this deployment agreed, per request, to
+ * hand out — never by guessing a key or replaying an old link. That holds
+ * only as long as the bucket has no public binding; see the module header.
  *
  * What this *cannot* do: revoke a copy that already left the server. Once a
  * download link has been followed — or the resulting file saved, forwarded,
@@ -327,40 +398,81 @@ function attachmentScopeFromKey(key: unknown): string | null {
 }
 
 /**
- * Whether `url` points at this deployment's chat-blob prefix.
+ * Whether `reference` is a reference to media this deployment stored.
  *
- * A message may only reference media this server handed out a presigned URL
- * for: an arbitrary URL would turn every chat bubble into a request to a host
- * of the sender's choosing (an IP-leak / tracking vector for the recipient).
+ * A message may only carry a reference this server handed out: an arbitrary
+ * URL would turn every chat bubble into a request to a host of the sender's
+ * choosing (an IP-leak / tracking vector for the recipient), and a key
+ * outside the chat-blob prefix would point at storage that is not chat media.
  */
-function isManagedAttachmentUrl(config: ReturnType<typeof loadR2Config>, url: unknown): url is string {
-  if (!config || typeof url !== 'string') return false;
-  if (!url.startsWith(`${config.publicBaseUrl}/${ATTACHMENT_PATH_PREFIX}/`)) return false;
-  // `startsWith` alone would accept a URL that escapes the prefix again once a
-  // proxy normalises it (`…/chatblobs/../elsewhere`).
-  return !url.includes('..');
+function isManagedAttachmentReference(config: ReturnType<typeof loadR2Config>, reference: unknown): reference is string {
+  return Boolean(config) && attachmentKeyFromReference(config, reference) !== null;
 }
 
 /**
- * Recover the object key from a public attachment URL.
+ * The host of an attachment reference, for diagnostics.
  *
- * Only URLs this deployment minted are accepted, so an account erasure can
- * never be steered into deleting an object outside the chat-blob prefix.
+ * A reference is a bare key and has no host; one that *does* parse as a URL
+ * is a pre-private-bucket leftover, and its host is the only part a log may
+ * carry — never the full (or signed) URL.
  *
- * @returns the key, or `null` when the URL is not one of ours.
+ * @returns the host, or `null` when there is none to report.
  */
-function attachmentKeyFromUrl(config: ReturnType<typeof loadR2Config>, url: unknown): string | null {
-  if (!config || !isManagedAttachmentUrl(config, url) || typeof url !== 'string') return null;
-  const path = url.slice(config.publicBaseUrl.length + 1);
+function attachmentReferenceHost(reference: unknown): string | null {
+  if (typeof reference !== 'string') return null;
   try {
-    return path.split('/').map(decodeURIComponent).join('/');
+    return new URL(reference).host || null;
   } catch {
     return null;
   }
 }
 
 /**
- * Delete the object behind a public attachment URL.
+ * Recover the object key from a stored attachment reference.
+ *
+ * The reference *is* the key (`chatblobs/<scope>/<uuid>.<ext>`); this
+ * validates its shape rather than parsing a URL. Only well-formed keys under
+ * the chat-blob prefix are accepted, so neither a download grant nor an
+ * account erasure can be steered at an object outside it.
+ *
+ * `onUnresolved` is called with a reason and the reference's host (never the
+ * reference itself) when derivation fails, because a reference that no longer
+ * resolves — a row predating the private bucket, say — is otherwise invisible
+ * without a database query.
+ *
+ * @returns the key, or `null` when the reference is not one of ours.
+ */
+function attachmentKeyFromReference(
+  config: ReturnType<typeof loadR2Config>,
+  reference: unknown,
+  { onUnresolved }: { onUnresolved?: (details: { reason: string; host: string | null; }) => void; } = {}
+): string | null {
+  /** @param reason */
+  const refuse = (reason: string) => {
+    onUnresolved?.({ reason, host: attachmentReferenceHost(reference) });
+    return null;
+  };
+
+  if (!config) return refuse('attachments are not configured');
+  if (typeof reference !== 'string' || !reference.trim()) return refuse('reference is empty');
+
+  const segments = reference.trim().split('/');
+  if (segments[0] !== ATTACHMENT_PATH_PREFIX) {
+    // A full URL lands here too: attachments are no longer published under a
+    // public base URL, so a stored link is a leftover, not a key.
+    return refuse(`reference is not under ${ATTACHMENT_PATH_PREFIX}/`);
+  }
+  if (segments.length < 3) return refuse('reference is missing a scope or object name');
+  // `.`/`..`/empty segments cannot appear in a key this server minted, and
+  // would let a normalising proxy escape the prefix.
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    return refuse('reference contains a relative path segment');
+  }
+  return attachmentScopeFromKey(reference.trim()) ? reference.trim() : refuse('reference has no scope');
+}
+
+/**
+ * Delete the object behind a stored attachment reference.
  *
  * Used by account erasure: tombstoning a message clears the reference to its
  * attachment, but the bytes outlive the row unless they are removed here, and
@@ -372,7 +484,7 @@ async function deleteAttachmentObject({ config, url, fetchImpl = fetch, now = ne
         config: ReturnType<typeof loadR2Config>; url: unknown;
         fetchImpl?: typeof fetch; now?: Date;
     }): Promise<boolean> {
-  const key = attachmentKeyFromUrl(config, url);
+  const key = attachmentKeyFromReference(config, url);
   if (!config || !key) return false;
 
   const signed = presignObjectRequest({ config, method: 'DELETE', key, now });
@@ -386,11 +498,13 @@ export {
   DEFAULT_PRESIGN_TTL_SECONDS,
   DOWNLOAD_PRESIGN_TTL_SECONDS,
   MAX_PRESIGN_TTL_SECONDS,
-  attachmentKeyFromUrl,
+  attachmentKeyFromReference,
+  attachmentReferenceHost,
   attachmentScopeFromKey,
   createAttachmentKey,
   deleteAttachmentObject,
-  isManagedAttachmentUrl,
+  describeR2Misconfiguration,
+  isManagedAttachmentReference,
   loadR2Config,
   presignAttachmentDownload,
   presignAttachmentUpload,

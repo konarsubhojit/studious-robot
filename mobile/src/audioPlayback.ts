@@ -220,7 +220,18 @@ export async function stopAudio(): Promise<AudioPlaybackResult> {
  *
  * @param uri the attachment's public URL (or a local file path).
  */
-export async function playAudio(uri: string | null | undefined, { durationMs = 0 }: { durationMs?: number | null; } = {}): Promise<AudioPlaybackResult> {
+export async function playAudio(
+  uri: string | null | undefined,
+  { durationMs = 0, resolveUri }: {
+    durationMs?: number | null;
+    /**
+     * Exchange `uri` for something the native player can fetch. Playback state
+     * still keys on `uri` itself, so callers keep identifying a clip by the
+     * stable reference rather than by the short-lived link it resolved to.
+     */
+    resolveUri?: (uri: string) => Promise<string>;
+  } = {},
+): Promise<AudioPlaybackResult> {
   if (!uri || typeof uri !== 'string') {
     logWarn('[AudioPlayback] play refused: no source URI');
     return failure('missing-uri');
@@ -243,6 +254,16 @@ export async function playAudio(uri: string | null | undefined, { durationMs = 0
     await stopAudio();
   }
 
+  let source = uri;
+  if (resolveUri) {
+    try {
+      source = await resolveUri(uri);
+    } catch (error) {
+      logWarn('[AudioPlayback] could not authorize the audio source');
+      return failure('failed', error);
+    }
+  }
+
   try {
     completingUri = null;
     sound.addPlayBackListener?.(event => {
@@ -263,7 +284,7 @@ export async function playAudio(uri: string | null | undefined, { durationMs = 0
       publish({ positionMs, durationMs: total || state.durationMs });
     });
     publish({ uri, isPlaying: true, positionMs: 0, durationMs: Number(durationMs) || 0 });
-    await sound.startPlayer(uri);
+    await sound.startPlayer(source);
     // Carry the session's chosen speed onto this note rather than resetting
     // to 1x each time a new clip starts.
     if (state.playbackRate !== PLAYBACK_RATES[0] && typeof sound.setPlaybackSpeed === 'function') {

@@ -48,14 +48,21 @@ function extensionForMimeType(mimeType: string | null | undefined): string {
 }
 
 /**
- * @returns the last path segment, or '' when `url` is unparseable.
+ * @returns the last path segment, or '' when there is none.
  */
 function filenameFromUrl(url: string | null | undefined): string {
+  if (typeof url !== 'string' || !url) return '';
   try {
-    const parsed = new URL((url as string));
+    const parsed = new URL(url);
     return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() ?? '');
   } catch {
-    return '';
+    // Not a URL: an attachment reference is an opaque `chatblobs/…` key, and
+    // its last segment is still the most descriptive name available.
+    try {
+      return decodeURIComponent(url.split('/').filter(Boolean).pop() ?? '');
+    } catch {
+      return '';
+    }
   }
 }
 
@@ -276,6 +283,53 @@ async function downloadWithFallback({ url, fileName, onProgress, permission, isC
 }
 
 /**
+ * Exchange the stored attachment reference for the URL bytes are fetched from.
+ *
+ * The reference identifies the object for caching and de-duplication but is
+ * never fetched directly once download authorization is wired up: the bytes
+ * are only reachable through the short-lived link the server mints for this
+ * one request. Whatever the reference looked like — an opaque object key, or
+ * a sender-supplied `file://` on a deployment with no resolver — only an
+ * HTTP(S) URL is ever handed to the downloader, so a download can never
+ * become a local-file copy.
+ */
+async function authorizeFetchUrl({ url, resolveFetchUrl, isCancelled }: {
+    url: string;
+    resolveFetchUrl?: (url: string) => Promise<string>;
+    isCancelled: () => boolean;
+}): Promise<{ url: string; } | { failure: AttachmentDownloadResult; }> {
+  const abandon = (): { failure: AttachmentDownloadResult; } => {
+    const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
+    return { failure: { ...abandoned, message: describeAttachmentDownloadResult(abandoned) } };
+  };
+  let fetchUrl = url;
+  if (resolveFetchUrl) {
+    try {
+      fetchUrl = await resolveFetchUrl(url);
+    } catch (error) {
+      if (isCancelled()) return abandon();
+      const statusCode = (error as { status?: number; })?.status;
+      const reason = classifyFailure({ statusCode, error });
+      logWarn('[Attachments] download authorization failed', { reason, statusCode });
+      return {
+        failure: { success: false, error, reason, statusCode, message: describeAttachmentDownloadResult({ reason }) },
+      };
+    }
+  }
+  if (isCancelled()) return abandon();
+  if (!/^https?:\/\//i.test(fetchUrl)) {
+    logWarn('[Attachments] download refused an unsupported URL scheme', { host: hostOf(fetchUrl) });
+    const refused: AttachmentDownloadResult = {
+      success: false,
+      reason: 'unsupported-url',
+      error: new Error('Unsupported attachment URL'),
+    };
+    return { failure: { ...refused, message: describeAttachmentDownloadResult(refused) } };
+  }
+  return { url: fetchUrl };
+}
+
+/**
  * Download a previously sent/received chat attachment into the most accessible
  * device storage location available.
  *
@@ -311,13 +365,6 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
     logWarn('[Attachments] download skipped: no URL on the attachment', { mimeType });
     return { success: false, reason: 'missing-url', error: new Error('Missing attachment URL') };
   }
-  // Only ever fetch over HTTP(S): a sender-supplied `file://` (or any other
-  // scheme) would turn a download into a local-file copy.
-  if (!/^https?:\/\//i.test(url)) {
-    logWarn('[Attachments] download refused an unsupported URL scheme', { host: hostOf(url) });
-    return { success: false, reason: 'unsupported-url', error: new Error('Unsupported attachment URL') };
-  }
-
   const fileName = attachmentDownloadFileName({ name, url, mimeType, now });
 
   // Set before the first await, for the lifetime of the whole call: cancelling
@@ -351,29 +398,9 @@ export async function downloadAttachment({ url, name, mimeType, messageId, now =
     return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
   }
 
-  // The stored reference (`url`) is never fetched directly once download
-  // authorization is wired up: it identifies the object for caching, but the
-  // bytes are only reachable through the short-lived link the server just
-  // minted for this specific request.
-  let fetchUrl = url;
-  if (resolveFetchUrl) {
-    try {
-      fetchUrl = await resolveFetchUrl(url);
-    } catch (error) {
-      if (cancelled) {
-        const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
-        return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
-      }
-      const statusCode = (error as { status?: number; })?.status;
-      const reason = classifyFailure({ statusCode, error });
-      logWarn('[Attachments] download authorization failed', { reason, statusCode });
-      return { success: false, error, reason, statusCode, message: describeAttachmentDownloadResult({ reason }) };
-    }
-  }
-  if (cancelled) {
-    const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
-    return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
-  }
+  const authorized = await authorizeFetchUrl({ url, resolveFetchUrl, isCancelled: () => cancelled });
+  if ('failure' in authorized) return authorized.failure;
+  const fetchUrl = authorized.url;
 
   const permission = await ensureDownloadPermission();
   if (!permission.granted) {

@@ -14,6 +14,7 @@ import {
   seekAudio,
   subscribeAudioPlayback,
 } from '../audioPlayback';
+import { useAttachmentUriResolver } from '../attachmentUri';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
@@ -102,6 +103,7 @@ function PlaybackIcon({
  * @param durationMs
  */
 function useAudioAttachmentPlayback(uri: string | null | undefined, durationMs: number | null | undefined) {
+  const resolveUri = useAttachmentUriResolver();
   const [playback, setPlayback] = useState(() => getAudioPlaybackState());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,12 +146,12 @@ function useAudioAttachmentPlayback(uri: string | null | undefined, durationMs: 
     }
     setIsLoading(true);
     try {
-      const started = await playAudio(uri, { durationMs });
+      const started = await playAudio(uri, { durationMs, resolveUri: resolveUri ?? undefined });
       if (!started.ok) setError(started.message);
     } finally {
       setIsLoading(false);
     }
-  }, [durationMs, isCurrent, isPlaying, uri]);
+  }, [durationMs, isCurrent, isPlaying, resolveUri, uri]);
 
   return { playback, isLoading, error, isCurrent, isPlaying, totalMs, positionMs, handleToggle };
 }

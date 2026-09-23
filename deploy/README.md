@@ -482,6 +482,60 @@ unset and `NODE_ENV=production`, and logs a warning otherwise (see
 whether it is alone — so **the guard only arms once you set `INSTANCE_ID=1` on
 the second VM** (§5a). Set it as part of provisioning, not after an incident.
 
+### Chat attachments (Cloudflare R2) configuration
+
+Attachments are stored in an R2 bucket that **must not be publicly readable**.
+
+The bucket holds every photo, file and voice note ever sent. `GET
+/attachments/download` is what authorizes access: it checks the caller's
+session, honours blocks, rate-limits, and recomputes the object's expected
+conversation scope from the caller's own identity, then mints a short-lived
+presigned link. Every one of those checks is bypassed the moment the bucket is
+reachable without a signature, because an object URL is then simply fetchable:
+
+```bash
+# What a publicly-exposed bucket answers to an unauthenticated stranger:
+curl -sSI "https://<public-host>/chatblobs/<scope>/<uuid>.zip"   # HTTP/2 200
+```
+
+The UUID in the key is **not** a security boundary: keys leak through logs,
+caches, proxies, screenshots and anyone the recipient forwards a link to.
+
+So, when provisioning the bucket:
+
+- Do **not** attach a custom domain to it, and leave the `r2.dev` development
+  URL **disabled**. R2 public access is a **bucket-level** setting, so there is
+  no way to keep `chatblobs/` private inside a bucket that is publicly served.
+- Do **not** share this bucket with a project that needs public reads (a site
+  serving images, say). That configuration is unsupported — give that project
+  its own bucket.
+- Create an R2 API token scoped to this bucket only (object read/write) and
+  give the server its credentials. The server reaches the bucket exclusively
+  through SigV4-presigned URLs, which work unchanged against a private bucket.
+
+Set these on each signaling VM (`/etc/robot-signal/env`):
+
+```dotenv
+R2_ACCOUNT_ID=<cloudflare-account-id>
+R2_BUCKET=<private-attachments-bucket>
+R2_ACCESS_KEY_ID=<r2-token-access-key-id>
+R2_SECRET_ACCESS_KEY=<r2-token-secret>
+# Optional: R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+# Optional: R2_PRESIGN_TTL_SECONDS=300
+```
+
+Leaving all of them unset keeps chat text-only: `POST /attachments/presign`
+answers `503` and attachment messages are refused. A half-configured bucket is
+logged at startup naming the missing variable.
+
+`R2_PUBLIC_BASE_URL` is **obsolete** and must be removed: nothing about an
+attachment is publicly addressable any more. A message now stores the object
+*key* (`chatblobs/<scope>/<uuid>.<ext>`) as an opaque reference, and clients
+exchange it for a presigned link through `GET /attachments/download` every time
+bytes are needed — viewing, downloading or opening. Startup logs an error when
+the variable is still present, because its presence usually means the bucket is
+still publicly served.
+
 ---
 
 ## 7. Sudoers — passwordless restart for the deploy script

@@ -1,6 +1,6 @@
 import { MAX_MESSAGE_BODY_LENGTH } from '../../messageStore.ts';
 import { normaliseId } from '../../lib/normalize.ts';
-import { isManagedAttachmentUrl, loadR2Config, validateAttachmentRequest } from '../../attachments.ts';
+import { isManagedAttachmentReference, loadR2Config, validateAttachmentRequest } from '../../attachments.ts';
 import {
   DEFAULT_MESSAGE_TYPE,
   MAX_REACTION_LENGTH,
@@ -50,7 +50,7 @@ function validateAttachment(
   if (!config) {
     return { error: 'bad_request', message: 'attachment uploads are not enabled' };
   }
-  if (!isManagedAttachmentUrl(config, attachment.url)) {
+  if (!isManagedAttachmentReference(config, attachment.url)) {
     return { error: 'bad_request', message: 'attachment.url is not a managed upload' };
   }
 
@@ -82,7 +82,7 @@ function validateAttachment(
       width: Number.isInteger(attachment.width) ? attachment.width : null,
       height: Number.isInteger(attachment.height) ? attachment.height : null,
       durationMs: Number.isInteger(durationMs) ? durationMs : null,
-      thumbnailUrl: isManagedAttachmentUrl(config, attachment.thumbnailUrl)
+      thumbnailUrl: isManagedAttachmentReference(config, attachment.thumbnailUrl)
         ? attachment.thumbnailUrl
         : null,
     },

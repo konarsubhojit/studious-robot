@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
 import { resolveAttachmentDownloadUrl } from '../attachmentAccess';
+import { AttachmentUriProvider } from '../attachmentUri';
 import {
   describeAttachmentDownloadResult,
   downloadAttachment,
@@ -164,6 +165,10 @@ function TabShell() {
     // nothing to render (and every handler below would target no peer).
     if (!peerId) return null;
     return (
+      <AttachmentUriProvider
+        resolve={attachmentUrl =>
+          resolveAttachmentDownloadUrl({ authedFetch, signalingUrl, peerId, url: attachmentUrl })
+        }>
       <ChatConversationScreen
         peerId={peerId}
         messages={chat.messagesByPeer[peerId] ?? []}
@@ -252,6 +257,7 @@ function TabShell() {
         onSaveDraft={(text, replyToId) => saveDraft(peerId, text, replyToId)}
         onClearDraft={() => clearDraft(peerId)}
       />
+      </AttachmentUriProvider>
     );
   }, [
     cancelAttachmentUpload,
