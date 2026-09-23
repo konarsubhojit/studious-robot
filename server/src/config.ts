@@ -14,7 +14,6 @@ import {
   SIGNALING_VERSION,
 } from '../../shared/index.ts';
 
-const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
 
 /**
@@ -413,7 +412,6 @@ const DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const ACCOUNT_DELETION_MESSAGE_BATCH = 200;
 
 export {
-  MAX_ROOM_SIZE,
   PUSH_PROVIDERS,
   SIGNALING_VERSION,
   CALL_TRANSITION_CHANNEL,

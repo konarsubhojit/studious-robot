@@ -168,8 +168,7 @@ verified Firebase account:
 
 ## 🔵 P3 — Mainstream features
 
-- **Group calls** — still absent: server capacity is still capped to 1:1
-  (`server/src/config.ts` `MAX_ROOM_SIZE = 2`).
+- **Group calls** — still absent: the server's call protocol (`call.*`) is still 1:1 only.
 - **Group messaging** — implementation deferred pending the reviewed bounded
   membership and E2EE-compatibility decision in
   [`group-messaging-mvp.md`](./group-messaging-mvp.md); group calls remain out
@@ -222,7 +221,7 @@ value remaining backlog is:
 1. Add account deletion and data-export endpoints (GDPR; #293).
 2. Add i18n plumbing and extract user-visible strings (#305).
 3. Add an iOS CI workflow (current mobile CI is Linux-only tests/lint/typecheck).
-4. Extend calling beyond 1:1 rooms (server still enforces `MAX_ROOM_SIZE = 2`).
+4. Extend calling beyond 1:1 (server's `call.*` protocol is still 1:1 only).
 5. Complete an explicit accessibility audit (current status is partially verified,
    not fully audited).
 6. Optional call-quality follow-up: codec-preference controls (bitrate caps +

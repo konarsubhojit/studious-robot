@@ -360,10 +360,6 @@ async function eraseSessions(state: ServerState, userId: string): Promise<number
   state.userSessions.delete(userId);
   state.userConnections.delete(userId);
   state.userPresence.delete(userId);
-  for (const [roomId, members] of state.rooms) {
-    if (!members.delete(userId)) continue;
-    if (members.size === 0) state.rooms.delete(roomId);
-  }
   return sessionIds.length;
 }
 

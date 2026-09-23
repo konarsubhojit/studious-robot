@@ -151,11 +151,6 @@ const messageRecord = s.object(
 
 /** Client → server payloads. */
 const CLIENT_EVENT_SCHEMAS = Object.freeze({
-  [CLIENT_EVENTS.JOIN_ROOM]: s.id(),
-  [CLIENT_EVENTS.ROOM_OFFER]: s.object({ roomId: idField, sdp: opaqueObject }),
-  [CLIENT_EVENTS.ROOM_ANSWER]: s.object({ roomId: idField, sdp: opaqueObject }),
-  [CLIENT_EVENTS.ROOM_ICE_CANDIDATE]: s.object({ roomId: idField, candidate: opaqueObject }),
-
   [CLIENT_EVENTS.CALL_INITIATE]: s.object({
     version: versionField,
     calleeId: idField,
@@ -255,10 +250,6 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
  * because the server started (or stopped) sending an unrelated field.
  */
 const SERVER_EVENT_SCHEMAS = Object.freeze({
-  [SERVER_EVENTS.PEER_JOINED]: s.object({ id: idField }),
-  [SERVER_EVENTS.PEER_LEFT]: s.object({ id: idField }),
-  [SERVER_EVENTS.ROOM_FULL]: s.object({ roomId: idField }),
-
   [SERVER_EVENTS.CALL_INCOMING]: s.object({
     version: inboundVersionField,
     callId: s.id().optional(),

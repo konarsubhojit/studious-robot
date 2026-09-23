@@ -1,4 +1,3 @@
-export type RoomStore = Map<string, Set<string>>;
 export type UserStore = Map<string, import('../identity.ts').User>;
 export type SessionRecord = {
   sessionId: string;
@@ -93,7 +92,6 @@ export type AccountDeletionRecord = {
 };
 export type AccountDeletionStore = Map<string, AccountDeletionRecord>;
 export type Stores = {
-  rooms: RoomStore;
   users: UserStore;
   sessions: SessionStore;
   userSessions: UserSessionStore;
@@ -219,7 +217,6 @@ export type PendingRtcSignal = {
  * provide a value for each of these keys.
  */
 const STORE_NAMES: readonly (keyof Stores)[] = Object.freeze([
-  'rooms',
   'users',
   'sessions',
   'userSessions',

@@ -116,30 +116,11 @@ cursor exact even for messages sent within the same millisecond.
 Recipients with **no live socket** additionally get a data-only push via the
 same provider chain as incoming calls (see [Push notifications](#push-notifications)).
 
-#### Legacy room signaling
+#### Server lifecycle
 
-Rooms hold at most **2 participants**. These legacy relay events remain available for room-based flows.
-
-#### Client → Server
-
-| Event           | Payload                              | Description                                              |
-| --------------- | ------------------------------------ | -------------------------------------------------------- |
-| `join-room`     | `roomId: string`                     | Join a room. Rejected with `room-full` if already at 2. |
-| `offer`         | `{ roomId, sdp }`                    | Relay an SDP offer to the other peer.                    |
-| `answer`        | `{ roomId, sdp }`                    | Relay an SDP answer to the other peer.                   |
-| `ice-candidate` | `{ roomId, candidate }`              | Relay an ICE candidate to the other peer.                |
-
-#### Server → Client
-
-| Event           | Payload                              | Description                                              |
-| --------------- | ------------------------------------ | -------------------------------------------------------- |
-| `peer-joined`   | `{ id: socketId }`                   | Emitted to the existing peer when a second user joins.   |
-| `room-full`     | `{ roomId }`                         | Emitted to the joining client when the room is full.     |
-| `offer`         | `{ from: socketId, sdp }`            | Forwarded offer from the other peer.                     |
-| `answer`        | `{ from: socketId, sdp }`            | Forwarded answer from the other peer.                    |
-| `ice-candidate` | `{ from: socketId, candidate }`      | Forwarded ICE candidate from the other peer.             |
-| `peer-left`     | `{ id: socketId }`                   | Emitted to the remaining peer when the other disconnects.|
-| `server.draining` | `{ reason, ts }`                   | Emitted to every connected client when the instance begins a graceful shutdown; clients should reconnect. |
+| Event               | Payload                | Description |
+| ------------------- | ----------------------- | ----------- |
+| `server.draining`   | `{ reason, ts }`         | Emitted to every connected client when the instance begins a graceful shutdown; clients should reconnect. |
 
 ### Environment variables
 
