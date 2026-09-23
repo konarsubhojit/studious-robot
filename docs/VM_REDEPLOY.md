@@ -30,8 +30,14 @@ REDIS_URL=rediss://<CACHE_USER>:<URL_ENCODED_CACHE_PASSWORD>@<CACHE_PRIVATE_ENDP
 # REDIS_URL=redis://<A1_PRIVATE_IP>:6379
 INSTANCE_ID=<UNIQUE_INTEGER>
 NODE_ENV=production
-BACKUP_HEALTHCHECKS_URL=https://hc-ping.com/<backup-check-uuid>
+# Public half of the backup key pair only. The private key must never be
+# stored on this VM. See "Encrypted backups".
+BACKUP_AGE_RECIPIENT=age1<public-key>
 ```
+
+On `oci` the backup healthcheck URL is *not* kept in this file; it lives in
+`/etc/wetalk-backup/healthcheck.curl` and is read by a `curl --config`
+invocation. See "Monitoring (healthchecks.io)".
 
 ## Deploy or redeploy
 
@@ -339,6 +345,53 @@ sudo systemctl enable --now wetalk-backup.timer
 sudo systemctl list-timers wetalk-backup.timer --all
 ```
 
+> **The repo units and the live units have diverged.** The files in
+> `ops/systemd/` are a starting template; they are not a transcript of what
+> runs on `oci`. For "what is actually deployed", the units under
+> `/etc/systemd/system/` on `oci` are authoritative — read them with
+> `systemctl cat wetalk-backup.service`, which also shows the drop-in. Any
+> change to backup behaviour must be applied to **both**: edit the repo files
+> and install them on the VM, or the next redeploy from the repo will quietly
+> revert the VM. Do not assume the commands above leave the VM in its current
+> state; installing `ops/systemd/wetalk-backup.service` verbatim would
+> reintroduce `EnvironmentFile=` and `OnFailure=` and drop the healthcheck
+> drop-in's `ExecStartPost=`.
+
+### The live unit
+
+`/etc/systemd/system/wetalk-backup.service` on `oci` is a `oneshot` unit with:
+
+```ini
+[Unit]
+After=network-online.target mongod.service postgresql.service
+
+[Service]
+Environment=HOME=/root
+Environment=OCI_CLI_AUTH=instance_principal
+ExecStart=/usr/local/bin/wetalk-backup.sh
+TimeoutStartSec=1800
+```
+
+Two absences matter:
+
+- **No `EnvironmentFile=`.** systemd does not inject `/etc/robot-signal/env`;
+  the script sources it itself (`set -a; . /etc/robot-signal/env; set +a`).
+  `DATABASE_URL` and `BACKUP_AGE_RECIPIENT` reach the script that way. A
+  variable that is only exported by the unit — not present in that file — will
+  be unset at runtime.
+- **No `OnFailure=`.** `wetalk-backup-failure.service` never fires on this
+  host, so there is no explicit `/fail` ping. Failure is detected *only* by the
+  absence of the nightly success ping (dead-man's switch), which means
+  detection is delayed by the healthcheck's grace period. When a ping goes
+  missing, read `journalctl -u wetalk-backup.service` for the actual cause.
+
+There is one drop-in,
+`/etc/systemd/system/wetalk-backup.service.d/healthcheck.conf`, which adds the
+`ExecStartPost=` success ping (see "Monitoring").
+
+`wetalk-backup.timer` is enabled and fires nightly at 00:04–00:05 UTC, with
+`RandomizedDelaySec` spreading the exact start time.
+
 `env -i` intentionally removes the ambient environment to prove the script can
 run non-interactively using only `/etc/robot-signal/env` and its internal OCI
 auth:
@@ -355,25 +408,87 @@ sudo systemctl daemon-reload
 ```
 
 Use the timer as the single scheduler: it provides journald logs,
-`systemctl status`, failure state, and `OnFailure=` hooks. The cron entry sends
-stderr to root's local mail spool, which is usually unread.
+`systemctl status`, and failure state. The cron entry sends stderr to root's
+local mail spool, which is usually unread.
 
-The script explicitly uses instance-principal authentication, stages the dump,
-and refuses to upload files smaller than `MIN_SIZE` (default: 15000 bytes).
-It also compares the new dump against the previous successful object size and
-aborts if the new file is dramatically smaller than
+The script explicitly uses instance-principal authentication, stages the dump
+to a temporary file, and refuses to upload files smaller than `MIN_SIZE`
+(default: `100000` bytes). Real dumps are ~141 KB following the removal of
+~400 users on 2026-09-23; before that removal they were ~1.1 MB. The 100 KB
+floor is therefore comfortably below a healthy dump but still catches an empty
+or wrong-database dump.
+
+`MIN_SIZE` is measured on the **plaintext** dump, before encryption, so it
+compares against `pg_dump` output rather than an `age` payload.
+
+The script also compares the new dump against the previous successful object
+size and aborts if the new file is dramatically smaller than
 `MIN_PREVIOUS_SIZE_PERCENT` (default: `50`). If the previous size cannot be
 read, the script logs a warning and falls back to the static `MIN_SIZE` guard.
 
+### Encrypted backups
+
+Dumps are encrypted with [`age`](https://github.com/FiloSottile/age) before
+anything leaves the host, and are uploaded as `pg/<stamp>.dump.age`.
+
+Install the binary — the script aborts without it:
+
+```bash
+sudo apt-get install age
+```
+
+The script **fails closed**: if `BACKUP_AGE_RECIPIENT` is unset, or the `age`
+binary is missing, the run aborts. It never falls back to uploading a
+plaintext dump.
+
+**Generate the key pair off the VM.** Run `age-keygen` on a machine you
+control that is not `oci`, keep the `AGE-SECRET-KEY-1…` private key there (or
+in a password manager / offline store), and put only the `age1…` public key in
+`/etc/robot-signal/env`:
+
+```dotenv
+BACKUP_AGE_RECIPIENT=age1<public-key>
+```
+
+The threat being addressed is compromise of the host itself. A private key
+stored on `oci` would be readable by whoever compromised `oci`, so it would
+defeat the entire point of encrypting the backups: the attacker could simply
+decrypt every object in the bucket. `oci` must be able to *write* backups it
+cannot read back.
+
+Two consequences for the size guards:
+
+- Encryption overhead is small and constant (~230 bytes observed), so ciphertext
+  size still tracks dump size closely and the guards keep their meaning.
+- The shrink guard compares only against previous `.age` objects. Historical
+  plaintext `pg/*.dump` objects predate both the encryption change and the user
+  removal and are not a like-for-like baseline, so the script filters them out.
+
 ### Monitoring (healthchecks.io)
 
-`wetalk-backup.service` pings healthchecks.io only after successful completion
-(`ExecStartPost=`). Failures or never-started runs therefore miss the success
-ping and alert via dead-man's-switch behavior. `OnFailure=` additionally pings
-`/fail` for faster explicit failure signaling.
+The live `wetalk-backup.service` pings healthchecks.io only after successful
+completion, via an `ExecStartPost=` supplied by the drop-in
+`/etc/systemd/system/wetalk-backup.service.d/healthcheck.conf`. Failures or
+never-started runs therefore miss the success ping and alert via
+dead-man's-switch behavior. There is no `OnFailure=` and so no explicit `/fail`
+ping — the missing success ping is the *only* signal.
 
-Set `BACKUP_HEALTHCHECKS_URL` in `/etc/robot-signal/env` (for example:
-`https://hc-ping.com/<backup-check-uuid>`). Do not commit the real URL.
+The drop-in invokes `curl --config /etc/wetalk-backup/healthcheck.curl` rather
+than expanding a `${BACKUP_HEALTHCHECKS_URL}` from the environment. This is
+deliberate, not drift: the check URL is itself a secret, and keeping it in a
+root-owned curl config file keeps it out of the repo, out of
+`/etc/robot-signal/env`, and out of `systemctl show` output. Treat it as the
+intended pattern. Create it as:
+
+```bash
+sudo install -d -o root -g root -m 0700 /etc/wetalk-backup
+sudo install -o root -g root -m 0600 /dev/null /etc/wetalk-backup/healthcheck.curl
+sudo tee /etc/wetalk-backup/healthcheck.curl >/dev/null <<'EOF'
+url = "https://hc-ping.com/<backup-check-uuid>"
+EOF
+```
+
+Do not commit the real URL.
 
 ### OCI CLI under `sudo -i`
 
@@ -448,54 +563,88 @@ sudo -i /home/ubuntu/bin/oci os multipart abort \
 
 ## Verified restore procedure
 
+The restore path is: `oci os object get` → `age -d -i <key>` → `pg_restore`.
+
+**Run this on a machine other than `oci`.** The realistic recovery scenario is
+one where the VM is gone or compromised, so a procedure that only works on
+`oci` has not been verified for the case it exists to cover. It is also where
+the `age` private key lives: that key must not be copied onto `oci`. Use a
+workstation or a fresh VM with the OCI CLI configured for a *user* principal
+(`oci setup config`) — instance-principal auth is only available from `oci`
+itself.
+
 Download to a file rather than piping into `pg_restore`. This permits
 validation before touching a database and avoids format detection on a
 non-seekable stream.
 
 ```bash
-OBJECT_NAME=pg/<YYYY>/<MM>/<DD>/<HHMMSSZ>.dump
+OBJECT_NAME=pg/<YYYY>/<MM>/<DD>/<HHMMSSZ>.dump.age
+ENCRYPTED_FILE=/tmp/wetalk-restore.dump.age
 RESTORE_FILE=/tmp/wetalk-restore.dump
+AGE_KEY=~/.secrets/wetalk-backup-age.key   # private key; never on `oci`
 
-sudo -i /home/ubuntu/bin/oci os object get \
-  --auth instance_principal \
+oci os object list --bucket-name kiyonbucket --prefix pg/ --all \
+  --query 'data[?ends_with(name, `.age`)].name'
+
+oci os object get \
   --bucket-name kiyonbucket \
   --name "$OBJECT_NAME" \
-  --file "$RESTORE_FILE"
+  --file "$ENCRYPTED_FILE"
 
-sudo -u postgres pg_restore -l "$RESTORE_FILE" | head -20
-sudo -u postgres createdb wetalk_restore_test
-sudo -u postgres psql -d wetalk_restore_test \
-  -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
-sudo -u postgres pg_restore --no-owner \
-  --dbname wetalk_restore_test "$RESTORE_FILE"
+umask 077
+age -d -i "$AGE_KEY" -o "$RESTORE_FILE" "$ENCRYPTED_FILE"
 ```
 
-Compare important row counts with the live TCP database:
+Spot-check the decrypted dump with `pg_restore --list` before restoring
+anything. It parses the archive's table of contents, so a truncated, wrongly
+decrypted, or otherwise corrupt file fails here rather than half-way through a
+restore:
+
+```bash
+pg_restore --list "$RESTORE_FILE" | head -20
+```
+
+Then restore into a scratch database:
+
+```bash
+createdb wetalk_restore_test
+psql -d wetalk_restore_test -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+pg_restore --no-owner --dbname wetalk_restore_test "$RESTORE_FILE"
+```
+
+Compare important row counts with the live TCP database (run the first command
+on `oci`, or point `psql` at `DATABASE_URL` from wherever you are restoring):
 
 ```bash
 sudo bash -c 'set -a; . /etc/robot-signal/env; set +a; psql "$DATABASE_URL" -c "select count(*) from calls"; psql "$DATABASE_URL" -c "select count(*) from call_events"'
-sudo -u postgres psql -d wetalk_restore_test -c 'select count(*) from calls'
-sudo -u postgres psql -d wetalk_restore_test -c 'select count(*) from call_events'
-sudo -u postgres psql -d wetalk_restore_test -c '\dt'
+psql -d wetalk_restore_test -c 'select count(*) from calls'
+psql -d wetalk_restore_test -c 'select count(*) from call_events'
+psql -d wetalk_restore_test -c '\dt'
 ```
 
-Confirm the counts match and `messages` is present, then clean up:
+Confirm the counts match and `messages` is present, then clean up. The
+decrypted dump is plaintext production data — remove it:
 
 ```bash
-sudo -u postgres dropdb wetalk_restore_test
-sudo rm "$RESTORE_FILE"
+dropdb wetalk_restore_test
+shred -u "$RESTORE_FILE" 2>/dev/null || rm -f "$RESTORE_FILE"
+rm -f "$ENCRYPTED_FILE"
 ```
 
 If streaming is unavoidable, specify custom format explicitly:
 
 ```bash
-oci os object get --auth instance_principal ... --file - \
-  | sudo -u postgres pg_restore -Fc --no-owner -d wetalk_restore_test
+oci os object get --bucket-name kiyonbucket --name "$OBJECT_NAME" --file - \
+  | age -d -i "$AGE_KEY" \
+  | pg_restore -Fc --no-owner -d wetalk_restore_test
 ```
 
 `pg_restore` cannot auto-detect a custom-format dump from a non-seekable
-stream. Downloading first remains preferred because `pg_restore -l` validates
-the file before any restore operation.
+stream. Downloading first remains preferred because `pg_restore --list`
+validates the file before any restore operation.
+
+Historical `pg/*.dump` objects (no `.age` suffix) predate encryption and are
+restored the same way with the `age -d` step omitted.
 
 ### Periodic restore verification
 
