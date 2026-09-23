@@ -309,6 +309,7 @@ function resetRecipientLookupRateLimit(): void {
 function raceAgainstTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+    timer.unref?.();
     promise.then(
       (value) => {
         clearTimeout(timer);
