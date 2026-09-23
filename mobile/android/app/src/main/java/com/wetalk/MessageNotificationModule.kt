@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -31,8 +33,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * It deliberately does *not* reuse the incoming-call channel: that channel is
  * `IMPORTANCE_HIGH` with a ringtone, an ongoing (non-dismissible) notification
  * and a full-screen intent, all of which are wrong for a chat message. Messages
- * get their own `IMPORTANCE_DEFAULT` channel with the default notification
- * sound, `CATEGORY_MESSAGE`, and a `MessagingStyle` body so several messages in
+ * get their own high-importance channel with the default notification sound,
+ * `CATEGORY_MESSAGE`, and a `MessagingStyle` body so several messages in
  * the same conversation stack into a single shade entry (keyed by the
  * conversation id) instead of spamming one entry per message.
  */
@@ -96,7 +98,7 @@ class MessageNotificationModule(
   private fun channelAudioState(manager: NotificationManager): WritableMap {
     val state = Arguments.createMap()
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-      state.putInt("channelImportance", NotificationManager.IMPORTANCE_DEFAULT)
+      state.putInt("channelImportance", NotificationManager.IMPORTANCE_HIGH)
       state.putBoolean("channelHasSound", true)
       return state
     }
@@ -110,19 +112,37 @@ class MessageNotificationModule(
     reactContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
   /**
-   * Create the messages channel. Versioned exactly like the incoming-call
-   * channel, since channel settings are immutable once created and can only be
-   * changed on existing installs by publishing a new channel id.
+   * Create the messages channel, deleting superseded versions first.
+   *
+   * Notification channel settings are immutable once the channel exists, so an
+   * install that ever created an earlier, quieter version would ignore the
+   * importance/sound configured below forever unless the id is bumped.
    */
   private fun createNotificationChannel(manager: NotificationManager) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
+    for (obsoleteId in OBSOLETE_CHANNEL_IDS) {
+      if (manager.getNotificationChannel(obsoleteId) != null) {
+        Log.i(TAG, "Deleting obsolete notification channel $obsoleteId")
+        manager.deleteNotificationChannel(obsoleteId)
+      }
+    }
+
     if (manager.getNotificationChannel(CHANNEL_ID) != null) return
 
     val channel =
-      NotificationChannel(CHANNEL_ID, "Messages", NotificationManager.IMPORTANCE_DEFAULT)
+      NotificationChannel(CHANNEL_ID, "Messages", NotificationManager.IMPORTANCE_HIGH)
     channel.description = "New WeTalk chat messages"
     channel.enableVibration(true)
     channel.setShowBadge(true)
+    val notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+    val audioAttributes =
+      AudioAttributes
+        .Builder()
+        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build()
+    channel.setSound(notificationUri, audioAttributes)
     manager.createNotificationChannel(channel)
   }
 
@@ -143,7 +163,8 @@ class MessageNotificationModule(
       .setContentText(lines.lastOrNull()?.body ?: "")
       .setSmallIcon(android.R.drawable.ic_dialog_email)
       .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-      .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      .setDefaults(NotificationCompat.DEFAULT_ALL)
       .setStyle(style)
       .setGroup(GROUP_KEY)
       .setAutoCancel(true)
@@ -198,7 +219,10 @@ class MessageNotificationModule(
      * or vibration settings change, since Android ignores changes made to an
      * existing channel.
      */
-    const val CHANNEL_ID = "wetalk_messages.v1"
+    const val CHANNEL_ID = "wetalk_messages.v2"
+
+    /** Superseded channel ids, deleted on first use of the current channel. */
+    private val OBSOLETE_CHANNEL_IDS = listOf("wetalk_messages.v1")
 
     private const val TAG = "WeTalkMessageNotification"
 

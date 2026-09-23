@@ -92,6 +92,45 @@ Before release, verify on the two Android devices:
 JavaScript tests do not replace these physical-device checks. iOS build
 validation is deferred.
 
+## Message notifications
+
+Android chat messages use the versioned native channel
+`wetalk_messages.v2`. The id was bumped from `wetalk_messages.v1` because
+Android freezes a notification channel's importance and sound the first time it
+is created; deleting the old id and posting to a new high-importance channel is
+the only way upgraded installs can receive heads-up message popups. The channel
+must stay `IMPORTANCE_HIGH`, with vibration, badge display and an explicit
+default notification sound. The notification itself uses `PRIORITY_HIGH`,
+`DEFAULT_ALL`, `CATEGORY_MESSAGE`, a `MessagingStyle` stack and the existing
+`wetalk://chat/{conversationId}` content intent. Do not add a `notification`
+block to the push payload: message pushes are data-only so the app's background
+handler can apply privacy, mute and quiet-hours rules before rendering.
+
+Foreground delivery has a separate in-app banner because Android does not show
+heads-up popups for the app's own notifications while the app is open. The
+banner is queued, not stacked; tapping it opens the chat deep link, and it is
+suppressed by the same rules as OS notifications: disabled message
+notifications, muted peers, message quiet hours and the target conversation
+already being on screen. It renders through the same preview formatter as the
+OS notification, so generic/sender/full preview modes and attachment previews
+match exactly.
+
+Before release, verify message notifications on Android:
+
+- Fresh install: background and killed-app text messages produce a heads-up
+  popup and open the right conversation when tapped.
+- Upgraded install that previously created `wetalk_messages.v1`: the old
+  channel is deleted, `wetalk_messages.v2` is created, and background/killed
+  messages heads-up without reinstalling.
+- Foreground on chat list, settings and a different conversation: the in-app
+  banner appears; foreground on the same conversation: no banner or OS
+  notification appears.
+- Attachment messages keep their server-provided previews unchanged (`📷 Photo`,
+  `📎 <name>`, `🎤 Voice message`) on both the OS notification and in-app
+  banner.
+- Muted peer, disabled message notifications and active message quiet hours
+  suppress both OS and in-app surfaces.
+
 ## Local data and synchronization
 
 Structured mobile data uses **SQLite through `@op-engineering/op-sqlite`**,

@@ -258,6 +258,7 @@ jest.mock('../../src/pushNotifications', () => ({
   unregisterPushToken: jest.fn(async () => true),
   installForegroundMessageHandler: jest.fn(() => jest.fn()),
   sendPushReceipt: jest.fn(async () => true),
+  displayMessageReceivedInApp: jest.fn(async () => ({ shown: true })),
 }));
 
 jest.mock('../../src/authService', () => ({
