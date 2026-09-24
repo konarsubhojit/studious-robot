@@ -15,6 +15,7 @@ import {
   loadIdentity,
   loadNotificationPrefs,
   loadOnboardingState,
+  loadPeerVerifications,
   loadSettings,
   loadThemeMode,
   loadThemePreferences,
@@ -22,6 +23,7 @@ import {
   saveIdentity,
   saveNotificationPrefs,
   saveOnboardingState,
+  savePeerVerifications,
   saveSettings,
   saveThemeMode,
   saveThemePreferences,
@@ -390,6 +392,55 @@ describe('settingsStorage', () => {
       await expect(loadNotificationPrefs()).resolves.toEqual(expect.objectContaining({
         mutedPeers: [],
       }));
+    });
+  });
+
+  describe('call verification log', () => {
+    const record = {
+      localFingerprint: 'sha-256 AA',
+      remoteFingerprint: 'sha-256 BB',
+      sas: 'acorn basil cobra domino',
+      verifiedAt: 1700000000000,
+    };
+
+    test('a device that never verified anyone has no records', async () => {
+      existsMock.mockResolvedValue(false);
+      await expect(loadPeerVerifications()).resolves.toEqual({});
+    });
+
+    test('keeps only complete records, so no half-read entry claims a verification', async () => {
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(
+        JSON.stringify({
+          alice: record,
+          bob: { localFingerprint: 'sha-256 CC' },
+          carol: 'nonsense',
+        }),
+      );
+
+      await expect(loadPeerVerifications()).resolves.toEqual({ alice: record });
+    });
+
+    test('a corrupt file verifies nobody rather than throwing', async () => {
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue('{ not json');
+      await expect(loadPeerVerifications()).resolves.toEqual({});
+    });
+
+    test('writes to its own file', async () => {
+      writeFileMock.mockResolvedValue(undefined);
+
+      await expect(savePeerVerifications({ alice: record })).resolves.toBe(true);
+      expect(RNFS.writeFile).toHaveBeenCalledWith(
+        '/docs/wetalk-call-verification.json',
+        JSON.stringify({ alice: record }),
+        'utf8',
+      );
+    });
+
+    test('resolves false on write failure', async () => {
+      writeFileMock.mockRejectedValue(new Error('disk full'));
+      await expect(savePeerVerifications({ alice: record })).resolves.toBe(false);
     });
   });
 

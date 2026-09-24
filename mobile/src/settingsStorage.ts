@@ -2,6 +2,7 @@ import RNFS from 'react-native-fs';
 import { logError, logInfo } from './appLogger';
 import { DEFAULT_THEME_PREFERENCES, normalizeThemePreferences } from './theme';
 import type { ThemeMode, ThemePreferences } from './theme';
+import type { PeerVerification } from './call/sas';
 import { errorMessage } from './errors';
 
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
@@ -319,6 +320,81 @@ export async function saveCallMediaTypes(map: CallMediaTypeMap): Promise<boolean
 }
 
 export const CALL_MEDIA_FILE_PATH = CALL_MEDIA_FILE;
+
+// ─── Call verification (SAS) log ──────────────────────────────────────────────
+// The fingerprint pair a user confirmed by reading the call's four-word code
+// aloud. Local to the device on purpose: it is this device's record of what it
+// saw, and a copy held by the server would be worth exactly as much as the
+// server's word for the fingerprints themselves.
+
+const CALL_VERIFICATION_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-call-verification.json`;
+
+/** Cap on remembered peers, so the file cannot grow without limit. */
+const MAX_CALL_VERIFICATION_ENTRIES = 200;
+
+/** Ordered `peerId -> confirmed fingerprint pair` map. */
+export type PeerVerificationMap = Record<string, PeerVerification>;
+
+/** Whether `value` is a complete verification record rather than a partial one. */
+function isPeerVerification(value: unknown): value is PeerVerification {
+  if (!value || typeof value !== 'object') return false;
+  const record = (value as Record<string, unknown>);
+  return (
+    typeof record.localFingerprint === 'string' &&
+    typeof record.remoteFingerprint === 'string' &&
+    typeof record.sas === 'string' &&
+    typeof record.verifiedAt === 'number'
+  );
+}
+
+/**
+ * Load the confirmed fingerprint pairs.  A corrupt or unreadable file yields
+ * an empty map: the worst that costs is a code the users compare again, while
+ * trusting a half-parsed record could claim a verification that never
+ * happened.
+ */
+export async function loadPeerVerifications(): Promise<PeerVerificationMap> {
+  try {
+    const exists = await RNFS.exists(CALL_VERIFICATION_FILE);
+    if (!exists) return {};
+    const content = await RNFS.readFile(CALL_VERIFICATION_FILE, 'utf8');
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const entries = Object.entries((parsed as Record<string, unknown>)).filter(
+      ([peerId, value]) => peerId && isPeerVerification(value),
+    );
+    return (Object.fromEntries(
+      entries.slice(0, MAX_CALL_VERIFICATION_ENTRIES),
+    ) as PeerVerificationMap);
+  } catch (error) {
+    logError('Failed to load call verification log; ignoring it', {
+      message: errorMessage(error),
+    });
+    return {};
+  }
+}
+
+/**
+ * Persist the confirmed fingerprint pairs, trimmed to the most recent peers.
+ * Failures are logged but never thrown, so a write error cannot break the call
+ * the user was verifying.
+ *
+ * @returns whether the write succeeded
+ */
+export async function savePeerVerifications(map: PeerVerificationMap): Promise<boolean> {
+  try {
+    const trimmed = Object.fromEntries(
+      Object.entries(map).slice(0, MAX_CALL_VERIFICATION_ENTRIES),
+    );
+    await RNFS.writeFile(CALL_VERIFICATION_FILE, JSON.stringify(trimmed), 'utf8');
+    return true;
+  } catch (error) {
+    logError('Failed to persist call verification log', { message: errorMessage(error) });
+    return false;
+  }
+}
+
+export const CALL_VERIFICATION_FILE_PATH = CALL_VERIFICATION_FILE;
 
 // ─── Notification preferences ─────────────────────────────────────────────────
 // Kept in their own file rather than in `wetalk-settings.json`: the message-push

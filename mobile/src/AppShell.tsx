@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Linking, StatusBar, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -383,6 +383,15 @@ function ActiveCallScreen() {
   // Ticked here rather than in the call flow, so the per-second update
   // re-renders only this screen instead of every mounted screen in the app.
   const elapsedCallSeconds = useCallElapsedSeconds(callFlow.callConnectedAtMs);
+  // The confirmation persists the verified fingerprint pair, and a write
+  // failure is already logged where it happens: the badge simply stays as it
+  // was, which is the honest outcome.
+  const confirmCallSecurity = callFlow.confirmCallSecurity;
+  const handleConfirmCallSecurity = useCallback(() => {
+    confirmCallSecurity().catch(error => {
+      logError('Failed to record call verification', error);
+    });
+  }, [confirmCallSecurity]);
 
   return (
     <CallScreen
@@ -426,6 +435,8 @@ function ActiveCallScreen() {
       isScreenShareSupported={callFlow.isScreenShareSupported}
       isRemoteScreenSharing={callFlow.isRemoteScreenSharing}
       iceTransportPolicy={settings.iceTransportPolicy}
+      callSecurity={callFlow.callSecurity}
+      onConfirmCallSecurity={handleConfirmCallSecurity}
       onMuteToggle={callFlow.handleMuteToggle}
       onVideoToggle={callFlow.handleVideoToggle}
       onChooseAudioOutput={callFlow.chooseAudioOutput}

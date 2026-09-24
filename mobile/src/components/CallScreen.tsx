@@ -95,6 +95,8 @@ function CallTopOverlay({
   connectionQuality,
   participantLabel,
   iceTransportPolicy,
+  callSecurity,
+  onConfirmCallSecurity,
   onMinimize,
   onTopChromeLayout,
   isRecovering,
@@ -103,8 +105,8 @@ function CallTopOverlay({
   visibleStatus,
   onRetry,
 }: Pick<CallScreenProps, 'elapsedCallSeconds' | 'connectionQuality' | 'participantLabel' |
-  'iceTransportPolicy' | 'onMinimize' | 'onTopChromeLayout' | 'recoveryStatus' |
-  'isConnectionLost' | 'onRetry'> & {
+  'iceTransportPolicy' | 'callSecurity' | 'onConfirmCallSecurity' | 'onMinimize' |
+  'onTopChromeLayout' | 'recoveryStatus' | 'isConnectionLost' | 'onRetry'> & {
   isCompact: boolean;
   showControlsOverlay: boolean;
   overlayFadeMs: number;
@@ -125,6 +127,8 @@ function CallTopOverlay({
         connectionQuality={connectionQuality}
         participantLabel={participantLabel}
         iceTransportPolicy={iceTransportPolicy}
+        callSecurity={callSecurity}
+        onConfirmCallSecurity={onConfirmCallSecurity}
         onMinimize={onMinimize}
       />
       <CallStatusContent
@@ -181,6 +185,8 @@ export default function CallScreen({
   connectionQuality,
   participantLabel = null,
   iceTransportPolicy,
+  callSecurity = null,
+  onConfirmCallSecurity,
   isReconnecting,
   recoveryStatus = null,
   isConnectionLost = false,
@@ -359,6 +365,8 @@ export default function CallScreen({
           connectionQuality={connectionQuality}
           participantLabel={participantLabel}
           iceTransportPolicy={iceTransportPolicy}
+          callSecurity={callSecurity}
+          onConfirmCallSecurity={onConfirmCallSecurity}
           onMinimize={onMinimize}
           onTopChromeLayout={onTopChromeLayout}
           isRecovering={isRecovering}

@@ -234,12 +234,46 @@ hooks under `src/hooks/`:
 | Connection-quality sampling and candidate-pair diagnostics | `useConnectionQuality.ts` |
 | Status, summary, remote-media indicators and recovery presentation state | `useCallPresentation.ts` |
 | Recovery episodes and heartbeat scheduling | `useCallRecovery.ts`, `useCallHeartbeat.ts` |
+| DTLS fingerprint probe, SAS derivation and the verification log | `useCallSecurity.ts` |
 
 Pure decisions remain in `src/call/`. The reducer, call setup/teardown ordering,
 and memoized public state/action snapshot stay in `useCallFlow`. Presentation
 setters do not drive lifecycle transitions or start timers; the orchestrator
 and recovery hook decide when to update or reset them. Existing imports from
 `useCallFlow` remain supported.
+
+## Call verification (SAS)
+
+WebRTC already encrypts call media with DTLS/SRTP, but the signalling server
+brokers the SDP and could in principle substitute fingerprints to sit in the
+middle of a call. A Short Authentication String lets the two people rule that
+out themselves, with no extra key exchange.
+
+`useCallSecurity` reads the local and remote DTLS fingerprints out of the peer
+connection's negotiated SDP (`src/call/callFingerprints.ts`), and
+`src/call/sas.ts` sorts the pair, hashes it with a domain separator, and maps
+the first four digest bytes onto a fixed 256-word list. Sorting makes the code
+order-independent, so both peers derive the same four words. Tapping the shield
+badge in the in-call top bar reveals them; read them aloud, and if they match on
+both phones nobody is in the middle.
+
+Confirming writes the fingerprint pair to `wetalk-call-verification.json`, and
+`PeerProfileScreen` then shows a persistent verified marker for that peer. On
+later calls the stored pair is re-checked:
+
+| Situation | Result |
+| --- | --- |
+| Both fingerprints unchanged | Verified |
+| Local fingerprint also changed | Unverified — certificates rotate per connection, so this is expected; compare again |
+| Remote fingerprint changed while the local one held | **Loud warning** — the peer's key changed; re-compare before trusting the call |
+| Fingerprints unreadable | Unavailable — the code is simply not offered |
+
+The last row is the important one: fingerprint access varies by platform, and
+the UI never claims a call is verified when it could not read the fingerprints,
+the same honesty rule applied to `ScreenShareDelivery: 'unverified'`.
+
+Insertable streams / SFrame and any key-exchange infrastructure are out of
+scope; this is a comparison of keys WebRTC already negotiated.
 
 ## Audio routing
 

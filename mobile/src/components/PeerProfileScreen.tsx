@@ -14,6 +14,7 @@ import { useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
 import { Avatar, Icon, IconAction, ListItem, SectionHeader, Switch } from './primitives';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
+import type { PeerVerification } from '../call/sas';
 import type { ThemeColors } from '../theme';
 import type { PeerPresence } from '../types/directory';
 
@@ -84,6 +85,8 @@ function PrimaryAction({
 export type PeerProfileScreenProps = {
   peerId: string;
   presence?: PeerPresence | null;
+  /** The call code this device saw the user confirm with this peer, if any. */
+  verification?: PeerVerification | null;
   isBlocked?: boolean;
   isMuted?: boolean;
   /** Full history; filtered to this peer here. */
@@ -97,6 +100,35 @@ export type PeerProfileScreenProps = {
   onBlock?: (peerId: string) => Promise<boolean> | void;
   onUnblock?: (peerId: string) => Promise<boolean> | void;
 };
+
+/**
+ * The persistent "verified" marker.
+ *
+ * Rendered only for a peer whose call code was actually compared on this
+ * device: absence means "never verified", which is not the same claim as
+ * "unverified call" and is therefore left unsaid rather than labelled.
+ *
+ * @param props
+ */
+function PeerVerifiedBadge({
+  verification,
+  styles,
+}: {
+  verification: PeerVerification | null | undefined;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  if (!verification) return null;
+  const verifiedOn = new Date(verification.verifiedAt).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  return (
+    <Text style={styles.verifiedBadge} testID="peer-profile-verified">
+      {`Call code verified ${verifiedOn} · ${verification.sas}`}
+    </Text>
+  );
+}
 
 function PeerActions({
   peerId,
@@ -216,6 +248,7 @@ function PeerRecentCalls({
 function PeerProfileScreen({
   peerId,
   presence = null,
+  verification = null,
   isBlocked = false,
   isMuted = false,
   callHistory = [],
@@ -291,6 +324,7 @@ function PeerProfileScreen({
         <Text style={styles.presence} testID="peer-profile-presence">
           {presenceLabel}
         </Text>
+        <PeerVerifiedBadge verification={verification} styles={styles} />
       </View>
 
       {isBlocked ? (
@@ -373,6 +407,11 @@ const createStyles = (colors: ThemeColors) =>
     presence: {
       ...typography.caption,
       color: colors.onSurfaceVariant,
+    },
+    verifiedBadge: {
+      ...typography.caption,
+      color: colors.positive,
+      textAlign: 'center',
     },
     blockedNote: {
       ...typography.caption,

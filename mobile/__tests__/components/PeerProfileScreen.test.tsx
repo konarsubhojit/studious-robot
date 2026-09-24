@@ -38,6 +38,23 @@ describe('PeerProfileScreen', () => {
     expect(findByTestId(tree, 'peer-profile-video-call')).not.toBeNull();
   });
 
+  test('marks a peer whose call code was verified, and only that peer', () => {
+    expect(findByTestId(render({}), 'peer-profile-verified')).toBeNull();
+
+    const tree = render({
+      verification: {
+        localFingerprint: 'sha-256 AA',
+        remoteFingerprint: 'sha-256 BB',
+        sas: 'acorn basil cobra domino',
+        verifiedAt: Date.UTC(2026, 2, 12),
+      },
+    });
+
+    const badge = findByTestId(tree, 'peer-profile-verified');
+    expect(badge).not.toBeNull();
+    expect(badge.props.children).toContain('acorn basil cobra domino');
+  });
+
   test('lists only the calls with this peer', () => {
     const tree = render({
       currentUserId: 'user-me',

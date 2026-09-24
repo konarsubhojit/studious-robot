@@ -87,6 +87,7 @@ import { bearerAuthHeaders } from '../authHeaders';
 import useScreenShare from './useScreenShare';
 import useCallHeartbeat from './useCallHeartbeat';
 import useCallRecovery from './useCallRecovery';
+import useCallSecurity from './useCallSecurity';
 import type { CallMediaType } from '../settingsStorage';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
@@ -822,6 +823,18 @@ export default function useCallFlow({
   useEffect(() => {
     connectionQualityRef.current = connectionQuality;
   }, [connectionQuality]);
+
+  // The remote party of the live call, which is what a verified code is
+  // remembered against.
+  const activeCallPeerId = useMemo(
+    () => (activeCall ? callPeerId(activeCall, userId) : null),
+    [activeCall, userId],
+  );
+  const { callSecurity, peerVerifications, confirmCallSecurity } = useCallSecurity({
+    isInCall,
+    peerId: activeCallPeerId,
+    peerConnectionRef,
+  });
 
   const {
     closeRecoveryEpisode,
@@ -2204,6 +2217,8 @@ export default function useCallFlow({
       audioDevices,
       connectionQuality,
       selectedCandidatePair,
+      callSecurity,
+      peerVerifications,
       isReconnecting,
       recoveryStatus,
       isConnectionLost,
@@ -2227,6 +2242,7 @@ export default function useCallFlow({
       callHistory.callHistory,
       callHistory.missedCallCount,
       callPhase,
+      callSecurity,
       callSummary,
       calleeId,
       connectionQuality,
@@ -2264,6 +2280,7 @@ export default function useCallFlow({
       messaging.pendingSendCount,
       messaging.typingByPeer,
       messaging.unreadTotal,
+      peerVerifications,
       presenceSearch.calleePresence,
       presenceSearch.isServerUnreachable,
       recoveryStatus,
@@ -2347,6 +2364,7 @@ export default function useCallFlow({
       handleSwapStreams,
       handleRetryReconnect,
       chooseAudioOutput,
+      confirmCallSecurity,
       dismissCallSummary,
     }),
     [
@@ -2365,6 +2383,7 @@ export default function useCallFlow({
       cancelOutgoingCall,
       checkPresence,
       chooseAudioOutput,
+      confirmCallSecurity,
       declineIncomingCall,
       dismissCallSummary,
       fetchBlocks,
