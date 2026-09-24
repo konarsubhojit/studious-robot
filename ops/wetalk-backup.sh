@@ -2,15 +2,23 @@
 set -Eeuo pipefail
 
 export OCI_CLI_AUTH=instance_principal
-OCI_BIN=/home/ubuntu/bin/oci
+# The unit runs as User=root, so the CLI must live outside any user's home:
+# a /home/<user>/bin path is unreadable under ProtectHome= and disappears if
+# that account is removed. /opt/oci-cli is the documented install location
+# (see deploy/README.md); override OCI_BIN for a different one.
+OCI_BIN="${OCI_BIN:-/opt/oci-cli/bin/oci}"
 AGE_BIN="${AGE_BIN:-/usr/bin/age}"
-BUCKET=kiyonbucket
+BUCKET="${BACKUP_BUCKET:-kiyonbucket}"
 
 # The live unit has no EnvironmentFile=, so the script sources the env itself.
 # DATABASE_URL and BACKUP_AGE_RECIPIENT both come from here.
-set -a
-. /etc/robot-signal/env
-set +a
+BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-/etc/robot-signal/env}"
+if [[ -r "$BACKUP_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$BACKUP_ENV_FILE"
+  set +a
+fi
 
 # Public key of the backup recipient. The matching *private* key must never
 # live on this VM: a compromised instance should be able to write backups it
@@ -26,6 +34,10 @@ if [[ -z "$BACKUP_AGE_RECIPIENT" ]]; then
 fi
 if [[ ! -x "$AGE_BIN" ]]; then
   echo "backup aborted: age not found at ${AGE_BIN} (apt-get install age)" >&2
+  exit 1
+fi
+if [[ ! -x "$OCI_BIN" ]]; then
+  echo "backup aborted: oci CLI not found at ${OCI_BIN} (set OCI_BIN)" >&2
   exit 1
 fi
 
@@ -80,17 +92,31 @@ if (( ENC_SIZE == 0 )); then
   exit 1
 fi
 
-# Compare ciphertext against the previous *ciphertext* only. The historical
-# pg/*.dump objects are plaintext, predate the user removal, and are not a
-# like-for-like baseline. Filtering and sorting are done in the shell rather
-# than in JMESPath: an unsupported --query projection fails open by returning
-# the newest object of *any* kind, which silently defeats the filter.
+# Compare ciphertext against the previous *ciphertext* only: both sides of
+# this guard are the size of the age-encrypted object, never the plaintext
+# dump (MIN_SIZE above is the plaintext floor). The historical pg/*.dump
+# objects are plaintext, predate the user removal, and are not a like-for-like
+# baseline. Filtering and sorting are done in the shell rather than in
+# JMESPath: an unsupported --query projection fails open by returning the
+# newest object of *any* kind, which silently defeats the filter.
+#
+# Objects are keyed pg/%Y/%m/%d/%H%M%SZ.dump.age, so the listing must use the
+# bare pg/ prefix — scoping it to today's date directory finds nothing on the
+# first run of a day. That key layout sorts lexicographically in timestamp
+# order, so the last line is the newest object.
+#
+# --fields name,size is required: the CLI omits size otherwise and the size
+# lookup yields nothing. The list output is pretty-printed across several
+# lines per object, so it is flattened to one line before matching the
+# name/size pair.
 if (( MIN_PREVIOUS_SIZE_PERCENT > 0 )); then
   PREVIOUS_SIZE_RAW=$(
     "$OCI_BIN" os object list -bn "$BUCKET" --prefix "pg/" \
-      --auth instance_principal --all \
-      --query 'data[*].{name:name,size:size}' --raw-output 2>/dev/null \
-      | grep -oE '"name": "[^"]+\.age", "size": [0-9]+' \
+      --auth instance_principal --all --fields name,size \
+      --query 'data[*].{name:name,size:size}' --output json 2>/dev/null \
+      | tr '\n' ' ' \
+      | tr -s ' ' \
+      | grep -oE '"name": ?"pg/[^"]+\.age", ?"size": ?[0-9]+' \
       | sort \
       | tail -n1 \
       | grep -oE '[0-9]+$' \
@@ -101,7 +127,7 @@ if (( MIN_PREVIOUS_SIZE_PERCENT > 0 )); then
   elif [[ ! "$PREVIOUS_SIZE_RAW" =~ ^[0-9]+$ ]]; then
     echo "backup warning: previous dump size was non-numeric (${PREVIOUS_SIZE_RAW}); static MIN_SIZE guard only" >&2
   elif (( ENC_SIZE * 100 < PREVIOUS_SIZE_RAW * MIN_PREVIOUS_SIZE_PERCENT )); then
-    echo "backup aborted: dump shrank too much (${ENC_SIZE} bytes; previous ${PREVIOUS_SIZE_RAW}; minimum ${MIN_PREVIOUS_SIZE_PERCENT}% of previous)" >&2
+    echo "backup aborted: encrypted dump shrank too much (${ENC_SIZE} bytes; previous ${PREVIOUS_SIZE_RAW}; minimum ${MIN_PREVIOUS_SIZE_PERCENT}% of previous, both encrypted)" >&2
     exit 1
   fi
 fi
