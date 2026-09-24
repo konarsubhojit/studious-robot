@@ -34,6 +34,12 @@ Call **media** is already encrypted hop-by-hop by WebRTC (SRTP/DTLS), and TURN
 relays do not hold media keys for a direct peer connection. That is *not* E2EE
 messaging and must never be described as such.
 
+The residual risk for calls is the signalling server itself: it brokers the SDP
+and could substitute DTLS fingerprints to sit in the middle of a call. Short
+Authentication String (SAS) verification closes that gap without any new key
+exchange — see
+[Call verification (SAS)](../mobile/README.md#call-verification-sas).
+
 Local mobile storage is sandboxed SQLite, explicitly documented in
 `mobile/README.md` as **not** application-level or end-to-end encryption.
 
@@ -358,5 +364,8 @@ These proceed on their own schedule and are valuable regardless of the outcome:
   service and appear in backups.
 - Local device storage is sandboxed SQLite, not application-level encryption
   (`mobile/README.md`).
+- A call is only "verified" once both users have compared the SAS aloud on that
+  call. When the DTLS fingerprints cannot be read the badge says the code is
+  unavailable; it never guesses.
 
 Any marketing, README, or in-app copy that implies otherwise is a defect.
