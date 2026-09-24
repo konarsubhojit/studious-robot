@@ -24,9 +24,8 @@ fi
 # live on this VM: a compromised instance should be able to write backups it
 # cannot read back.
 #
-# NOTE: the live wetalk-backup.service has no OnFailure=, so an abort here is
-# signalled only by the missing healthcheck success ping, not an explicit
-# /fail. Check the journal if a nightly ping goes missing.
+# The repo unit has OnFailure=wetalk-backup-failure.service. The older `oci`
+# host does not; see docs/VM_REDEPLOY.md for that live-host drift.
 BACKUP_AGE_RECIPIENT="${BACKUP_AGE_RECIPIENT:-}"
 if [[ -z "$BACKUP_AGE_RECIPIENT" ]]; then
   echo "backup aborted: BACKUP_AGE_RECIPIENT is unset — refusing to upload a plaintext dump" >&2

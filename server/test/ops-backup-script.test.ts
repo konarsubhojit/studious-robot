@@ -25,6 +25,7 @@ import path from 'node:path';
 
 const thisDir = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(thisDir, '..', '..', 'ops', 'wetalk-backup.sh');
+const SYSTEMD_DIR = path.join(thisDir, '..', '..', 'ops', 'systemd');
 
 interface StoredObject {
   name: string;
@@ -69,7 +70,8 @@ function runBackup(
     path.join(dir, 'oci'),
     [
       'case "$*" in',
-      `  *"object list"*) cat ${JSON.stringify(listingFile)} ;;`,
+      `  *"object list"*"--prefix pg/"*) cat ${JSON.stringify(listingFile)} ;;`,
+      '  *"object list"*) echo "object list did not use the full pg/ prefix: $*" >&2; exit 64 ;;',
       `  *"object put"*) printf '%s\\n' "$*" >> ${JSON.stringify(uploadLog)} ;;`,
       '  *) echo "unexpected oci invocation: $*" >&2; exit 64 ;;',
       'esac',
@@ -105,17 +107,29 @@ function runBackup(
 
 test('previous dump under an earlier date directory arms the shrink guard', async () => {
   const result = await runBackup(
-    [
-      { name: 'pg/2026/09/23/161616Z.dump.age', size: 141226 },
-      { name: 'pg/2026/09/24/000452Z.dump.age', size: 144106 },
-    ],
+    [{ name: 'pg/2026/09/23/161616Z.dump.age', size: 141226 }],
     200000,
     40000
   );
 
   assert.equal(result.code, 1, 'a dump under half the previous size must abort');
   assert.match(result.stderr, /encrypted dump shrank too much/);
-  assert.match(result.stderr, /previous 144106/, 'the newest .age object is the baseline');
+  assert.match(result.stderr, /previous 141226/);
+  assert.doesNotMatch(result.stderr, /no previous encrypted dump/);
+  assert.equal(result.uploaded, '', 'nothing may be uploaded once the guard trips');
+});
+
+test('previous dump under the same date directory arms the shrink guard', async () => {
+  const datePrefix = new Date().toISOString().slice(0, 10).replaceAll('-', '/');
+  const result = await runBackup(
+    [{ name: `pg/${datePrefix}/000452Z.dump.age`, size: 144106 }],
+    200000,
+    40000
+  );
+
+  assert.equal(result.code, 1, 'a dump under half the previous size must abort');
+  assert.match(result.stderr, /encrypted dump shrank too much/);
+  assert.match(result.stderr, /previous 144106/);
   assert.doesNotMatch(result.stderr, /no previous encrypted dump/);
   assert.equal(result.uploaded, '', 'nothing may be uploaded once the guard trips');
 });
@@ -145,4 +159,16 @@ test('the static MIN_SIZE floor still rejects a tiny plaintext dump', async () =
 
   assert.equal(result.code, 1);
   assert.match(result.stderr, /dump is too small/);
+});
+
+test('systemd healthcheck units use supported expansion without trimming syntax', () => {
+  const successUnit = fs.readFileSync(path.join(SYSTEMD_DIR, 'wetalk-backup.service'), 'utf8');
+  const failureUnit = fs.readFileSync(
+    path.join(SYSTEMD_DIR, 'wetalk-backup-failure.service'),
+    'utf8'
+  );
+
+  assert.match(successUnit, /"\$\{BACKUP_HEALTHCHECKS_URL\}"/);
+  assert.match(failureUnit, /"\$\{BACKUP_HEALTHCHECKS_URL\}\/fail"/);
+  assert.doesNotMatch(successUnit + failureUnit, /BACKUP_HEALTHCHECKS_URL%\/|\$\$\{/);
 });
