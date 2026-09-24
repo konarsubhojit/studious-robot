@@ -73,7 +73,32 @@ git clone https://github.com/konarsubhojit/studious-robot.git ~/repos/studious-r
 ```
 
 > **Repo path:** `~/repos/studious-robot`  
-> **Service user:** `opc` (Oracle Linux default, what the shipped unit expects) or `ubuntu` (Ubuntu default) — set `User=`/`Group=` in the unit file to match, and see §5's note on `WorkingDirectory=`.
+> **Service user:** `opc` (Oracle Linux default, what the shipped unit expects), `ubuntu` (Ubuntu default), or a dedicated service account — set `User=`/`Group=` in the unit file to match, and see §5's note on `WorkingDirectory=`.
+
+### Optional: a dedicated service account
+
+Production runs the service as a `wetalk` **system user** rather than the
+distro's login account, with the checkout under `/home/wetalk`:
+
+```bash
+sudo useradd --system --create-home --home-dir /home/wetalk \
+  --shell /usr/sbin/nologin wetalk
+sudo install -d -o wetalk -g wetalk -m 0755 /home/wetalk/repos
+sudo -u wetalk git clone https://github.com/konarsubhojit/studious-robot.git \
+  /home/wetalk/repos/studious-robot
+```
+
+Two traps follow from `--system` plus `nologin`:
+
+- If the database role is also called `wetalk`, the Postgres role and the Linux
+  user are **separate objects**. `CREATE ROLE wetalk` creates neither a home
+  directory nor a login. `sudo su - wetalk` failing is the expected
+  consequence of having only the database role (or of `nologin`), not a broken
+  install — use `sudo -u wetalk -H bash -lc '<command>'` to run something as
+  the service user.
+- Every path in the unit must follow the account:
+  `User=`, `Group=` and `WorkingDirectory=` (§5).
+
 
 ---
 
@@ -88,7 +113,28 @@ npm ci --omit=dev
 
 ## 5. Install the systemd unit
 
-The shipped `deploy/robot-signal.service` defaults to `User=opc` and `WorkingDirectory=/home/opc/repos/studious-robot/server` (the Oracle Linux layout). **Before installing it**, edit both if your VM's user or repo path differs (e.g. `User=ubuntu` and `WorkingDirectory=/home/ubuntu/repos/studious-robot/server` on Ubuntu):
+The shipped `deploy/robot-signal.service` defaults to `User=opc` and `WorkingDirectory=/home/opc/repos/studious-robot/server` (the Oracle Linux layout). **Before installing it**, edit all three fields if your VM's user or repo path differs (e.g. `User=ubuntu` and `WorkingDirectory=/home/ubuntu/repos/studious-robot/server` on Ubuntu, or the `wetalk` service account of §3):
+
+| Field | Shipped value | Edit to |
+| --- | --- | --- |
+| `User=` | `opc` | your service user (e.g. `wetalk`) |
+| `Group=` | `opc` | that user's group |
+| `WorkingDirectory=` | `/home/opc/repos/studious-robot/server` | the absolute path of `server/` in your checkout |
+
+Installing it unedited fails at start with `Failed to determine user credentials: No such process` (unknown `User=`) or a `WorkingDirectory=` "No such file or directory" — neither of which names the unit field that is actually wrong. A copy-paste form:
+
+```bash
+SERVICE_USER=wetalk
+REPO_DIR=/home/wetalk/repos/studious-robot
+sed -e "s|^User=.*|User=${SERVICE_USER}|" \
+    -e "s|^Group=.*|Group=${SERVICE_USER}|" \
+    -e "s|^WorkingDirectory=.*|WorkingDirectory=${REPO_DIR}/server|" \
+    "${REPO_DIR}/deploy/robot-signal.service" \
+  | sudo tee /etc/systemd/system/robot-signal.service >/dev/null
+sudo systemd-analyze verify /etc/systemd/system/robot-signal.service
+```
+
+Re-apply these edits after every `git pull` that touches the unit — the repo copy is the Oracle Linux layout, not a transcript of the live VM.
 
 > `WorkingDirectory=%h/...` does **not** work in a system unit — `%h` resolves to `/root` there regardless of `User=`, not the service user's home directory. Always use an absolute path.
 
@@ -122,6 +168,48 @@ stat -c '%a %U %G' /etc/robot-signal/env
 Anything looser (e.g. `640 root:opc`, or a copy inside the checkout) puts the
 credentials within reach of the service user and of anyone who can read the
 repo directory.
+
+#### Files read *after* the privilege drop need different modes
+
+The env file and a credential file pointed at *by* the env file are read by two
+different identities:
+
+| Read by | When | Required access |
+| --- | --- | --- |
+| `/etc/robot-signal/env` | systemd, as **root**, before `User=` takes effect | `0600 root:root`, directory `0700 root:root` |
+| `FCM_SERVICE_ACCOUNT_JSON=/etc/robot-signal/fcm.json` | Node, as the **service user**, after the drop | readable by that user |
+
+(The variable the server reads is `FCM_SERVICE_ACCOUNT_JSON`, which accepts a
+path as well as inline JSON. There is no `FCM_SERVICE_ACCOUNT_FILE`: a key file
+pointed at by that name is never opened, and push/auth fail as if unconfigured.)
+
+A `0700 root root` directory therefore works for the env file and breaks the
+FCM key, with a crash loop and:
+
+```
+EACCES: permission denied, open '/etc/robot-signal/fcm.json'
+```
+
+Keep the secret out of the service user's reach as far as possible while still
+letting it open that one file — group-read for the service group, nothing for
+others:
+
+```bash
+sudo install -d -m 0750 -o root -g wetalk /etc/robot-signal
+sudo install -m 0640 -o root -g wetalk /dev/null /etc/robot-signal/fcm.json
+sudo chmod 0600 /etc/robot-signal/env   # still root-only; only root reads it
+# Verify — 750 root wetalk, 600 root root, 640 root wetalk:
+stat -c '%a %U %G %n' /etc/robot-signal /etc/robot-signal/env /etc/robot-signal/fcm.json
+# And that the service user can actually open it:
+sudo -u wetalk head -c1 /etc/robot-signal/fcm.json >/dev/null && echo readable
+```
+
+`FCM_SERVICE_ACCOUNT_JSON` accepts either the raw JSON or a path to it. The two
+readers differ: `server/src/push/credentials.ts` logs
+`[push] FCM service account file unreadable` and silently skips push delivery,
+while the Firebase token verifier (`server/src/firebaseAuth.ts`) lets the
+`EACCES` propagate — which is the crash loop above. Check the journal after any
+permission change rather than assuming pushes still work.
 
 #### Sandboxing
 
@@ -591,12 +679,23 @@ sudo firewall-cmd --list-ports
 
 **Ubuntu (iptables-persistent):**
 
+Ubuntu OCI images ship a saved iptables ruleset whose `INPUT` chain ends in a
+`REJECT`, so a new port must be accepted *before* that rule — appending with
+`-A` has no effect. Insert, then verify the position:
+
 ```bash
-sudo iptables -I INPUT 6 -p tcp --dport 4173 -j ACCEPT
+# 443 once the reverse proxy fronts the service (§9); use 4173 to expose Node directly.
+sudo iptables -I INPUT 6 -p tcp --dport 443 -j ACCEPT
 sudo netfilter-persistent save
+# Verify the ACCEPT precedes the REJECT:
+sudo iptables -L INPUT -n --line-numbers | head -20
 ```
 
-> If signaling works locally on the VM but not from the phone, a missing firewall rule at one of these layers is almost always the cause.
+Both layers must name the **same** port. Opening 443 in the Security List while
+the host only accepts 4173 (or the reverse) presents exactly as a client-side
+timeout with a healthy `curl http://127.0.0.1:4173/health` on the VM.
+
+> If signaling works locally on the VM but not from the phone, a missing firewall rule at one of these layers is almost always the cause. Check from outside the VCN — `nc -vz signal.yourdomain.com 443` — rather than from the VM itself.
 
 ---
 
@@ -705,6 +804,13 @@ curl http://localhost:4173/health
 ```
 
 Expected response: `200 OK` with a JSON body (e.g. `{"status":"ok"}`).
+
+The body's `instanceId` falls back to the **process PID** when `INSTANCE_ID` is
+unset (`server/src/createServer/index.ts`), not to `0`. So an unset variable
+does not show up as a missing or zero ordinal — it shows up as a *different*
+`instanceId` after every restart, and as two hosts that look like an
+ever-growing fleet in the load-distribution check below. Set `INSTANCE_ID`
+explicitly on every VM (§5a).
 
 On a multi-VM fleet also read the `fanout` block — it is the only field that
 says whether socket broadcasts actually cross instances (see §5a, *Verify
@@ -913,13 +1019,29 @@ Caddy upgrades WebSockets without extra configuration.
    limits and the graceful-drain contract.
 7. **A missing `INSTANCE_ID` disarms the multi-instance guard.** Both VMs
    reporting instance `null` means neither will refuse to start with `REDIS_URL`
-   missing, and the fleet degrades silently (§5a).
+   missing, and the fleet degrades silently (§5a). `/health` will still report
+   an `instanceId` — the PID — so a changing value across restarts means unset,
+   not rescheduled (§11).
 8. **Restart one VM at a time.** Both at once drops every in-flight call; the
    point of the drain window is that it overlaps with the other VM still
    serving.
+9. **The shipped unit is the Oracle Linux layout, not the live VM.**
+   `User=`/`Group=`/`WorkingDirectory=` must be re-edited after any pull that
+   touches `deploy/robot-signal.service`, or the next install reverts the
+   service to `opc` and `/home/opc/...` (§5).
+10. **A `0700 root:root` `/etc/robot-signal` breaks the FCM key.** systemd
+    reads the env file as root, but Node opens the key file *after* dropping to
+    `User=` — the result is `EACCES ... /etc/robot-signal/fcm.json` and a
+    restart loop (§5, *Files read after the privilege drop*).
+11. **`sudo su - wetalk` failing is not an error.** A `--system` account with
+    `nologin` has no login shell; use `sudo -u wetalk -H bash -lc '...'`. A
+    Postgres role of the same name is a different object entirely (§3).
 
 ### Additional operational notes
 
+- Backups, the OCI CLI install, instance-principal setup and the verified
+  restore procedure live in [`docs/VM_REDEPLOY.md`](../docs/VM_REDEPLOY.md);
+  they are host-level concerns, not part of the signaling service.
 - Do **not** `dnf install npm` / `apt-get install npm`; the NodeSource `nodejs`
   package already includes it.
 - `journalctl -u robot-signal -f` is the only log destination; the app writes
