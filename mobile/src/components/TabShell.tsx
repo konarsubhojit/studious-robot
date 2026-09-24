@@ -58,6 +58,7 @@ const selectTabShellSlice = (state: CallContextValue) => ({
   isServerUnreachable: state.callFlow.isServerUnreachable,
   markMissedCallsRead: state.callFlow.markMissedCallsRead,
   missedCallCount: state.callFlow.missedCallCount,
+  peerVerifications: state.callFlow.peerVerifications,
   retryPresenceConnect: state.callFlow.retryPresenceConnect,
   searchUsers: state.callFlow.searchUsers,
   setSignalingUrl: state.callFlow.setSignalingUrl,
@@ -95,6 +96,7 @@ function TabShell() {
     isServerUnreachable,
     markMissedCallsRead,
     missedCallCount,
+    peerVerifications,
     retryPresenceConnect,
     searchUsers,
     setSignalingUrl,
@@ -378,6 +380,7 @@ function TabShell() {
       <PeerProfileScreen
         peerId={peerId}
         presence={chat.chatPeerId === peerId ? chat.peerPresence : null}
+        verification={peerVerifications[peerId] ?? null}
         isBlocked={Boolean(isUserBlocked?.(peerId))}
         isMuted={isPeerMuted(peerId)}
         callHistory={callHistory}
@@ -400,6 +403,7 @@ function TabShell() {
     chat.unblockPeer,
     isPeerMuted,
     isUserBlocked,
+    peerVerifications,
     setPeerMuted,
     startAudioCallWith,
     startVideoCallWith,

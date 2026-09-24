@@ -305,6 +305,8 @@ jest.mock('../../src/settingsStorage', () => ({
   saveSettings: jest.fn(async () => true),
   loadCallMediaTypes: jest.fn(async () => ({})),
   saveCallMediaTypes: jest.fn(async () => true),
+  loadPeerVerifications: jest.fn(async () => ({})),
+  savePeerVerifications: jest.fn(async () => true),
 }));
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
