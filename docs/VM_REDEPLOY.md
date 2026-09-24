@@ -463,17 +463,21 @@ sudo systemctl enable --now wetalk-backup.timer
 sudo systemctl list-timers wetalk-backup.timer --all
 ```
 
-> **The repo units and the live units have diverged.** The files in
-> `ops/systemd/` are a starting template; they are not a transcript of what
-> runs on `oci`. For "what is actually deployed", the units under
-> `/etc/systemd/system/` on `oci` are authoritative — read them with
-> `systemctl cat wetalk-backup.service`, which also shows the drop-in. Any
-> change to backup behaviour must be applied to **both**: edit the repo files
-> and install them on the VM, or the next redeploy from the repo will quietly
-> revert the VM. Do not assume the commands above leave the VM in its current
-> state; installing `ops/systemd/wetalk-backup.service` verbatim would
-> reintroduce `EnvironmentFile=` and `OnFailure=` and drop the healthcheck
-> drop-in's `ExecStartPost=`.
+> **The repo, `oci`, and `oci-new` are three different configurations.**
+>
+> | Location | Backup-unit state observed during the 2026-09-24 rebuild |
+> | --- | --- |
+> | Repository | `EnvironmentFile=`, `OnFailure=wetalk-backup-failure.service`, and supported simple `${BACKUP_HEALTHCHECKS_URL}` expansion |
+> | Old `oci` | No `EnvironmentFile=`, no `OnFailure=` or failure unit, and a success-only `curl --config` drop-in |
+> | `oci-new` | Repo-style units, but an ad-hoc fix existed only in `wetalk-backup.service`; the failure unit still contained the broken `%/` expression |
+>
+> Treat the files under `/etc/systemd/system/` as authoritative for what a
+> host currently runs and inspect them with `systemctl cat`. Treat the repo as
+> authoritative for the next rebuild. Apply a fix to the repo and reinstall
+> **both** backup units; a host-only `sed` edit is configuration drift and a
+> rebuild will reintroduce the bug. Conversely, installing the repo service
+> verbatim on old `oci` would reintroduce `EnvironmentFile=` and `OnFailure=`
+> and remove that host's success-ping drop-in.
 
 ### The live unit
 
@@ -626,22 +630,27 @@ EOF
 
 Do not commit the real URL.
 
-If you instead use the repo units, which read `BACKUP_HEALTHCHECKS_URL` from
-the environment, note that both `ExecStart*=` lines write `$${...}`. systemd
-performs its own `${...}` expansion before `/bin/sh` ever runs and has no
-shell parameter expansion, so an unescaped `"${BACKUP_HEALTHCHECKS_URL%/}"`
-logs
+If you instead use the repo units, set `BACKUP_HEALTHCHECKS_URL` in
+`/etc/robot-signal/env` **without a trailing slash**. Both `ExecStart*=` lines
+use systemd's supported simple `${BACKUP_HEALTHCHECKS_URL}` expansion. systemd
+does not support shell parameter expansion, so
+`"${BACKUP_HEALTHCHECKS_URL%/}"` logs
 
 ```
 wetalk-backup.service: Invalid environment variable name evaluates to an empty string: BACKUP_HEALTHCHECKS_URL%/
 ```
 
 and pings nothing — both the success ping and the `/fail` ping become inert,
-which turns a failing nightly backup into silence rather than an alert. The
-`$$` defers expansion to the shell (and keeps the secret URL out of
-`systemctl show`). Check unit edits with
-`systemd-analyze verify ./wetalk-backup.service`, then confirm a real ping with
-`systemctl start wetalk-backup.service` and the check's "last ping" time.
+which turns a failing nightly backup into silence rather than an alert. Check
+both unit files with
+
+```bash
+systemd-analyze verify ./wetalk-backup.service ./wetalk-backup-failure.service
+```
+
+Then run `systemctl start wetalk-backup.service` and confirm that the check's
+"last ping" time advances; a successful service status alone does not prove
+that the `-`-prefixed best-effort ping fired.
 
 ### OCI CLI under `sudo -i`
 

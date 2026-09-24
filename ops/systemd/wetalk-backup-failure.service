@@ -6,11 +6,5 @@ Type=oneshot
 User=root
 Group=root
 EnvironmentFile=-/etc/robot-signal/env
-# $$ escapes systemd's own ${...} expansion so /bin/sh performs it instead:
-# systemd has no shell parameter expansion and rejects ${VAR%/} with
-# "Invalid environment variable name ... BACKUP_HEALTHCHECKS_URL%/", leaving
-# the ping silently inert. EnvironmentFile= still puts the value in the
-# child's environment, so the shell resolves it (and keeps the secret URL
-# out of the unit's visible command line).
-ExecStart=-/bin/sh -c '[ -z "$${BACKUP_HEALTHCHECKS_URL:-}" ] || /usr/bin/curl -fsS --max-time 10 --retry 2 --retry-delay 2 "$${BACKUP_HEALTHCHECKS_URL%/}/fail" >/dev/null'
-
+# BACKUP_HEALTHCHECKS_URL must not have a trailing slash.
+ExecStart=-/bin/sh -c '[ -z "${BACKUP_HEALTHCHECKS_URL}" ] || /usr/bin/curl -fsS --max-time 10 --retry 2 --retry-delay 2 "${BACKUP_HEALTHCHECKS_URL}/fail" >/dev/null'
