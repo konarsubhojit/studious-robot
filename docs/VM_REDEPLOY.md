@@ -39,6 +39,120 @@ On `oci` the backup healthcheck URL is *not* kept in this file; it lives in
 `/etc/wetalk-backup/healthcheck.curl` and is read by a `curl --config`
 invocation. See "Monitoring (healthchecks.io)".
 
+## Provisioning a fresh VM
+
+Everything below is required on a brand-new Ubuntu 24.04 host before the
+"Deploy or redeploy" steps make sense. Each item exists because it was missed
+at least once on a real provisioning run.
+
+### The `wetalk` Linux user is not the `wetalk` Postgres role
+
+`wetalk` is *two* things: a Postgres role (created by `CREATE ROLE`) and the
+Linux account that owns the checkout and runs `robot-signal`. Creating the
+database role does not create the Linux user, and the symptom of that is
+`sudo su - wetalk` failing with "user does not exist" or "This account is
+currently not available" — which is normal for a system account with
+`/usr/sbin/nologin`, not a sign that anything is broken.
+
+```bash
+sudo useradd --system --create-home --home-dir /home/wetalk \
+  --shell /usr/sbin/nologin wetalk
+sudo install -d -o wetalk -g wetalk -m 0755 /home/wetalk/repos
+sudo -u wetalk git clone https://github.com/konarsubhojit/studious-robot.git \
+  /home/wetalk/repos/studious-robot
+# Run a command as the service user without a login shell:
+sudo -u wetalk -H bash -lc 'cd /home/wetalk/repos/studious-robot && git status'
+```
+
+`deploy/robot-signal.service` in the repo ships `User=opc`, `Group=opc` and
+`WorkingDirectory=/home/opc/repos/studious-robot/server` (the Oracle Linux
+layout). This fleet runs as `wetalk` out of `/home/wetalk`, so those three
+lines **must** be edited before the unit is installed — see
+[`deploy/README.md` §5](../deploy/README.md) for the exact edits and for the
+file modes `/etc/robot-signal/env` and the FCM key file require.
+
+### Install the OCI CLI system-wide
+
+`wetalk-backup.service` runs as `User=root`, so the CLI must not live in a
+user's home directory: a `/home/<user>/bin/oci` path is unreadable under
+`ProtectHome=`, and it disappears the day that account is removed. Install it
+under `/opt/oci-cli`, which is what `ops/wetalk-backup.sh` defaults to:
+
+```bash
+sudo apt-get install -y python3-venv
+curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh \
+  -o /tmp/install-oci-cli.sh
+sudo bash /tmp/install-oci-cli.sh --accept-all-defaults \
+  --install-dir /opt/oci-cli --exec-dir /usr/local/bin
+/opt/oci-cli/bin/oci --version
+```
+
+The script resolves the binary as `OCI_BIN="${OCI_BIN:-/opt/oci-cli/bin/oci}"`,
+so a different install path only needs `Environment=OCI_BIN=/path/to/oci` in
+the unit (or the variable in `/etc/robot-signal/env`) rather than a code edit.
+
+### Instance principal setup
+
+Until the instance is a member of a dynamic group that a policy grants bucket
+access to, **every** `oci` call from the VM fails `NotAuthenticated` (or the
+`BucketNotFound` mask described below). Three things must exist:
+
+1. The instance OCID, read from the instance metadata service:
+   ```bash
+   curl -fsS -H "Authorization: ******" \
+     http://169.254.169.254/opc/v2/instance/id
+   ```
+2. A dynamic group whose matching rule includes that OCID. Either list the
+   instance explicitly or match the whole compartment:
+   ```
+   instance.id = 'ocid1.instance.oc1..<new-instance>'
+   # or, for every instance in the compartment:
+   ANY {instance.compartment.id = 'ocid1.compartment.oc1..<compartment>'}
+   ```
+   A rebuilt VM gets a **new** OCID: the rule must be updated or the new host
+   silently has no permissions.
+3. A policy in the bucket's compartment granting that dynamic group write
+   access:
+   ```
+   Allow dynamic-group wetalk-backup-hosts to manage objects in compartment <compartment> where target.bucket.name = 'kiyonbucket'
+   ```
+
+Verify from the VM before enabling the timer — this must list objects, not
+error:
+
+```bash
+sudo OCI_CLI_AUTH=instance_principal /opt/oci-cli/bin/oci os object list \
+  --auth instance_principal --bucket-name kiyonbucket --prefix pg/ --fields name,size
+```
+
+IAM edits take a minute or two to propagate; retest rather than assuming the
+rule is wrong.
+
+### Database password prompts and `~/.pgpass`
+
+Stock `pg_hba.conf` on Postgres 18 requires `scram-sha-256` for TCP loopback,
+so `psql -h 127.0.0.1` prompts for a password even for a local role. Store it
+in a per-user `~/.pgpass` — and note that "per-user" means exactly that: a file
+under `/root` does nothing for commands run as `wetalk`, and vice versa.
+
+```bash
+sudo install -o root -g root -m 0600 /dev/null /root/.pgpass
+printf '%s\n' '127.0.0.1:5432:wetalk:wetalk:<DB_PASSWORD>' | sudo tee /root/.pgpass >/dev/null
+sudo chmod 600 /root/.pgpass
+# Verify — anything looser than 600 is silently ignored, with no error:
+stat -c '%a' /root/.pgpass
+```
+
+`libpq` ignores a `.pgpass` whose mode is group- or world-readable and simply
+prompts again, which reads as "the password is wrong".
+
+### Both firewall layers
+
+Opening 443 (or 4173) requires an ingress rule in the OCI **Security List / NSG**
+*and* a rule in the host firewall — Ubuntu images ship iptables rules that
+`REJECT` everything past a point. See
+[`deploy/README.md` §8b](../deploy/README.md) for both.
+
 ## Deploy or redeploy
 
 Deploy schema changes once, from one host, before restarting the fleet. The
@@ -176,18 +290,22 @@ application role lacked superuser privileges. Creating the extension as
 applied all three migrations. The journal grew from 8 rows to 11 and the
 `messages` table reported by the application's `42P01` error was created.
 
-## Prepare `pg_trgm`
+## Prepare `pg_trgm` and `btree_gin`
 
 Migration `0010_messages_table.sql` creates a trigram GIN index and requires
-the `pg_trgm` extension. The application role is not a superuser and cannot
-create it. On a fresh cluster, run this before migrations:
+the `pg_trgm` extension; `0012_search_extensions.sql` requires `btree_gin` so
+the participant columns can live inside that index. The application role is not
+a superuser and cannot create either. On a fresh cluster, run this before
+migrations:
 
 ```bash
 sudo -u postgres psql -d wetalk -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+sudo -u postgres psql -d wetalk -c 'CREATE EXTENSION IF NOT EXISTS btree_gin;'
 ```
 
 Do the same before restoring into a fresh cluster. `pg_restore` running as a
-non-superuser cannot create the extension.
+non-superuser cannot create the extensions — see "Verified restore procedure"
+for the `must be owner of extension` warnings it emits when they already exist.
 
 ## Rotate database credentials
 
@@ -423,8 +541,26 @@ compares against `pg_dump` output rather than an `age` payload.
 
 The script also compares the new dump against the previous successful object
 size and aborts if the new file is dramatically smaller than
-`MIN_PREVIOUS_SIZE_PERCENT` (default: `50`). If the previous size cannot be
+`MIN_PREVIOUS_SIZE_PERCENT` (default: `50`). Unlike `MIN_SIZE`, **both sides of
+that comparison are ciphertext**: the new `age` output against the size of the
+newest `pg/*.dump.age` object in the bucket. If the previous size cannot be
 read, the script logs a warning and falls back to the static `MIN_SIZE` guard.
+
+Two details of that lookup are load-bearing, because getting either wrong
+degrades the guard silently to the `MIN_SIZE` floor:
+
+- Objects are keyed `pg/%Y/%m/%d/%H%M%SZ.dump.age`, so the listing uses the
+  bare `pg/` prefix. Scoping it to today's date directory finds nothing on the
+  first run of a day — exactly the run after an incident, when the guard
+  matters most. That key layout also sorts lexicographically in timestamp
+  order, so the newest object is the last line.
+- The listing passes `--fields name,size` and flattens the CLI's
+  pretty-printed, multi-line JSON before matching a `name`/`size` pair. Without
+  the fields the size is absent; without the flattening the two keys never
+  appear on the same line.
+
+`server/test/ops-backup-script.test.ts` covers both, including the case where
+the only previous dump lives under an earlier date directory.
 
 ### Encrypted backups
 
@@ -490,6 +626,23 @@ EOF
 
 Do not commit the real URL.
 
+If you instead use the repo units, which read `BACKUP_HEALTHCHECKS_URL` from
+the environment, note that both `ExecStart*=` lines write `$${...}`. systemd
+performs its own `${...}` expansion before `/bin/sh` ever runs and has no
+shell parameter expansion, so an unescaped `"${BACKUP_HEALTHCHECKS_URL%/}"`
+logs
+
+```
+wetalk-backup.service: Invalid environment variable name evaluates to an empty string: BACKUP_HEALTHCHECKS_URL%/
+```
+
+and pings nothing — both the success ping and the `/fail` ping become inert,
+which turns a failing nightly backup into silence rather than an alert. The
+`$$` defers expansion to the shell (and keeps the secret URL out of
+`systemctl show`). Check unit edits with
+`systemd-analyze verify ./wetalk-backup.service`, then confirm a real ping with
+`systemctl start wetalk-backup.service` and the check's "last ping" time.
+
 ### OCI CLI under `sudo -i`
 
 `sudo -i` starts a root login shell that does not inherit
@@ -500,7 +653,7 @@ misleading result is `input file does not appear to be a valid tar archive`.
 Pass authentication explicitly:
 
 ```bash
-sudo -i /home/ubuntu/bin/oci os object list \
+sudo -i /opt/oci-cli/bin/oci os object list \
   --auth instance_principal \
   --bucket-name kiyonbucket \
   --prefix pg/
@@ -549,12 +702,12 @@ enforcement does not depend on instance-principal health.
   in normal object listings):
 
 ```bash
-sudo -i /home/ubuntu/bin/oci os multipart list \
+sudo -i /opt/oci-cli/bin/oci os multipart list \
   --auth instance_principal \
   --bucket-name kiyonbucket \
   --all
 
-sudo -i /home/ubuntu/bin/oci os multipart abort \
+sudo -i /opt/oci-cli/bin/oci os multipart abort \
   --auth instance_principal \
   --bucket-name kiyonbucket \
   --object-name '<OBJECT_NAME>' \
@@ -604,13 +757,31 @@ restore:
 pg_restore --list "$RESTORE_FILE" | head -20
 ```
 
-Then restore into a scratch database:
+Then restore into a scratch database. Both extensions the schema depends on
+must exist **before** the restore — `pg_trgm` (trigram search) and `btree_gin`
+(the participant columns inside that index):
 
 ```bash
 createdb wetalk_restore_test
 psql -d wetalk_restore_test -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+psql -d wetalk_restore_test -c 'CREATE EXTENSION IF NOT EXISTS btree_gin;'
 pg_restore --no-owner --dbname wetalk_restore_test "$RESTORE_FILE"
 ```
+
+Expect this, and do not treat it as a failed restore:
+
+```
+pg_restore: error: could not execute query: ERROR:  must be owner of extension btree_gin
+pg_restore: error: could not execute query: ERROR:  must be owner of extension pg_trgm
+pg_restore: warning: errors ignored on restore: 2
+```
+
+Both come from `COMMENT ON EXTENSION` statements in the dump, which only the
+extension's owner (normally a superuser) may execute. They are **cosmetic**:
+the comment is not applied, no table, index or row is affected, and `errors
+ignored on restore: 2` with exactly these two lines is the expected output of a
+non-superuser restore. Anything else in that count is not benign — read it.
+Verify with the row counts below rather than with the exit status alone.
 
 Compare important row counts with the live TCP database (run the first command
 on `oci`, or point `psql` at `DATABASE_URL` from wherever you are restoring):
