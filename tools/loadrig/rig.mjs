@@ -2,8 +2,18 @@
 import { createWriteStream } from 'node:fs';
 import { once } from 'node:events';
 
-const CLIENT_EVENTS = Object.freeze({ MESSAGE_SEND: 'message.send' });
+const CLIENT_EVENTS = Object.freeze({
+  CALL_ACCEPT: 'call.accept',
+  CALL_CONNECTED: 'call.connected',
+  CALL_DECLINE: 'call.decline',
+  CALL_END: 'call.end',
+  CALL_INITIATE: 'call.initiate',
+  MESSAGE_SEND: 'message.send',
+  RTC_ANSWER: 'rtc.answer',
+  RTC_OFFER: 'rtc.offer',
+});
 const SERVER_EVENTS = Object.freeze({
+  CALL_INCOMING: 'call.incoming',
   MESSAGE_RECEIVED: 'message.received',
   SERVER_DRAINING: 'server.draining',
   SESSION_INVALID: 'session.invalid',
@@ -12,6 +22,9 @@ const SERVER_EVENTS = Object.freeze({
 const SIGNALING_VERSION = 1;
 const REPORT_INTERVAL_MS = 15_000;
 const SWEEP_INTERVAL_MS = 5_000;
+const LATENCY_SAMPLE_LIMIT = 10_000;
+const CALL_RING_CLEANUP_MS = 130_000;
+
 const DEFAULTS = Object.freeze({
   USERS: 1000,
   USER_OFFSET: 0,
@@ -20,6 +33,9 @@ const DEFAULTS = Object.freeze({
   RAMP_SECS: 120,
   BODY_BYTES: 120,
   DELIVERY_TIMEOUT_MS: 30_000,
+  CALLS_PER_MIN: 0,
+  CALL_HOLD_SECS: 10,
+  CALL_ANSWER_RATE: 100,
 });
 
 class ConfigError extends Error {}
@@ -54,6 +70,12 @@ function loadConfig(env = process.env, now = new Date()) {
   const rampSecs = parseInteger(env, 'RAMP_SECS', DEFAULTS.RAMP_SECS, { min: 1 });
   const bodyBytes = parseInteger(env, 'BODY_BYTES', DEFAULTS.BODY_BYTES, { min: 1 });
   const deliveryTimeoutMs = parseInteger(env, 'DELIVERY_TIMEOUT_MS', DEFAULTS.DELIVERY_TIMEOUT_MS, { min: 1 });
+  const callsPerMin = parseInteger(env, 'CALLS_PER_MIN', DEFAULTS.CALLS_PER_MIN, { min: 0 });
+  const callHoldSecs = parseInteger(env, 'CALL_HOLD_SECS', DEFAULTS.CALL_HOLD_SECS, { min: 0 });
+  const callAnswerRate = parseInteger(env, 'CALL_ANSWER_RATE', DEFAULTS.CALL_ANSWER_RATE, { min: 0 });
+  if (callAnswerRate > 100) {
+    throw new ConfigError(`CALL_ANSWER_RATE must be an integer between 0 and 100; got ${callAnswerRate}.`);
+  }
   const minRampBatch = Math.max(1, Math.ceil(users / rampSecs));
   const rampBatch = env.RAMP_BATCH === undefined
     ? minRampBatch
@@ -76,8 +98,33 @@ function loadConfig(env = process.env, now = new Date()) {
     rampBatch,
     bodyBytes,
     deliveryTimeoutMs,
+    callsPerMin,
+    callHoldSecs,
+    callAnswerRate,
+    maxInFlightMessages: Math.max(users * 2, Math.ceil(users * msgPerMin * deliveryTimeoutMs / 60_000 * 2)),
+    maxInFlightCalls: Math.max(1, Math.floor(users / 2)),
     out: env.OUT || defaultOutputPath(now),
   };
+}
+
+function createLatencyBucket(sampleLimit = LATENCY_SAMPLE_LIMIT) {
+  return { count: 0, sampleLimit, samples: [] };
+}
+
+function recordLatency(bucket, value) {
+  if (Array.isArray(bucket)) {
+    bucket.push(value);
+    return;
+  }
+
+  bucket.count += 1;
+  if (bucket.samples.length < bucket.sampleLimit) {
+    bucket.samples.push(value);
+    return;
+  }
+
+  const index = Math.floor(Math.random() * bucket.count);
+  if (index < bucket.sampleLimit) bucket.samples[index] = value;
 }
 
 function percentile(sorted, p) {
@@ -87,17 +134,45 @@ function percentile(sorted, p) {
 }
 
 function summarize(values) {
-  if (values.length === 0) {
+  const count = Array.isArray(values) ? values.length : values.count;
+  const samples = Array.isArray(values) ? values : values.samples;
+  if (samples.length === 0) {
     return { n: 0, p50: 0, p95: 0, p99: 0, max: 0 };
   }
-  const sorted = [...values].sort((a, b) => a - b);
+  const sorted = [...samples].sort((a, b) => a - b);
   return {
-    n: sorted.length,
+    n: count,
     p50: percentile(sorted, 50),
     p95: percentile(sorted, 95),
     p99: percentile(sorted, 99),
     max: sorted[sorted.length - 1],
   };
+}
+
+function emitWithAck(socket, eventName, payload, timeoutMs, onAck, onTimeout) {
+  let settled = false;
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    onTimeout?.();
+  }, timeoutMs);
+
+  socket.emit(eventName, payload, (ack) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    onAck(ack);
+  });
+}
+
+function addTimer(user, timer) {
+  user.timers.push(timer);
+  return timer;
+}
+
+function clearUserTimers(user) {
+  for (const timer of user.timers) clearTimeout(timer);
+  user.timers.length = 0;
 }
 
 function increment(errors, reason) {
@@ -224,10 +299,13 @@ async function openUser(io, config, index, state, startedAt) {
     state.inFlight.delete(deliveredId);
     const latency = Date.now() - pending.t0;
     const bucket = pending.phase === 'steady' ? state.deliverySteady : state.deliveryRamp;
-    bucket.push(latency);
+    recordLatency(bucket, latency);
   });
 
-  const user = { index, userId, socket, sendSequence: 0, timer: null };
+  const user = { index, userId, socket, sendSequence: 0, timers: [] };
+  socket.on(SERVER_EVENTS.CALL_INCOMING, (payload) => {
+    handleIncomingCall(config, state, user, payload);
+  });
   startSender(config, state, user, startedAt);
   return user;
 }
@@ -240,13 +318,17 @@ function startSender(config, state, user, startedAt) {
   const firstDelay = Math.floor(Math.random() * intervalMs);
   const timeout = setTimeout(() => {
     sendOnce();
-    user.timer = setInterval(sendOnce, intervalMs);
+    addTimer(user, setInterval(sendOnce, intervalMs));
   }, firstDelay);
-  user.timer = timeout;
+  addTimer(user, timeout);
 }
 
 function sendMessage(config, state, user, startedAt) {
   if (!user.socket.connected) return;
+  if (state.inFlight.size >= config.maxInFlightMessages) {
+    increment(state.errors, 'message_backpressure');
+    return;
+  }
 
   const id = messageId(user.userId, user.sendSequence++);
   const currentPhase = phaseFor(startedAt, config.rampSecs);
@@ -269,8 +351,229 @@ function sendMessage(config, state, user, startedAt) {
     state.sent += 1;
     const latency = Date.now() - t0;
     const bucket = currentPhase === 'steady' ? state.ackSteady : state.ackRamp;
-    bucket.push(latency);
+    recordLatency(bucket, latency);
   });
+}
+
+
+function findCallRecord(state, callId) {
+  for (const record of state.callStates.values()) {
+    if (record.callId === callId) return record;
+  }
+  return null;
+}
+
+function releaseCall(state, key, reason) {
+  const record = state.callStates.get(key);
+  if (!record) return;
+  clearTimeout(record.cleanupTimer);
+  state.callStates.delete(key);
+  state.busyPairs.delete(record.pairKey);
+  if (reason) increment(state.errors, reason);
+}
+
+function startCallScheduler(config, state, users, startedAt) {
+  if (config.callsPerMin === 0) return null;
+
+  const callers = users
+    .filter((user) => user.index % 2 === 0)
+    .filter((user) => user.socket.connected && users.some((peer) => peer.index === peerIndex(user.index)));
+  if (callers.length === 0) return null;
+
+  const intervalMs = 60_000 / config.callsPerMin;
+  let cursor = 0;
+  const sendOnce = () => {
+    for (let attempted = 0; attempted < callers.length; attempted += 1) {
+      const user = callers[cursor % callers.length];
+      cursor += 1;
+      if (startCall(config, state, user, startedAt)) return;
+    }
+    increment(state.errors, 'call_pair_backpressure');
+  };
+  const firstDelay = Math.floor(Math.random() * intervalMs);
+  const timeout = setTimeout(() => {
+    sendOnce();
+    state.callTimer = setInterval(sendOnce, intervalMs);
+  }, firstDelay);
+  state.callTimer = timeout;
+  return timeout;
+}
+
+function startCall(config, state, caller, startedAt) {
+  if (!caller.socket.connected) return false;
+  if (state.callStates.size >= config.maxInFlightCalls) {
+    increment(state.errors, 'call_backpressure');
+    return false;
+  }
+
+  const calleeIndex = peerIndex(caller.index);
+  const pairKey = `${Math.min(caller.index, calleeIndex)}:${Math.max(caller.index, calleeIndex)}`;
+  if (state.busyPairs.has(pairKey)) return false;
+
+  const sequence = state.callsStarted;
+  const key = `pending:${caller.userId}:${sequence}`;
+  const phase = phaseFor(startedAt, config.rampSecs);
+  const now = Date.now();
+  const record = {
+    key,
+    pairKey,
+    sequence,
+    phase,
+    caller,
+    calleeId: userIdAt(config, calleeIndex),
+    initiatedAt: now,
+    incomingAt: null,
+    acceptedAt: null,
+    callId: null,
+    cleanupTimer: setTimeout(() => releaseCall(state, key), CALL_RING_CLEANUP_MS),
+  };
+  state.callsStarted += 1;
+  state.busyPairs.add(pairKey);
+  state.callStates.set(key, record);
+
+  emitWithAck(
+    caller.socket,
+    CLIENT_EVENTS.CALL_INITIATE,
+    { version: SIGNALING_VERSION, calleeId: record.calleeId, mediaType: 'audio' },
+    config.deliveryTimeoutMs,
+    (ack) => {
+      if (!ack?.ok || !ack.call?.callId) {
+        releaseCall(state, key, extractErrorReason(ack, 'call_initiate_error'));
+        return;
+      }
+      const current = state.callStates.get(key);
+      if (!current) return;
+      state.callStates.delete(key);
+      clearTimeout(current.cleanupTimer);
+      current.callId = ack.call.callId;
+      current.key = current.callId;
+      current.cleanupTimer = setTimeout(() => releaseCall(state, current.callId), CALL_RING_CLEANUP_MS);
+      state.callStates.set(current.callId, current);
+    },
+    () => releaseCall(state, key, 'call_initiate_timeout')
+  );
+  return true;
+}
+
+function handleIncomingCall(config, state, callee, payload) {
+  const callId = payload?.callId;
+  if (!callId) return;
+  const record = findCallRecord(state, callId);
+  if (!record) return;
+
+  record.incomingAt = Date.now();
+  if (record.sequence % 100 >= config.callAnswerRate) {
+    if (record.sequence % 2 === 0) {
+      declineCall(config, state, callee, record);
+    } else {
+      state.callsTimedOut += 1;
+    }
+    return;
+  }
+
+  acceptCall(config, state, callee, record);
+}
+
+function declineCall(config, state, callee, record) {
+  emitWithAck(
+    callee.socket,
+    CLIENT_EVENTS.CALL_DECLINE,
+    { version: SIGNALING_VERSION, callId: record.callId },
+    config.deliveryTimeoutMs,
+    (ack) => {
+      if (!ack?.ok) {
+        releaseCall(state, record.key, extractErrorReason(ack, 'call_decline_error'));
+        return;
+      }
+      state.callsDeclined += 1;
+      releaseCall(state, record.key);
+    },
+    () => releaseCall(state, record.key, 'call_decline_timeout')
+  );
+}
+
+function acceptCall(config, state, callee, record) {
+  emitWithAck(
+    callee.socket,
+    CLIENT_EVENTS.CALL_ACCEPT,
+    { version: SIGNALING_VERSION, callId: record.callId },
+    config.deliveryTimeoutMs,
+    (ack) => {
+      if (!ack?.ok) {
+        releaseCall(state, record.key, extractErrorReason(ack, 'call_accept_error'));
+        return;
+      }
+      record.acceptedAt = Date.now();
+      state.callsAccepted += 1;
+      recordLatency(record.phase === 'steady' ? state.ringAcceptSteady : state.ringAcceptRamp, record.acceptedAt - record.incomingAt);
+      connectCallMedia(config, state, callee, record);
+    },
+    () => releaseCall(state, record.key, 'call_accept_timeout')
+  );
+}
+
+function connectCallMedia(config, state, callee, record) {
+  emitWithAck(
+    record.caller.socket,
+    CLIENT_EVENTS.RTC_OFFER,
+    { version: SIGNALING_VERSION, callId: record.callId, sdp: { type: 'offer', sdp: 'loadrig-offer' } },
+    config.deliveryTimeoutMs,
+    (offerAck) => {
+      if (!offerAck?.ok) {
+        releaseCall(state, record.key, extractErrorReason(offerAck, 'rtc_offer_error'));
+        return;
+      }
+      emitWithAck(
+        callee.socket,
+        CLIENT_EVENTS.RTC_ANSWER,
+        { version: SIGNALING_VERSION, callId: record.callId, sdp: { type: 'answer', sdp: 'loadrig-answer' } },
+        config.deliveryTimeoutMs,
+        (answerAck) => {
+          if (!answerAck?.ok) {
+            releaseCall(state, record.key, extractErrorReason(answerAck, 'rtc_answer_error'));
+            return;
+          }
+          markCallConnected(config, state, record);
+        },
+        () => releaseCall(state, record.key, 'rtc_answer_timeout')
+      );
+    },
+    () => releaseCall(state, record.key, 'rtc_offer_timeout')
+  );
+}
+
+function markCallConnected(config, state, record) {
+  emitWithAck(
+    record.caller.socket,
+    CLIENT_EVENTS.CALL_CONNECTED,
+    { version: SIGNALING_VERSION, callId: record.callId, iceState: 'connected' },
+    config.deliveryTimeoutMs,
+    (ack) => {
+      if (!ack?.ok) {
+        releaseCall(state, record.key, extractErrorReason(ack, 'call_connected_error'));
+        return;
+      }
+      state.callsInCall += 1;
+      recordLatency(record.phase === 'steady' ? state.acceptInCallSteady : state.acceptInCallRamp, Date.now() - record.acceptedAt);
+      clearTimeout(record.cleanupTimer);
+      record.cleanupTimer = setTimeout(() => endCall(config, state, record), config.callHoldSecs * 1000);
+    },
+    () => releaseCall(state, record.key, 'call_connected_timeout')
+  );
+}
+
+function endCall(config, state, record) {
+  emitWithAck(
+    record.caller.socket,
+    CLIENT_EVENTS.CALL_END,
+    { version: SIGNALING_VERSION, callId: record.callId, reason: 'user_hangup' },
+    config.deliveryTimeoutMs,
+    (ack) => {
+      if (ack?.ok) state.callsEnded += 1;
+      releaseCall(state, record.key, ack?.ok ? null : extractErrorReason(ack, 'call_end_error'));
+    },
+    () => releaseCall(state, record.key, 'call_end_timeout')
+  );
 }
 
 function sweepDeliveryTimeouts(inFlight, now, timeoutMs, errors) {
@@ -286,7 +589,7 @@ function sweepDeliveryTimeouts(inFlight, now, timeoutMs, errors) {
 
 function snapshot(tag, config, state, startedAt) {
   const phase = phaseFor(startedAt, config.rampSecs);
-  return {
+  const line = {
     tag,
     ts: new Date().toISOString(),
     phase,
@@ -301,6 +604,22 @@ function snapshot(tag, config, state, startedAt) {
     errors: { ...state.errors },
     rssMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
   };
+  if (config.callsPerMin > 0) {
+    line.calls = {
+      started: state.callsStarted,
+      accepted: state.callsAccepted,
+      declined: state.callsDeclined,
+      timedOut: state.callsTimedOut,
+      inCall: state.callsInCall,
+      ended: state.callsEnded,
+      pending: state.callStates.size,
+    };
+    line.ringAccept = summarize(state.ringAcceptSteady);
+    line.acceptInCall = summarize(state.acceptInCallSteady);
+    line.ringAcceptRamp = summarize(state.ringAcceptRamp);
+    line.acceptInCallRamp = summarize(state.acceptInCallRamp);
+  }
+  return line;
 }
 
 function emitLine(stream, line) {
@@ -337,11 +656,24 @@ async function run(config) {
     sent: 0,
     body: makeBody(config.bodyBytes),
     inFlight: new Map(),
-    ackSteady: [],
-    deliverySteady: [],
-    ackRamp: [],
-    deliveryRamp: [],
+    ackSteady: createLatencyBucket(),
+    deliverySteady: createLatencyBucket(),
+    ackRamp: createLatencyBucket(),
+    deliveryRamp: createLatencyBucket(),
+    ringAcceptSteady: createLatencyBucket(),
+    acceptInCallSteady: createLatencyBucket(),
+    ringAcceptRamp: createLatencyBucket(),
+    acceptInCallRamp: createLatencyBucket(),
     errors: {},
+    callStates: new Map(),
+    busyPairs: new Set(),
+    callsStarted: 0,
+    callsAccepted: 0,
+    callsDeclined: 0,
+    callsTimedOut: 0,
+    callsInCall: 0,
+    callsEnded: 0,
+    callTimer: null,
   };
   const users = [];
   let finalized = false;
@@ -362,9 +694,11 @@ async function run(config) {
     clearInterval(sweeper);
     sweepDeliveryTimeouts(state.inFlight, Date.now(), config.deliveryTimeoutMs, state.errors);
     for (const user of users) {
-      if (user.timer) clearTimeout(user.timer);
+      clearUserTimers(user);
       user.socket.disconnect();
     }
+    if (state.callTimer) clearTimeout(state.callTimer);
+    for (const record of state.callStates.values()) clearTimeout(record.cleanupTimer);
     emitLine(stream, snapshot('final', config, state, startedAt));
     await closeStream(stream);
     process.exitCode = exitCode;
@@ -377,6 +711,7 @@ async function run(config) {
   // The default batch is derived from USERS/RAMP_SECS so the ramp completes
   // before the steady hold window begins, instead of silently measuring connect churn.
   users.push(...await rampUsers(io, config, state, startedAt));
+  startCallScheduler(config, state, users, startedAt);
   const elapsed = Date.now() - startedAt;
   const holdUntil = config.rampSecs * 1000 + config.holdSecs * 1000;
   if (elapsed < holdUntil) {
@@ -407,4 +742,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   main();
 }
 
-export { ConfigError, defaultOutputPath, loadConfig, summarize, sweepDeliveryTimeouts };
+export { ConfigError, createLatencyBucket, defaultOutputPath, loadConfig, recordLatency, summarize, sweepDeliveryTimeouts };
