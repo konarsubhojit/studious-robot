@@ -473,6 +473,7 @@ function createTelemetry(): Telemetry {
         skewRejected: 'call_setup_latency_skew_rejected',
       },
     });
+    observeRingDuration(call, ts, nowMs);
   }
 
   function recordInCall(
