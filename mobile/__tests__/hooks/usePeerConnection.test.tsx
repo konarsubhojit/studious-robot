@@ -231,6 +231,7 @@ describe('usePeerConnection', () => {
       stage: 'first_remote_track',
       reason: 'trackKinds:audio,video,hasVideo:true',
     }));
+    expect(sendPushReceipt).toHaveBeenCalledTimes(1);
   });
 
   test('reports connected ICE without a remote track after a bounded delay', async () => {

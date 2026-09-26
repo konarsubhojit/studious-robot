@@ -142,6 +142,7 @@ export default function usePeerConnection({
   const iceCandidateBufferRef = useRef([] as any[]);
   const isNegotiatingRef = useRef(false);
   const remoteTrackReceivedRef = useRef(false);
+  const firstRemoteTrackReportedRef = useRef(false);
   const missingRemoteTrackTimerRef = useRef(null as ReturnType<typeof setTimeout> | null);
 
   const renegotiate = useCallback(async () => {
@@ -182,6 +183,7 @@ export default function usePeerConnection({
       missingRemoteTrackTimerRef.current = null;
     }
     remoteTrackReceivedRef.current = false;
+    firstRemoteTrackReportedRef.current = false;
     iceCandidateBufferRef.current = [];
     isNegotiatingRef.current = false;
     const pending = pendingPeerConnectionRef.current;
@@ -284,7 +286,8 @@ export default function usePeerConnection({
         }
         remoteStreamRef.current = nextRemoteStream;
         setRemoteStream(nextRemoteStream);
-        if (activeCallIdRef.current) {
+        if (activeCallIdRef.current && !firstRemoteTrackReportedRef.current) {
+          firstRemoteTrackReportedRef.current = true;
           const callId = activeCallIdRef.current;
           Telemetry.trackFirstRemoteFrame(callId);
           const tracks = stream.getTracks?.() ?? [];
