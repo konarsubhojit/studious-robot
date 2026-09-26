@@ -106,35 +106,6 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: server/package-lock.json
-
-      - name: Install dependencies
-        working-directory: server
-        run: npm ci
-
-      - name: Apply database migrations
-        # Runs against the direct (unpooled) Neon endpoint before the new code
-        # starts. drizzle-kit is a dev dependency, so migrations run here on the
-        # runner rather than on the VM (which installs with --omit=dev). Skipped
-        # when DATABASE_URL_DIRECT is not configured.
-        working-directory: server
-        env:
-          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
-        run: |
-          if [ -n "${DATABASE_URL_DIRECT:-}" ]; then
-            npm run db:migrate
-          else
-            echo "DATABASE_URL_DIRECT not set; skipping migrations"
-          fi
-
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
         with:
