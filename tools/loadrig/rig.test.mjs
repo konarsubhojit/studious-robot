@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ConfigError, loadConfig, summarize, sweepDeliveryTimeouts } from './rig.mjs';
+import { ConfigError, createLatencyBucket, loadConfig, recordLatency, summarize, sweepDeliveryTimeouts } from './rig.mjs';
 
 const baseEnv = { TARGET: 'https://example.test' };
 
@@ -26,6 +26,60 @@ test('loadConfig rejects an explicit ramp batch that cannot finish in time', () 
 test('loadConfig requires TARGET', () => {
   assert.throws(() => loadConfig({}), ConfigError);
 });
+
+test('loadConfig defaults call generation off', () => {
+  const config = loadConfig(baseEnv);
+
+  assert.equal(config.callsPerMin, 0);
+  assert.equal(config.callHoldSecs, 10);
+  assert.equal(config.callAnswerRate, 100);
+  assert.equal(config.maxInFlightCalls, 500);
+});
+
+test('loadConfig accepts call generation dials', () => {
+  const config = loadConfig({
+    ...baseEnv,
+    USERS: '100',
+    CALLS_PER_MIN: '12',
+    CALL_HOLD_SECS: '3',
+    CALL_ANSWER_RATE: '75',
+  });
+
+  assert.equal(config.callsPerMin, 12);
+  assert.equal(config.callHoldSecs, 3);
+  assert.equal(config.callAnswerRate, 75);
+  assert.equal(config.maxInFlightCalls, 50);
+});
+
+test('loadConfig rejects invalid call generation dials', () => {
+  assert.throws(
+    () => loadConfig({ ...baseEnv, CALLS_PER_MIN: '-1' }),
+    /CALLS_PER_MIN must be an integer >= 0/
+  );
+  assert.throws(
+    () => loadConfig({ ...baseEnv, CALL_HOLD_SECS: '-1' }),
+    /CALL_HOLD_SECS must be an integer >= 0/
+  );
+  assert.throws(
+    () => loadConfig({ ...baseEnv, CALL_ANSWER_RATE: '101' }),
+    /CALL_ANSWER_RATE must be an integer between 0 and 100/
+  );
+  assert.throws(
+    () => loadConfig({ ...baseEnv, CALL_ANSWER_RATE: '50.5' }),
+    /CALL_ANSWER_RATE must be an integer >= 0/
+  );
+});
+
+test('latency buckets retain a capped sample while reporting total observations', () => {
+  const bucket = createLatencyBucket(3);
+
+  for (const value of [10, 20, 30, 40, 50]) recordLatency(bucket, value);
+
+  assert.equal(bucket.count, 5);
+  assert.equal(bucket.samples.length, 3);
+  assert.equal(summarize(bucket).n, 5);
+});
+
 
 test('sweepDeliveryTimeouts expires only old in-flight messages', () => {
   const inFlight = new Map([
