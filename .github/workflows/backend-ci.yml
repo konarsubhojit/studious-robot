@@ -145,13 +145,4 @@ jobs:
           port: ${{ secrets.DEPLOY_SSH_PORT || '22' }}
           script: |
             set -euo pipefail
-            cd ~/repos/studious-robot
-            git fetch --quiet origin master
-            git reset --hard origin/master
-            # Install prod deps and restart the service via the shared deploy
-            # script (single source of truth for VM + CI deploys). Graceful,
-            # rolling-friendly restart: systemd sends SIGTERM, the app drains
-            # in-flight connections (see TimeoutStopSec in the unit file), then
-            # the new process starts. The script re-verifies the service is
-            # active afterwards and fails the job if it did not come back up.
-            bash deploy/deploy.sh
+            redeploy
