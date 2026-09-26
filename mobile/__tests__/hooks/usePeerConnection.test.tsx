@@ -25,6 +25,10 @@ jest.mock('../../src/telemetry', () => ({
   trackFirstRemoteFrame: jest.fn(),
 }));
 
+jest.mock('../../src/pushNotifications', () => ({
+  sendPushReceipt: jest.fn(() => Promise.resolve()),
+}));
+
 jest.mock('../../src/webrtcConfig', () => ({
   ICE_TRANSPORT_POLICIES: {
     RELAY: 'relay',
@@ -37,6 +41,7 @@ const { RTCPeerConnection } = require('react-native-webrtc');
 const { logInfo, logVerbose } = require('../../src/appLogger');
 const { getIceServersForCall } = require('../../src/webrtcConfig');
 const Telemetry = require('../../src/telemetry');
+const { sendPushReceipt } = require('../../src/pushNotifications');
 
 function TestHook({ params, resultRef }: any) {
   resultRef.current = usePeerConnection(params);
@@ -81,6 +86,7 @@ function setup(overrides: any = {}) {
     setRemoteStream: jest.fn(),
     signalingRef: { current: signaling },
     signalingUrl: 'https://signal.example.test',
+    sessionIdRef: { current: 'session-1' },
     socketRef: { current: { connected: true } },
     updateStatus: jest.fn(),
     ...overrides,
@@ -220,6 +226,33 @@ describe('usePeerConnection', () => {
     expect(params.setRemoteStream).toHaveBeenLastCalledWith(primaryStream);
     expect(recoveryCallbacks.markCallConnected.current).toHaveBeenCalled();
     expect(Telemetry.trackFirstRemoteFrame).toHaveBeenCalledWith('call-1');
+    expect(sendPushReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      callId: 'call-1',
+      stage: 'first_remote_track',
+      reason: 'trackKinds:audio,video,hasVideo:true',
+    }));
+    expect(sendPushReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  test('reports connected ICE without a remote track after a bounded delay', async () => {
+    jest.useFakeTimers();
+    const peerConnection = makePeerConnection({ connectionState: 'connected' });
+    (RTCPeerConnection as jest.Mock).mockImplementation(() => peerConnection);
+    const { resultRef } = setup();
+
+    await act(async () => {
+      await resultRef.current.ensurePeerConnection();
+      peerConnection.onconnectionstatechange?.({});
+      jest.advanceTimersByTime(5000);
+    });
+
+    expect(sendPushReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      callId: 'call-1',
+      stage: 'remote_track_missing',
+      reason: 'no_ontrack_after_5000ms',
+      durationMs: 5000,
+    }));
+    jest.useRealTimers();
   });
 
   test('closes current and pending peer connections and clears remote stream state', async () => {

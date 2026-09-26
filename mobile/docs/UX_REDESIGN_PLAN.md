@@ -515,6 +515,19 @@ activity` (the OS declined — check the activity's PiP configuration), or
 module) or a `sinceLastRequestMs` under 1000 (the 1 s dedupe window absorbed a
 duplicate request, which is working as intended and not a fault).
 
+### 3.2.1 Early-offer media readiness
+
+1. On two devices, answer an incoming video call while the caller sends its
+   offer immediately after acceptance.
+2. Confirm the caller displays the callee's video and its timer advances.
+3. Export logs from both devices. The callee must show `media_acquired` and
+   `peer_connection_ready` before `answer_accepted`; the caller must report
+   `first_remote_track` with `trackKinds` and `hasVideo:true`.
+4. To exercise the diagnostic failure path, block the remote track in a test
+   build after ICE connects. Expect a `remote_track_missing` receipt with
+   `no_ontrack_after_5000ms`; this distinguishes a healthy transport from a
+   blank media stage in the server journal.
+
 ### 3.3 CallKeep from a locked screen
 
 This is the highest-risk check in the document, because it exercises the one

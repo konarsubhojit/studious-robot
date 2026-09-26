@@ -396,6 +396,11 @@ export default function useAnswerPath({
       activeCallIdRef.current = call.callId;
       updateStatus('Answering…');
 
+      // Do not expose the accepted state until the callee can answer an SDP
+      // offer with its local media attached. The server flushes the caller's
+      // buffered offer as soon as acceptance is published.
+      await acquireMediaForAcceptedCall(call.callId, call.mediaType ?? 'video');
+
       const { call: acceptedCall, transport } = await sendCallAccept(call.callId);
 
       const nextCall = acceptedCall ?? call;
@@ -422,7 +427,6 @@ export default function useAnswerPath({
       const accepted = markAnswerAccepted(call.callId);
       reportAnswerStage(call.callId, 'answer_accepted', transport, accepted?.stageMs ?? null);
 
-      await acquireMediaForAcceptedCall(call.callId, nextCall.mediaType ?? 'video');
     } catch (error) {
       const reason = (error as AnswerError)?.answerFailureReason ?? 'accept_failed';
       logError('[CallFlow] acceptIncomingCall failed', error);

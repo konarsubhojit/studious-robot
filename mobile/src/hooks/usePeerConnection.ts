@@ -6,6 +6,7 @@ import { CLIENT_EVENTS, createSignalingClient } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
 import { summarizeIceCandidate } from '../diagnostics';
 import { emitMetric } from '../observability';
+import { sendPushReceipt } from '../pushNotifications';
 import * as Telemetry from '../telemetry';
 import {
   ICE_TRANSPORT_POLICIES,
@@ -59,6 +60,7 @@ type UsePeerConnectionParams = {
   localStreamRef: MutableRef<WebrtcMediaStream | null>;
   signalingRef: MutableRef<ReturnType<typeof createSignalingClient> | null>;
   signalingUrl: string;
+  sessionIdRef: MutableRef<string | null>;
   socketRef: MutableRef<Socket | null>;
   setRemoteStream: (stream: WebrtcMediaStream | null) => void;
   ensureIceSessionId: () => Promise<string | null>;
@@ -125,6 +127,7 @@ export default function usePeerConnection({
   localStreamRef,
   signalingRef,
   signalingUrl,
+  sessionIdRef,
   socketRef,
   setRemoteStream,
   ensureIceSessionId,
@@ -138,6 +141,9 @@ export default function usePeerConnection({
   const mergedScreenAudioTrackRefsRef = useRef([] as WebrtcMediaStreamTrack[]);
   const iceCandidateBufferRef = useRef([] as any[]);
   const isNegotiatingRef = useRef(false);
+  const remoteTrackReceivedRef = useRef(false);
+  const firstRemoteTrackReportedRef = useRef(false);
+  const missingRemoteTrackTimerRef = useRef(null as ReturnType<typeof setTimeout> | null);
 
   const renegotiate = useCallback(async () => {
     const pc = peerConnectionRef.current;
@@ -172,6 +178,12 @@ export default function usePeerConnection({
   }, [activeCallIdRef, signalingRef, socketRef]);
 
   const closePeerConnection = useCallback(() => {
+    if (missingRemoteTrackTimerRef.current) {
+      clearTimeout(missingRemoteTrackTimerRef.current);
+      missingRemoteTrackTimerRef.current = null;
+    }
+    remoteTrackReceivedRef.current = false;
+    firstRemoteTrackReportedRef.current = false;
     iceCandidateBufferRef.current = [];
     isNegotiatingRef.current = false;
     const pending = pendingPeerConnectionRef.current;
@@ -250,6 +262,11 @@ export default function usePeerConnection({
     pc.ontrack = ({ streams }) => {
       const [stream] = streams;
       if (stream) {
+        remoteTrackReceivedRef.current = true;
+        if (missingRemoteTrackTimerRef.current) {
+          clearTimeout(missingRemoteTrackTimerRef.current);
+          missingRemoteTrackTimerRef.current = null;
+        }
         logInfo('[CallFlow] Remote stream connected');
         const current = remoteStreamRef.current;
         let nextRemoteStream = stream;
@@ -269,8 +286,22 @@ export default function usePeerConnection({
         }
         remoteStreamRef.current = nextRemoteStream;
         setRemoteStream(nextRemoteStream);
-        if (activeCallIdRef.current) {
-          Telemetry.trackFirstRemoteFrame(activeCallIdRef.current);
+        if (activeCallIdRef.current && !firstRemoteTrackReportedRef.current) {
+          firstRemoteTrackReportedRef.current = true;
+          const callId = activeCallIdRef.current;
+          Telemetry.trackFirstRemoteFrame(callId);
+          const tracks = stream.getTracks?.() ?? [];
+          const kinds = [...new Set(tracks.map(track => track.kind))].join(',') || 'unknown';
+          const hasVideo = tracks.some(track => track.kind === 'video');
+          sendPushReceipt({
+            callId,
+            stage: 'first_remote_track',
+            reason: `trackKinds:${kinds},hasVideo:${hasVideo}`,
+            sessionId: sessionIdRef.current,
+            signalingUrl: signalingUrl.trim(),
+          }).catch(error => {
+            logWarn('[CallFlow] first_remote_track receipt failed', { message: String(error) });
+          });
         }
         recoveryCallbacks.markCallConnected.current();
         updateStatus('Call connected', 'success');
@@ -282,6 +313,23 @@ export default function usePeerConnection({
       logInfo('[CallFlow] Peer connection state', { state });
       if (state === 'connected') {
         recoveryCallbacks.reportCallConnected.current(state);
+        const callId = activeCallIdRef.current;
+        if (callId && !remoteTrackReceivedRef.current && !missingRemoteTrackTimerRef.current) {
+          missingRemoteTrackTimerRef.current = setTimeout(() => {
+            missingRemoteTrackTimerRef.current = null;
+            if (remoteTrackReceivedRef.current || activeCallIdRef.current !== callId) return;
+            sendPushReceipt({
+              callId,
+              stage: 'remote_track_missing',
+              reason: 'no_ontrack_after_5000ms',
+              durationMs: 5000,
+              sessionId: sessionIdRef.current,
+              signalingUrl: signalingUrl.trim(),
+            }).catch(error => {
+              logWarn('[CallFlow] remote_track_missing receipt failed', { message: String(error) });
+            });
+          }, 5000);
+        }
       } else if (state === 'disconnected' || state === 'failed') {
         recoveryCallbacks.noteRecoverySymptom.current(
           state === 'failed' ? 'ice-failure' : 'ice-disconnected',
@@ -322,6 +370,7 @@ export default function usePeerConnection({
     setRemoteStream,
     signalingRef,
     signalingUrl,
+    sessionIdRef,
     socketRef,
     updateStatus,
   ]);
