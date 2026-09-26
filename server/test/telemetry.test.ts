@@ -741,6 +741,21 @@ test('call_setup_latency_ms is observed from the shared createdAt for a remote a
   assert.equal(snap.counters.calls_accepted, 1);
 });
 
+test('call_ring_duration_ms is observed when a ringing call is accepted', () => {
+  const telemetry = createTelemetry();
+  const createdAt = new Date(Date.now() - 4_000).toISOString();
+
+  telemetry.recordCallTransition(callRecord({ status: 'accepted', createdAt }), 'ringing');
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_ring_duration_ms.count, 1);
+  assert.equal(snap.counters.call_ring_duration_shared, 1);
+  assert.equal(snap.counters.call_ring_duration_local, 0);
+  assert.equal(snap.counters.call_ring_duration_unmeasured, 0);
+  assert.equal(snap.counters.call_ring_duration_skew_rejected, 0);
+  assert.equal(snap.counters.call_ring_duration_answered_elsewhere, 0);
+});
+
 test('recordRtcBufferOutcome keeps same-instance and cross-instance losses apart', () => {
   const telemetry = createTelemetry();
 
