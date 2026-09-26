@@ -756,6 +756,7 @@ export default function useCallFlow({
     localStreamRef,
     signalingRef,
     signalingUrl,
+    sessionIdRef,
     socketRef,
     setRemoteStream,
     ensureIceSessionId,

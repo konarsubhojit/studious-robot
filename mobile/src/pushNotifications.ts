@@ -86,6 +86,8 @@ const RECEIPT_STAGES = new Set([
   'offer_sent',
   'answer_sent',
   'media_connected',
+  'first_remote_track',
+  'remote_track_missing',
   'connection_created',
 ]);
 // Message pushes report the same `received` stage plus what the device did

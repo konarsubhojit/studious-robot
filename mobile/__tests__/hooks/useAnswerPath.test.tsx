@@ -118,7 +118,17 @@ beforeEach(() => {
 
 describe('useAnswerPath', () => {
   test('accepted audio mode reaches permission checks and media acquisition', async () => {
-    const { resultRef, params, signaling } = setup();
+    const incomingCall = {
+      callId: 'call-1',
+      callerId: 'bob',
+      calleeId: 'alice',
+      status: 'ringing',
+      mediaType: 'audio',
+    };
+    const { resultRef, params, signaling } = setup({
+      incomingCall,
+      incomingCallRef: { current: incomingCall },
+    });
     signaling.request.mockResolvedValue({
       call: { ...params.incomingCall, status: 'accepted', mediaType: 'audio' } as any,
     });
@@ -126,6 +136,28 @@ describe('useAnswerPath', () => {
     expect(require('../../src/permissions').getMissingCallPermissions).toHaveBeenCalledWith('audio');
     expect(params.startLocalPreview).toHaveBeenCalledWith('audio');
     expect(params.setActiveCall).toHaveBeenCalledWith(expect.objectContaining({ mediaType: 'audio' }));
+  });
+
+  test('prepares local media and the peer connection before accepting so an early offer is answerable', async () => {
+    const calls: string[] = [];
+    const { params, resultRef, signaling } = setup({
+      startLocalPreview: jest.fn(async () => {
+        calls.push('media');
+        return {};
+      }),
+      ensurePeerConnection: jest.fn(async () => {
+        calls.push('peer');
+        return {};
+      }),
+    });
+    signaling.request.mockImplementation(async () => {
+      calls.push('accept');
+      return { call: { ...params.incomingCall, status: 'accepted' } };
+    });
+
+    await act(async () => { await resultRef.current.acceptIncomingCall(); });
+
+    expect(calls).toEqual(['media', 'peer', 'accept']);
   });
   test('skips a duplicate accept without calling the server', async () => {
     const answeredCallIdsRef = { current: new Set(['call-1']) };
