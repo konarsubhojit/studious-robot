@@ -366,16 +366,15 @@ function createTelemetry(): Telemetry {
     signaling_errors: 0, // acknowledgeError / error ack responses
     message_persist_errors: 0, // accepted messages that failed durable persistence
     // These two mirror the diagnostic query that first surfaced the
-    // read-without-delivery defect (see docs/messages.md or the incident that
-    // added them): `messages_persisted_total` is every newly inserted
-    // message, `messages_delivery_marks_issued_total` is every time the
-    // idempotent `delivered_to @> array[$1]` guard was *issued* — whether or
-    // not it changed anything — across all three paths that can write it
-    // (immediate online delivery, an explicit delivery receipt, and the
-    // read-implies-delivery backfill in `markRead`). A growing gap between
-    // them, persisting well past the read-side delay a recipient can
-    // plausibly still catch up on, is exactly the shape of the regression
-    // this pair exists to catch without a database query.
+    // read-without-delivery defect: `messages_persisted_total` is every
+    // newly inserted message, `messages_delivery_marks_issued_total` is
+    // every time the idempotent `delivered_to @> array[$1]` guard was
+    // *issued* — whether or not it changed anything — across all paths that
+    // can write it (immediate online delivery, an explicit delivery
+    // receipt, and the read-implies-delivery backfill in `markRead`). A
+    // growing gap between them, persisting well past the read-side delay a
+    // recipient can plausibly still catch up on, is exactly the shape of
+    // the regression this pair exists to catch without a database query.
     messages_persisted_total: 0,
     messages_delivery_marks_issued_total: 0,
     cache_hits: 0, // read served from the shared read cache
