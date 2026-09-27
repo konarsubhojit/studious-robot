@@ -347,6 +347,33 @@ describe('useScreenShare', () => {
     );
   });
 
+  test('puts the camera back on the sender when the share fails to start', async () => {
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: makeTrack('video'),
+      audioTrack: makeTrack('audio'),
+      audioShared: true,
+    });
+    const { resultRef, params, sender, cameraTrack, peerConnection } = setup();
+    // The screen track is already on the sender by the time the audio sender
+    // fails to attach.
+    peerConnection.addTrack.mockImplementationOnce(() => {
+      throw new Error('peer connection is closed');
+    });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    // Without the restore the sender would stay pinned to the stopped screen
+    // track and the remote peer would see its last frame for the whole call.
+    expect(sender.replaceTrack).toHaveBeenLastCalledWith(cameraTrack);
+    expect(cameraTrack.enabled).toBe(true);
+    expect(resultRef.current.isScreenSharing).toBe(false);
+    expect(params.setStatus).toHaveBeenCalledWith('Unable to start screen sharing', 'error');
+  });
+
   test('requires an active peer connection', async () => {
     const { resultRef, params } = setup();
     params.peerConnectionRef.current = null;

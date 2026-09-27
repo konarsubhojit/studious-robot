@@ -339,7 +339,16 @@ async function verifyScreenShareDelivery({
   setStatus(audioShared ? 'Sharing screen with audio' : 'Sharing screen', 'success');
 }
 
-function resetFailedScreenShareStart({
+/**
+ * Undo a half-applied share after `startScreenShare` threw.
+ *
+ * The throw can happen after the senders were already attached, so the peer
+ * connection is put back the way a normal stop would leave it — otherwise a
+ * sender stays pinned to the stopped screen track and the remote peer sees
+ * its last frame for the rest of the call.
+ */
+async function resetFailedScreenShareStart({
+  pc,
   stream,
   screenStreamRef,
   screenVideoTrackRef,
@@ -353,6 +362,7 @@ function resetFailedScreenShareStart({
   setScreenShareDelivery,
   setStatus,
 }: {
+  pc: any;
   stream: any;
   screenStreamRef: MutableValue;
   screenVideoTrackRef: MutableValue;
@@ -367,6 +377,17 @@ function resetFailedScreenShareStart({
   setStatus: UseScreenShareParams['setStatus'];
 }) {
   stopScreenCapture(stream);
+  await removeScreenSender(pc, screenAudioSenderRef.current, 'audio');
+  if (screenVideoSenderAddedRef.current) {
+    await removeScreenSender(pc, screenVideoSenderRef.current, 'video');
+  } else {
+    await restoreCameraTrack(
+      pc,
+      cameraTrackRef.current,
+      screenVideoSenderRef.current,
+      previousVideoParametersRef.current,
+    );
+  }
   screenStreamRef.current = null;
   screenVideoTrackRef.current = null;
   screenAudioSenderRef.current = null;
@@ -412,15 +433,13 @@ export default function useScreenShare({
   const [screenShareDelivery, setScreenShareDelivery] =
     useState<ScreenShareDelivery>('idle');
   // User preference: include screen (system) audio with the next share.
-  const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(
-    isScreenAudioCaptureSupported,
-  );
+  const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(() =>
+    isScreenAudioCaptureSupported());
   // Whether asking for screen audio is worth offering at all. Starts true and
   // flips once a capture has shown this runtime never returns an audio track,
   // so the control can say so instead of silently dropping the request.
-  const [isScreenAudioSupported, setIsScreenAudioSupported] = useState(
-    isScreenAudioCaptureSupported,
-  );
+  const [isScreenAudioSupported, setIsScreenAudioSupported] = useState(() =>
+    isScreenAudioCaptureSupported());
 
   const screenStreamRef = useRef((null as any));
   const screenVideoTrackRef = useRef((null as any));
@@ -559,7 +578,8 @@ export default function useScreenShare({
       });
     } catch (error) {
       logError('Failed to start screen sharing', error);
-      resetFailedScreenShareStart({
+      await resetFailedScreenShareStart({
+        pc,
         stream,
         screenStreamRef,
         screenVideoTrackRef,
