@@ -115,6 +115,10 @@ The right shape, if this ships, is a native Android capture module exposing
 `startScreenAudioCapture()` / `stopScreenAudioCapture()` to JS, with UI,
 signalling, call state, and business logic staying in React Native.
 
+The rewrite request is evaluated in full — including the one seam a native app
+does open, and the staged plan and tracker that apply if it is taken — in the
+[native Android client plan](./android-native-client-plan.md).
+
 ## 5. Spike protocol — ordered to fail fast
 
 Run this in a **throwaway app, not this repository**, and on real hardware. The

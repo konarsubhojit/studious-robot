@@ -2,6 +2,7 @@
 
 | Document | Coverage |
 | --- | --- |
+| [Android native client plan](./android-native-client-plan.md) | Whether an Android-native client is warranted, the spike gate that decides it, and the staged plan and work tracker if it is. |
 | [Android system audio decision](./android-system-audio-decision.md) | Why screen sharing ships without system audio, the three trade-offs, and the fail-fast spike protocol. |
 | [Azure setup](./AZURE_SETUP.md) | Configure Azure Notification Hubs and Cosmos DB. |
 | [Complexity baseline](./complexity-baseline.md) | Baselines cognitive complexity at 15 and maps the debt to decomposition phases. |
