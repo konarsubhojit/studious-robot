@@ -450,6 +450,11 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     }
 
     if (updated > 0) {
+      // Every message `markRead` touched had its `delivered_to` guard issued
+      // in the same statement (see pgStore's combined markRead) — a read
+      // implies delivery, so this counts toward the same total as an
+      // explicit delivery mark.
+      state.telemetry.recordMessageDeliveryMarksIssued(updated);
       // Read receipts change both the reader's and the sender's unread counts.
       await invalidateCache(
         state,

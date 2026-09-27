@@ -468,9 +468,20 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
       // together, or a crash between them leaves the counter stale until the
       // next message re-derives it.
       return db.transaction(async (tx) => {
+        // A read is only possible once the message has reached this device,
+        // so it implies delivery even when no separate delivery receipt was
+        // ever issued (e.g. the conversation was already open). Backfilling
+        // `delivered_to` here — with the same idempotent `@>` guard used by
+        // `markDelivered` — keeps that invariant true without a second
+        // round-trip on this already-hot write path.
         const updated = await tx
           .update(messagesTable)
-          .set({ readAt: nextTimestamp() })
+          .set({
+            readAt: nextTimestamp(),
+            deliveredTo: sql`case when ${messagesTable.deliveredTo} @> array[${userId}]::text[]
+              then ${messagesTable.deliveredTo}
+              else array_append(${messagesTable.deliveredTo}, ${userId}) end`,
+          })
           .where(
             and(
               eq(messagesTable.conversationId, conversationId),
