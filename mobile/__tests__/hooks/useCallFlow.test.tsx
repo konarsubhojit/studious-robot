@@ -5341,7 +5341,7 @@ describe('useCallFlow answer path', () => {
     const socketMock = latestSocket();
     socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.accept') {
-        cb?.({ ok: true, call: { ...call, status: 'accepted' } });
+        Promise.resolve().then(() => cb?.({ ok: true, call: { ...call, status: 'accepted' } }));
         return;
       }
       cb?.({ ok: true });
@@ -5551,10 +5551,9 @@ describe('useCallFlow answer path', () => {
     await ring(resultRef, tree, call);
 
     const socketMock = latestSocket();
-    let ack: any = null;
     socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.accept') {
-        ack = cb;
+        cb?.({ ok: true, call: { ...call, status: 'accepted' } });
         return;
       }
       cb?.({ ok: true });
@@ -5563,8 +5562,6 @@ describe('useCallFlow answer path', () => {
     await act(async () => {
       const first = resultRef.current.acceptIncomingCall();
       const second = resultRef.current.acceptIncomingCall();
-      await Promise.resolve();
-      ack?.({ ok: true, call: { ...call, status: 'accepted' } });
       await Promise.all([first, second]);
     });
     act(() => {
