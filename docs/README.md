@@ -2,8 +2,8 @@
 
 | Document | Coverage |
 | --- | --- |
-| [Android native client plan](./android-native-client-plan.md) | Whether an Android-native client is warranted, the spike gate that decides it, and the staged plan and work tracker if it is. |
-| [Android system audio decision](./android-system-audio-decision.md) | Why screen sharing ships without system audio, the three trade-offs, and the fail-fast spike protocol. |
+| [Android native client plan](./android-native-client-plan.md) | Superseded: why an Android-native client was considered for system audio, and why it is no longer warranted. |
+| [Android system audio decision](./android-system-audio-decision.md) | How screen sharing carries system audio on Android, what it costs, and what still needs a device to verify. |
 | [Azure setup](./AZURE_SETUP.md) | Configure Azure Notification Hubs and Cosmos DB. |
 | [Complexity baseline](./complexity-baseline.md) | Baselines cognitive complexity at 15 and maps the debt to decomposition phases. |
 | [End-to-end encryption design](./e2ee-design.md) | Threat model, subsystem impact and the go/no-go decision for end-to-end encrypted messages and attachments. |

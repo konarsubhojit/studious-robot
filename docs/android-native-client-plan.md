@@ -7,15 +7,20 @@ agent sessions: every phase has a scope, deliverables, acceptance criteria and
 an exit gate, and [§9](#9-work-item-tracker) is the tracker those sessions
 update.
 
-> **Status: not authorized to start. Blocked on gate D0.**
-> The stated motivation does not survive contact with the evidence already
-> recorded in [Android system audio — capability decision](./android-system-audio-decision.md):
-> React Native is **not** what blocks system audio, so "go native" is not by
-> itself a fix. Exactly one native-only seam might unlock it
-> ([§3](#3-the-one-thing-native-actually-buys)), and it is unverified. Run the
-> D0 spike ([§4](#4-gate-d0--the-only-work-authorized-today)) and record its
-> result here before any phase below is opened as an issue. Until then this
-> document is an option, not a roadmap.
+> **Status: not authorized to start. The motivating feature has shipped
+> without it.**
+> The stated motivation does not survive contact with the evidence in
+> [Android system audio — capability decision](./android-system-audio-decision.md):
+> React Native was **not** what blocked system audio. Screen sharing now
+> carries system audio in the React Native app, using a seam in the WebRTC
+> build that needs neither a native client nor two `PeerConnectionFactory`
+> instances ([§3](#3-what-native-would-have-bought)). Gate D0 is therefore
+> closed: its question has been answered another way.
+>
+> Nothing below is opened as an issue. This document is retained because the
+> parity surface, contract-fidelity rules and risk register in §6, §7 and §10
+> remain the right analysis should a native client be proposed again — but it
+> would now need a motivation of its own, and system audio is not one.
 
 ---
 
@@ -57,7 +62,19 @@ None of those five facts mention React Native. Kotlin does not change any of
 them. Anything a rewrite can do about system audio, a native module inside the
 existing app can do too — with one exception, which is the next section.
 
-## 3. The one thing native actually buys
+## 3. What native would have bought
+
+> **Superseded.** This section argued that a native client's one real advantage
+> was a two-factory topology, because `react-native-webrtc` owned its
+> `PeerConnectionFactory` and exposed no hook. **That premise was wrong.**
+> `react-native-webrtc` reads `WebRTCModuleOptions.audioDeviceModule` and
+> passes it to `PeerConnectionFactory.Builder.setAudioDeviceModule()`, so a
+> React Native app can supply its own audio device module — which is exactly
+> how system audio shipped. The shipped design does not need two factories at
+> all: it mixes system audio into the microphone buffer, so one track carries
+> both. See [decision record §3](./android-system-audio-decision.md#3-what-was-actually-blocking-it).
+>
+> The analysis is kept below as the record of a rejected design.
 
 `react-native-webrtc` owns its `PeerConnectionFactory`: the app never
 constructs one and cannot pass `PeerConnectionFactory.Builder.setAudioDeviceModule()`.
@@ -99,10 +116,14 @@ the UI framework.
 
 ### 3.1 Static verification — done, and repeatable
 
-Every API fact above and in the decision record's §3 has been re-verified
-against the real bytecode of `org.jitsi:webrtc:124.0.0`, and the inspection is
-now a script rather than prose: [`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md).
-It needs no Android SDK, emulator or device, and it runs in about a minute.
+> **Superseded.** The table below describes `org.jitsi:webrtc:124.0.0` and the
+> shadowing approach it made necessary. The app no longer uses that AAR or that
+> approach. [`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md)
+> has been rewritten to assert the facts the shipped design depends on instead.
+
+Every API fact above and in the decision record's §3 was verified against the
+real bytecode of `org.jitsi:webrtc:124.0.0`, by an earlier revision of
+`tools/webrtc-audio-probe`.
 
 | Verified claim | Consequence |
 | --- | --- |
@@ -133,15 +154,26 @@ This does not change the go/no-go, but it materially raises the cost of the
 someone books device time.
 
 
-## 4. Gate D0 — the only work authorized today
+## 4. Gate D0 — closed
 
-Run the spike protocol in
-[android-system-audio-decision.md §5](./android-system-audio-decision.md#5-spike-protocol--ordered-to-fail-fast),
-in a throwaway app, on real hardware, extended by one step:
+> **Closed, not run.** D0 existed to find out whether system audio was
+> reachable at all. It is: the React Native app ships it. D0.1 (can a tone
+> traverse a WebRTC audio track from a shadowed `WebRtcAudioRecord`) and D0.3
+> (can two factories coexist) are questions about a design that was not taken,
+> and answering them would buy nothing.
+>
+> The device verification that *is* still outstanding belongs to the shipped
+> implementation and is listed in
+> [decision record §5](./android-system-audio-decision.md#5-what-still-needs-hardware).
+>
+> The original gate follows, unchanged, for the record.
+
+Run the spike protocol in the decision record, in a throwaway app, on real
+hardware, extended by one step:
 
 | Step | Question | Fail ⇒ |
 | --- | --- | --- |
-| D0.0 | *(desk, no device)* Do the libwebrtc API seams still exist? `tools/webrtc-audio-probe/probe.sh` | Seam closed ⇒ stop; system audio needs a custom libwebrtc build on either stack. **Status: run, 9/9 passing at `org.jitsi:webrtc:124.0.0` — see §3.1.** |
+| D0.0 | *(desk, no device)* Do the libwebrtc API seams still exist? `tools/webrtc-audio-probe/probe.sh` | Seam closed ⇒ stop; system audio needs a custom libwebrtc build on either stack. **Status: run, and it answered more than it was asked — a different seam exists in a different libwebrtc build, which is what closed this gate.** |
 | D0.1 | Does a synthetic tone pushed through a shadowed `WebRtcAudioRecord` reach a second device? | Stop. No rewrite can help. Record the result and close this document. |
 | D0.2 | Can a live microphone track survive alongside it in **one** factory? | Expected to fail; proceed to D0.3. |
 | D0.3 | *(native-only, new)* Do two `PeerConnectionFactory` instances with two ADMs coexist, one mic and one playback capture, with both tracks live on two peer connections? | Native buys nothing. Choose option 1 or 3 of the decision record and close this document. |
@@ -316,19 +348,24 @@ session-sized unit. Status is `blocked` / `ready` / `in progress` / `done` /
 | ID | Item | Phase | Depends on | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
 | AN-00 | This plan | — | — | done | Written; premise corrected in §1. |
-| AN-01a | Static API verification, scripted | D0 | AN-00 | done | `tools/webrtc-audio-probe`, 9/9 at `webrtc:124.0.0`. Seams confirmed open; §3 step 1 de-risked; no-upstream-sources risk found (§3.1). |
-| AN-01b | Run D0.1–D0.4 on hardware, record result in §4 | D0 | AN-01a | blocked | Needs a human with two Android devices. CI cannot do this. Budget the shadow-authoring cost in §3.1. |
-| AN-02 | Choose delivery shape A/B/C, record the reason in §5 | D1 | AN-01b | blocked | If B, the reason must not be system audio or video calling. |
-| AN-03 | Gradle/Compose skeleton under `android/` | P0 | AN-02 = B | blocked | |
-| AN-04 | Screen-audio capture module | P1 | AN-01b green | blocked | Lands in `mobile/android/` under shape A. |
-| AN-05 | Second-connection signalling | P2 | AN-04 | blocked | |
-| AN-06 | Socket/REST/auth/session | P3 | AN-03 | blocked | |
-| AN-07 | Room store and outbox | P4 | AN-03 | blocked | |
-| AN-08 | Calling parity | P5 | AN-06 | blocked | Largest single item; split on first contact. |
-| AN-09 | Messaging parity | P6 | AN-06, AN-07 | blocked | |
-| AN-10 | Attachments and media | P7 | AN-06, AN-07 | blocked | |
-| AN-11 | UI, accessibility, install migration | P8 | AN-08, AN-09, AN-10 | blocked | |
-| AN-12 | Release, rollout, retirement statement | P9 | AN-11 | blocked | |
+| AN-01a | Static API verification, scripted | D0 | AN-00 | done | Superseded. The probe now asserts the shipped design's seam, not the shadowing one. |
+| AN-01b | Run D0.1–D0.4 on hardware, record result in §4 | D0 | AN-01a | dropped | D0 closed: system audio shipped without the two-factory design, so D0.1/D0.3 ask about a path not taken. |
+| AN-02 | Choose delivery shape A/B/C, record the reason in §5 | D1 | AN-01b | dropped | D1 was reached only through D0. A native client would now need a fresh motivation. |
+| AN-03 | Gradle/Compose skeleton under `android/` | P0 | AN-02 = B | dropped | |
+| AN-04 | Screen-audio capture module | P1 | AN-01b green | done | Shipped as shape A: `mobile/android/app/src/main/java/com/wetalk/screenaudio/`. No second connection needed. |
+| AN-05 | Second-connection signalling | P2 | AN-04 | dropped | Unnecessary: the mix rides the existing microphone track, so there is no second connection and no signalling change. |
+| AN-06 | Socket/REST/auth/session | P3 | AN-03 | dropped | |
+| AN-07 | Room store and outbox | P4 | AN-03 | dropped | |
+| AN-08 | Calling parity | P5 | AN-06 | dropped | |
+| AN-09 | Messaging parity | P6 | AN-06, AN-07 | dropped | |
+| AN-10 | Attachments and media | P7 | AN-06, AN-07 | dropped | |
+| AN-11 | UI, accessibility, install migration | P8 | AN-08, AN-09, AN-10 | dropped | |
+| AN-12 | Release, rollout, retirement statement | P9 | AN-11 | dropped | |
+
+Every `dropped` row above is dropped for the same reason: the rewrite was
+proposed to unlock system audio, and system audio shipped without it. They are
+kept rather than deleted so a future proposal starts from what was considered,
+not from scratch.
 
 Rules for sessions picking up a row:
 
@@ -355,8 +392,9 @@ Rules for sessions picking up a row:
 
 ## 11. What must not be claimed
 
-- That the native app "adds system audio". Until D0 is green, nothing adds
-  system audio, on either stack.
+- That the native app "adds system audio". The React Native app already has it
+  ([decision record](./android-system-audio-decision.md)); a native client adds
+  nothing here.
 - That system audio, once shipped, works everywhere: playback capture is
   opt-out per source app (`ALLOW_CAPTURE_BY_NONE`) and never available for DRM
   audio ([decision record §6](./android-system-audio-decision.md#6-capture-is-never-universally-available)).
@@ -367,12 +405,14 @@ Rules for sessions picking up a row:
 
 ## 12. Verification note
 
-The libwebrtc API facts in §3.1 **are** verified, mechanically, by
-[`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md) — 9/9 checks
-passing against `org.jitsi:webrtc:124.0.0`. Re-run it on any WebRTC bump.
+The libwebrtc API facts in §3.1 were verified mechanically against
+`org.jitsi:webrtc:124.0.0`. They remain true of that AAR; the app no longer uses
+it. [`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md) now
+asserts the facts the shipped implementation depends on instead.
 
-Everything else is desk analysis over this repository. Nothing in §4's D0.1–D0.4
-is runtime-verified: CI has no Android device or emulator, and an API being
-*shaped* to permit something is not evidence that it works. The line counts and
-file counts in §1 and §6 were measured over `mobile/src` and `mobile/__tests__`
-at the time of writing.
+Everything else here is desk analysis over this repository, and nothing in §4's
+D0.1–D0.4 was ever runtime-verified — those questions are now moot. The device
+verification that still matters is
+[decision record §5](./android-system-audio-decision.md#5-what-still-needs-hardware).
+The line counts and file counts in §1 and §6 were measured over `mobile/src`
+and `mobile/__tests__` at the time of writing.

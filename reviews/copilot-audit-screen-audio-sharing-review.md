@@ -98,3 +98,8 @@ mutating each branch and re-running the suite).
   (`setAudioSource(int)` only), so there is no supported way to push captured
   PCM into a WebRTC audio track from Java. That is why this diff makes the app
   honest about the limit rather than pretending to fix it.
+  _Superseded: true of `org.jitsi:webrtc:124`, but not of libwebrtc generally.
+  `io.github.webrtc-sdk`'s `JavaAudioDeviceModule` has an `AudioBufferCallback`,
+  and Android system audio now ships through it — see
+  [the decision record](../docs/android-system-audio-decision.md). The rest of
+  this review stands._

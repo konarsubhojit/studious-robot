@@ -1,7 +1,9 @@
 import React from 'react';
+import { NativeModules, Platform } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import useCallAudioRouting from '../../src/hooks/useCallAudioRouting';
 import { AUDIO_ROUTES } from '../../src/audioRouting';
+import { resetSystemAudioState, startSystemAudio } from '../../src/screenAudio';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -45,9 +47,9 @@ function TestHook({ resultRef, params }: any) {
 }
 
 function makeStream(audioEnabled = true): any {
-  return {
-    getTracks: jest.fn(() => [{ kind: 'audio', enabled: audioEnabled }]),
-  };
+  // One stable track, so a test can assert what the hook left `enabled` at.
+  const tracks = [{ kind: 'audio', enabled: audioEnabled }];
+  return { getTracks: jest.fn(() => tracks) };
 }
 
 function setup(overrides: any = {}) {
@@ -177,5 +179,60 @@ describe('useCallAudioRouting', () => {
       AUDIO_ROUTES.EARPIECE,
       AUDIO_ROUTES.SPEAKER_PHONE,
     ]);
+  });
+});
+
+describe('useCallAudioRouting while system audio is shared', () => {
+  const originalPlatform = Platform.OS;
+  let native: Record<string, jest.Mock>;
+
+  beforeEach(async () => {
+    Platform.OS = 'android';
+    resetSystemAudioState();
+    native = {
+      start: jest.fn().mockResolvedValue({ installed: true, state: 'CAPTURING', sharing: true }),
+      stop: jest.fn().mockResolvedValue({ installed: true, state: 'IDLE', sharing: false }),
+      getStatus: jest.fn().mockResolvedValue({ installed: true, state: 'CAPTURING' }),
+      setMicrophoneMuted: jest.fn().mockResolvedValue(true),
+    };
+    (NativeModules as Record<string, unknown>).ScreenAudio = native;
+    await startSystemAudio();
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    Platform.OS = originalPlatform;
+    delete (NativeModules as Record<string, unknown>).ScreenAudio;
+    resetSystemAudioState();
+  });
+
+  test('mutes at the audio device module and leaves the shared audio audible', async () => {
+    const stream = makeStream(true);
+    const { resultRef, params } = setup({ localStreamRef: { current: stream } });
+
+    act(() => {
+      resultRef.current.handleMuteToggle();
+    });
+    await act(async () => {});
+
+    expect(native.setMicrophoneMuted).toHaveBeenCalledWith(true);
+    // Disabling the track would take the mixed system audio down with it.
+    expect(stream.getTracks()[0].enabled).toBe(true);
+    expect(params.setIsMuted).toHaveBeenCalledWith(true);
+  });
+
+  test('still mutes when there is no local stream to disable', async () => {
+    const { resultRef, params } = setup({ localStreamRef: { current: null } });
+
+    act(() => {
+      resultRef.current.handleMuteToggle();
+    });
+    await act(async () => {});
+
+    expect(native.setMicrophoneMuted).toHaveBeenCalledWith(true);
+    expect(params.updateStatus).not.toHaveBeenCalledWith(
+      'Start preview to control audio',
+      'error',
+    );
   });
 });

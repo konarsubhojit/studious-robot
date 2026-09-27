@@ -1,16 +1,21 @@
 # Android screen-share system audio — capability decision
 
-Decision record for the "share system audio with the screen" request. This is a
-design decision and a spike protocol, not an implementation authorization.
+Decision record for the "share system audio with the screen" request, and a
+description of how the shipped implementation works.
 
-> **Status: no-go, pending a spike.** Android system audio is **not shipped**.
-> The UI says so rather than offering a toggle that cannot work
-> (`mobile/src/screenShare.ts`, `mobile/src/hooks/useScreenShare.ts`). Shipping
-> it requires accepting one of the three trade-offs in §4, and option 1 — the
-> only one achievable without owning a libwebrtc build — contradicts the
-> "muting the microphone must not mute system audio" requirement. Run the spike
-> in §5 before choosing. Do not start by writing a `patch-package` patch; §3
-> explains why that cannot work.
+> **Status: implemented on Android, not yet device-verified.** Sharing the
+> screen now also shares what the device is playing, by mixing captured
+> playback into the microphone buffer WebRTC is already sending
+> ([§3](#3-what-was-actually-blocking-it)). This needs no libwebrtc fork, no
+> second peer connection and **no renegotiation**, and muting the microphone
+> leaves the shared audio audible. iOS remains video-only.
+>
+> An earlier revision of this record concluded *no-go*. That conclusion rested
+> on a property of the bundled WebRTC build, not of Android or of React Native,
+> and [§3.1](#31-what-changed) records what changed. Every API fact below is
+> asserted by [`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md)
+> against real bytecode; what remains unverified is listed in
+> [§7](#7-verification-status).
 
 ## 1. Symptom and first-order cause
 
@@ -33,134 +38,157 @@ iOS drops it the same way (`WebRTCModule+RTCMediaStream.m`, single
 `RTCVideoTrack`). Upstream `react-native-webrtc` has not implemented
 display-media audio in any release up to 124.0.8.
 
-## 2. What the receive side already supports
+Fixing those three layers is not enough on its own, which is what §3 is about.
 
-Worth stating because it is *not* the blocker, and a future implementation
-should not re-litigate it:
+## 2. What the receive side already supported
+
+Worth stating because it was never the blocker:
 
 - `usePeerConnection.ts` `ontrack` already detects an additional audio-only
   remote stream and merges it into the active remote stream
   (`isAdditionalAudioOnlyRemoteStream` / `mergeScreenAudioTracks`).
-- Mute is scoped to the local camera/mic stream via
-  `setTrackEnabled(stream, 'audio', …)` in `mobile/src/mediaControls.ts`, so it
-  cannot reach a separate screen-audio sender.
-- `useScreenShare` already adds the screen-audio track as an independent sender
-  and renegotiates, and removes only that sender on stop.
+- `useScreenShare` already added a screen-audio track as an independent sender
+  and renegotiated, and removed only that sender on stop.
 
-The send side is shaped for this feature. The constraint is below it.
+The shipped implementation does not use either path — the shared audio arrives
+on the existing microphone track — but both remain correct and are what a
+future separate-track implementation would build on.
 
-## 3. Why a `patch-package` patch cannot deliver it
+## 3. What was actually blocking it
 
-Patching `react-native-webrtc` to forward the constraint and build an
-`AudioRecord` would get you PCM, and then leave you with nowhere to put it. The
-wall is one layer further down, in libwebrtc itself. From `javap` over the
-bundled `org.jitsi:webrtc:124.0.0` AAR:
+Forwarding the constraint and building an `AudioRecord` would produce PCM and
+then leave nowhere to put it. libwebrtc has no external or push audio source:
+`PeerConnectionFactory.createAudioSource(MediaConstraints)` is the only way to
+construct an `AudioSource` and it always binds the process-global audio device
+module, whose interface exposes nothing but a native pointer. That much is
+still true, and the probe still asserts it.
 
-- `PeerConnectionFactory.createAudioSource(MediaConstraints)` is the only way to
-  construct an `AudioSource`, and it always binds the process-global audio
-  device module. There is no external, push, or custom audio source.
-- `JavaAudioDeviceModule.Builder` accepts only `setAudioSource(int)` — a
-  `MediaRecorder.AudioSource` constant. An `AudioPlaybackCaptureConfiguration`
-  cannot be expressed as one. `SamplesReadyCallback` reads samples *out*, not in.
-- The `AudioDeviceModule` interface exposes only
-  `getNativeAudioDeviceModulePointer()`, so a replacement must be a C++ object.
-  The AAR ships prebuilt `.so` files and a jar with **no headers** — there is
-  nothing to compile against.
-- Subclassing the Java plumbing does not help either.
-  `JavaAudioDeviceModule`'s private constructor and its
-  `nativeCreateAudioDeviceModule` JNI entry point both take the **concrete**
-  `org.webrtc.audio.WebRtcAudioRecord` type, and the methods JNI drives
-  (`initRecording`, `createAudioRecordOnMOrHigher`) are `private`.
+The blocker was therefore never React Native, Android, or the app's
+architecture. It was that **the bundled WebRTC build exposed no seam to reach
+the audio the device is already sending.** `org.jitsi:webrtc:124.0.0` has none.
 
-There is exactly one Java-level seam. `WebRtcAudioRecord` is package-private and
-non-final, so an app can **shadow** it — ship a copy at the same package and
-class name in its own source set, which Gradle's classpath ordering puts ahead
-of the AAR — and build the `AudioRecord` inside it with
-`setAudioPlaybackCaptureConfig(...)`. This is what community threads mean by
-"modify `WebRtcAudioRecord.java`".
+### 3.1 What changed
 
-**That seam costs the microphone.** The ADM is one input stream per
-`PeerConnectionFactory`, and every audio track that factory creates reads from
-it. Capture playback through it and the mic is gone.
-`PeerConnectionFactory.Builder.setAudioDeviceModule()` makes a second factory
-with a second ADM look tempting, but native objects are not interchangeable
-across factories: a track from factory B cannot be attached to a peer
-connection from factory A. Two independent local audio tracks is not something
-this stack does.
+`io.github.webrtc-sdk:android` — the libwebrtc build used by LiveKit and
+flutter-webrtc — exposes one:
 
-## 4. The three honest outcomes
+```java
+JavaAudioDeviceModule.Builder.setAudioBufferCallback(AudioBufferCallback)
+long onBuffer(ByteBuffer buffer, int audioFormat, int channelCount,
+              int sampleRate, int bytesRead, long captureTimeNs)
+```
 
-Pick one **before** spiking, so the spike confirms a decision rather than
-discovering it.
+It hands out the recording buffer itself, once per 10 ms. Three properties of
+where it sits — all asserted by the probe against bytecode — are what make the
+feature work rather than merely be expressible:
 
-| # | Approach | Gets | Costs |
-| --- | --- | --- | --- |
-| 1 | Mix mic + playback PCM into the single shadowed ADM stream | System audio reaches the far end; no custom libwebrtc; existing call flow unchanged | One audio track. Muting the mic mutes system audio, and the far end cannot balance them. Contradicts the separate-track requirement. |
-| 2 | Custom libwebrtc build exposing an external audio source | Genuinely separate mic and system-audio tracks | Ownership of a native toolchain, four-ABI cross-compilation, and a security-patch treadmill on a codebase with a live CVE stream. |
-| 3 | Do not ship system audio on Android | No new surface or maintenance | Feature absent, honestly labelled. **Current state.** |
+1. **It runs after the microphone has been read**, so system audio can be
+   *added* to real microphone audio instead of replacing it. One track carries
+   both; no second sender, no SDP change, and therefore **no renegotiation**.
+2. **It runs after libwebrtc zeroes the buffer for a muted microphone.** Muting
+   the microphone silences the microphone and leaves shared system audio
+   audible. This is the requirement the earlier revision of this record
+   believed was unsatisfiable without a custom libwebrtc build.
+3. **It runs before the buffer is handed to native code**, so the mix is what
+   gets encoded.
+
+`react-native-webrtc` already reads `WebRTCModuleOptions.audioDeviceModule` and
+passes it to `PeerConnectionFactory.Builder.setAudioDeviceModule()`, so the app
+can supply such a module without patching the module's factory code at all —
+correcting the earlier claim that react-native-webrtc owns its factory and
+exposes no hook.
+
+### 3.2 How it is assembled
+
+| Piece | Where | Does |
+| --- | --- | --- |
+| Dependency substitution | `mobile/android/build.gradle` | Replaces `org.jitsi:webrtc` with `io.github.webrtc-sdk:android`, the build that has the seam. |
+| `ScreenAudioDevice` | `mobile/android/app/src/main/java/com/wetalk/screenaudio/` | Builds a `JavaAudioDeviceModule` carrying the mixer and installs it in `WebRTCModuleOptions` from `Application.onCreate`, before the WebRTC module is constructed. |
+| `SystemAudioCapture` | same | `AudioPlaybackCaptureConfiguration` + `AudioRecord`, at the exact sample rate and channel count WebRTC reports, so nothing is resampled. |
+| `PcmRingBuffer` | same | Bounded FIFO between the capture thread and WebRTC's recording thread. Drops the oldest audio on overflow, so a stall is a glitch rather than permanent drift. |
+| `PcmMixer` / `ScreenAudioMixer` | same | Adds the two 16-bit streams with clamping, using absolute `ByteBuffer` accessors so the buffer's cursor is never disturbed. |
+| `react-native-webrtc` patch | `mobile/patches/react-native-webrtc+124.0.7.patch` | Publishes the running screen capture's `MediaProjection`. |
+| `screenAudio.ts` | `mobile/src/` | JS façade; no-ops without the native module, so iOS and tests need no branching. |
+
+**The projection must be borrowed, not requested.** Android permits one
+`MediaProjection` at a time and stops the existing one when a new one starts, so
+asking the user for a second consent would stop the very screen share the audio
+was meant to accompany. That is the only reason a patch to
+`react-native-webrtc` is involved: `ScreenCapturerAndroid.getMediaProjection()`
+is public, but the capturer holding it is not reachable from outside.
+
+**Mute has to be routed.** Both streams travel on one track, so disabling that
+track would silence both. While system audio is being shared,
+`useCallAudioRouting` mutes at the audio device module instead, which property 2
+above makes correct.
+
+## 4. What this does and does not buy
+
+| | |
+| --- | --- |
+| **Gets** | System audio reaches the far end. No custom libwebrtc, no second peer connection, no signalling change — an unmodified peer hears it. Mute stays independent. |
+| **Costs** | One track: the far end cannot balance microphone against system audio separately. The WebRTC AAR version becomes load-bearing, because the seam is not a stable public contract — hence the probe. |
+| **Does not address** | iOS, which needs a Broadcast Upload Extension and is a separate piece of work. |
+
+Genuinely separate tracks would still need a custom libwebrtc build exposing an
+external audio source, with the native-toolchain ownership and security-patch
+treadmill that implies. Nothing here forecloses that; it is simply not the
+price this feature is worth.
 
 ### On rewriting in Kotlin
 
-A full Kotlin rewrite does **not** improve this. A native app links the same
-libwebrtc and inherits the same single-ADM constraint. React Native is not in
-the audio path at all; the bridge is not what blocks this. A rewrite arrives at
-exactly these three options, months later.
-
-The corollary: even under option 2, maintaining a custom libwebrtc does not
-argue for going native. The custom build sits under a thin Kotlin capture module
-either way, with React Native on the other side of it. The two decisions are
-independent, and coupling them turns this into a rewrite that was never needed.
-
-The right shape, if this ships, is a native Android capture module exposing
-`startScreenAudioCapture()` / `stopScreenAudioCapture()` to JS, with UI,
-signalling, call state, and business logic staying in React Native.
-
-The rewrite request is evaluated in full — including the one seam a native app
-does open, and the staged plan and tracker that apply if it is taken — in the
+A full Kotlin rewrite would not have helped, and the shipped implementation
+demonstrates why: React Native was never in the audio path. The capture module
+is Kotlin either way, with UI, signalling and call state on the other side of
+the bridge. The rewrite request is evaluated in full in the
 [native Android client plan](./android-native-client-plan.md).
 
-## 5. Spike protocol — ordered to fail fast
+## 5. What still needs hardware
 
-Run this in a **throwaway app, not this repository**, and on real hardware. The
-obvious ordering (MediaProjection → `AudioPlaybackCaptureConfiguration` →
-`AudioRecord` → WebRTC) hides the only step that can fail and will look like it
-is succeeding until the last moment. Those first steps are ordinary,
-well-documented Android; they are not the hard part. Invert it:
+CI has no Android device or emulator, so the following are reasoned and
+statically verified but **not observed**. Test against an app that permits
+capture *and* one that sets `ALLOW_CAPTURE_BY_NONE`, on API 29+:
 
-1. **Prove the sink before the source.** Shadow `WebRtcAudioRecord` in
-   `org.webrtc.audio` and feed it a **synthetic tone**, not real playback
-   capture. Confirm a second device hears it. *Decision gate — if a sine wave
-   will not traverse a WebRTC audio track, no amount of correct MediaProjection
-   code will help, and you have learned it in a day instead of a fortnight.*
-2. **Try to keep a live microphone track at the same time.** Expect it to die.
-   This is the finding that settles the architecture, and it is step 7 in the
-   naive ordering — far too late.
-3. **Only then** wire up real `MediaProjection` +
-   `AudioPlaybackCaptureConfiguration`. Gate to **API 29+**; this app's
-   `minSdkVersion` is 24. Test against an app that permits capture *and* one
-   that sets `ALLOW_CAPTURE_BY_NONE`.
-4. Return with the chosen option from §4. The JS side is already shaped for the
-   result: `screenShare.ts` learns the capability at runtime rather than
-   assuming it, and the receive path in §2 already merges a second audio track.
+1. That `AudioPlaybackCaptureConfiguration` initialises against a projection
+   created by another component, and that Android 14's foreground-service type
+   rules accept it.
+2. That the mixed audio is intelligible: no clipping, no drift, and that the
+   capture and recording clocks stay close enough that ring-buffer overflows
+   stay rare.
+3. That muting the microphone leaves shared audio audible, end to end.
+4. That local playback leaking back into the microphone is tolerable. The far
+   end hears the shared audio twice — once mixed, once through the room — and
+   whether the echo canceller handles this is a device question.
+5. That the four states in §6 are each reachable and correctly reported.
 
 ## 6. Capture is never universally available
 
-Even with a working implementation, playback capture is opt-out **per source
-app**: anything setting `ALLOW_CAPTURE_BY_NONE` is silently unrecordable, and
-DRM-protected audio never is. Any implementation must therefore distinguish four
-states rather than a boolean — capture supported; supported but nothing
-capturable is playing; user denied MediaProjection; platform/device cannot do
-playback capture at all. Do not document or present system audio as guaranteed.
+Playback capture is opt-out **per source app**: anything setting
+`ALLOW_CAPTURE_BY_NONE` is silently unrecordable, and DRM-protected audio never
+is. The implementation therefore distinguishes four states rather than a
+boolean, in `ScreenAudioState` and its JS mirror:
 
-## 7. Verification note
+| State | Means |
+| --- | --- |
+| `unsupported_platform` | Below API 29, or no mixing audio device module. |
+| `unavailable` | No screen share to borrow a projection from, or capture was refused. |
+| `capturing` | Running, and audio has been heard. |
+| `silent` | Running, but everything captured has been digital silence — nothing is playing, or the source app blocks capture. |
 
-Everything above is from source and binary inspection. The API facts in §3 are
-now re-checkable on demand: [`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md)
-asserts them against the real AAR bytecode (9/9 passing at
-`org.jitsi:webrtc:124.0.0`) and should be re-run on any WebRTC version bump. One
-finding it adds: the published `webrtc-124.0.0-sources.jar` is a stub, so a
-shadowed `WebRtcAudioRecord` must be reimplemented rather than patched — see the
-[native client plan §3.1](./android-native-client-plan.md#31-static-verification--done-and-repeatable).
+`silent` is the state that matters: the UI says "no system audio captured yet"
+rather than promising audio the far end will never receive. Do not document or
+present system audio as guaranteed.
 
-The runtime behaviour is still unverified: CI has no Android device or emulator,
-so §5 needs a human with hardware.
+## 7. Verification status
+
+| Claim | How verified |
+| --- | --- |
+| The seam exists, has the expected signature, and sits between mute-zeroing and the native handoff | `tools/webrtc-audio-probe/probe.sh` — 11 assertions over real bytecode, including a bytecode **ordering** check |
+| The substituted AAR is a drop-in for `react-native-webrtc` | Public-API diff (0 classes missing; 3 unrelated member differences) plus a clean `javac` of every `react-native-webrtc` Java source against both AARs |
+| Ring buffer and PCM mixing arithmetic | Executed on a JVM: overflow, wrap-around, clamping, endianness and buffer-cursor behaviour |
+| JS façade, capability reporting, mute routing, start/stop unwind | Jest — `mobile/__tests__/screenAudio.test.ts` and the hook suites |
+| **Everything in §5** | **Not verified. Needs a device.** |
+
+Re-run the probe on any WebRTC version bump. A failure there means system-audio
+sharing is broken on that version, and the substitution in
+`mobile/android/build.gradle` must not be moved to it.

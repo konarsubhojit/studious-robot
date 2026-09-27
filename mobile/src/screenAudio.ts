@@ -98,16 +98,12 @@ function isNativeScreenAudio(value: unknown): value is NativeScreenAudio {
   );
 }
 
-/**
- * The native module, or `null` on any platform or build without it.
- *
- * Resolved once: `NativeModules` is fixed for the lifetime of the JS context.
- */
-const nativeScreenAudio: NativeScreenAudio | null = (() => {
+/** The native module, or `null` on any platform or build without it. */
+function getNativeModule(): NativeScreenAudio | null {
   if (Platform.OS !== 'android') return null;
   const candidate = (NativeModules as Record<string, unknown> | undefined)?.ScreenAudio;
   return isNativeScreenAudio(candidate) ? candidate : null;
-})();
+}
 
 const UNAVAILABLE_STATUS: SystemAudioStatus = {
   installed: false,
@@ -155,7 +151,7 @@ let microphoneMuted = false;
  * produces sound is a separate question, answered by {@link startSystemAudio}.
  */
 export function isSystemAudioSupported(): boolean {
-  return nativeScreenAudio !== null;
+  return getNativeModule() !== null;
 }
 
 /** Whether system audio is being mixed into the call right now. */
@@ -184,14 +180,15 @@ export function resetSystemAudioState(): void {
  * Never throws — a share that cannot carry audio still has to carry video.
  */
 export async function startSystemAudio(): Promise<SystemAudioStatus> {
-  if (!nativeScreenAudio) return UNAVAILABLE_STATUS;
+  const native = getNativeModule();
+  if (!native) return UNAVAILABLE_STATUS;
   try {
-    const status = toStatus(await nativeScreenAudio.start());
+    const status = toStatus(await native.start());
     sharing = status.sharing;
     if (sharing) {
       // The mute now has to be carried by the audio device module; the caller
       // re-enables the track it was previously applied to.
-      await nativeScreenAudio.setMicrophoneMuted(microphoneMuted);
+      await native.setMicrophoneMuted(microphoneMuted);
     }
     logInfo('System audio sharing start attempted', {
       state: status.state,
@@ -208,15 +205,16 @@ export async function startSystemAudio(): Promise<SystemAudioStatus> {
 
 /** Stop mixing system audio. Safe to call when nothing is running. */
 export async function stopSystemAudio(): Promise<void> {
-  if (!nativeScreenAudio || !sharing) {
+  const native = getNativeModule();
+  if (!native || !sharing) {
     sharing = false;
     return;
   }
   sharing = false;
   try {
     // Hand the mute back to the track the caller is about to restore.
-    await nativeScreenAudio.setMicrophoneMuted(false);
-    await nativeScreenAudio.stop();
+    await native.setMicrophoneMuted(false);
+    await native.stop();
     logInfo('System audio sharing stopped');
   } catch (error) {
     logWarn('System audio sharing failed to stop cleanly', { message: errorMessage(error) });
@@ -228,9 +226,10 @@ export async function stopSystemAudio(): Promise<void> {
  * produced no sound.
  */
 export async function getSystemAudioStatus(): Promise<SystemAudioStatus> {
-  if (!nativeScreenAudio) return UNAVAILABLE_STATUS;
+  const native = getNativeModule();
+  if (!native) return UNAVAILABLE_STATUS;
   try {
-    return { ...toStatus(await nativeScreenAudio.getStatus()), sharing };
+    return { ...toStatus(await native.getStatus()), sharing };
   } catch (error) {
     logWarn('Unable to read system audio status', { message: errorMessage(error) });
     return UNAVAILABLE_STATUS;
@@ -247,8 +246,9 @@ export async function getSystemAudioStatus(): Promise<SystemAudioStatus> {
  */
 export function applyMicrophoneMute(muted: boolean): boolean {
   microphoneMuted = muted;
-  if (!nativeScreenAudio || !sharing) return false;
-  nativeScreenAudio.setMicrophoneMuted(muted).catch(error => {
+  const native = getNativeModule();
+  if (!native || !sharing) return false;
+  native.setMicrophoneMuted(muted).catch(error => {
     logWarn('Unable to mute the microphone natively', { message: errorMessage(error) });
   });
   return true;

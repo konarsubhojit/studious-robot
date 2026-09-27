@@ -123,33 +123,15 @@ internal class ScreenAudioMixer : JavaAudioDeviceModule.AudioBufferCallback {
   }
 
   private fun mixInto(buffer: ByteBuffer) {
-    // `buffer` is shared with native code, which reads it from index 0 for
-    // `capacity()` bytes and ignores position/limit. Only absolute accessors
-    // are used so the buffer's own cursor is never disturbed.
     val frameBytes = buffer.capacity()
     if (scratch.size < frameBytes) scratch = ByteArray(frameBytes)
     val available = capture.buffer.read(scratch, frameBytes)
-    if (available < BYTES_PER_SAMPLE) return
-    var index = 0
-    while (index + 1 < available) {
-      val microphone = readSample(buffer.get(index), buffer.get(index + 1))
-      val system = readSample(scratch[index], scratch[index + 1])
-      val mixed = (microphone + system).coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-      buffer.put(index, (mixed and 0xFF).toByte())
-      buffer.put(index + 1, ((mixed shr 8) and 0xFF).toByte())
-      index += BYTES_PER_SAMPLE
-    }
+    if (available < PcmMixer.BYTES_PER_SAMPLE) return
+    PcmMixer.mix(buffer, scratch, available)
     mixedFrames++
   }
 
   private companion object {
     const val TAG = "ScreenAudio"
-    const val BYTES_PER_SAMPLE = 2
-
-    /** Decode one little-endian signed 16-bit sample. */
-    fun readSample(
-      low: Byte,
-      high: Byte,
-    ): Int = (high.toInt() shl 8) or (low.toInt() and 0xFF)
   }
 }

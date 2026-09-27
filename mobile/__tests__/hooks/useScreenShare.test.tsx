@@ -1,6 +1,8 @@
 import React from 'react';
+import { NativeModules, Platform } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import useScreenShare from '../../src/hooks/useScreenShare';
+import { applyMicrophoneMute, resetSystemAudioState } from '../../src/screenAudio';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -52,7 +54,12 @@ function setup({
     addTrack: jest.fn((track: any) => (track?.kind === 'audio' ? audioSender : addedVideoSender)),
     removeTrack: jest.fn(),
   };
-  const localStream = { addTrack: jest.fn(), removeTrack: jest.fn() };
+  const microphoneTrack = makeTrack('audio');
+  const localStream = {
+    addTrack: jest.fn(),
+    removeTrack: jest.fn(),
+    getTracks: () => [microphoneTrack],
+  };
   const params: any = {
     peerConnectionRef: { current: peerConnection },
     localStreamRef: { current: localStream },
@@ -77,6 +84,7 @@ function setup({
     addedVideoSender,
     cameraTrack,
     localStream,
+    microphoneTrack,
   };
 }
 
@@ -595,5 +603,173 @@ describe('useScreenShare in-flight state', () => {
 
     expect(resultRef.current.isTogglingScreenShare).toBe(false);
     expect(resultRef.current.isScreenSharing).toBe(true);
+  });
+});
+
+describe('useScreenShare with the native system-audio mixer', () => {
+  const originalPlatform = Platform.OS;
+
+  function installMixer(overrides: Record<string, unknown> = {}) {
+    const native = {
+      start: jest.fn().mockResolvedValue({
+        installed: true,
+        state: 'CAPTURING',
+        sharing: true,
+        mixedFrames: 100,
+      }),
+      stop: jest.fn().mockResolvedValue({ installed: true, state: 'IDLE', sharing: false }),
+      getStatus: jest.fn().mockResolvedValue({ installed: true, state: 'CAPTURING' }),
+      setMicrophoneMuted: jest.fn().mockResolvedValue(true),
+      ...overrides,
+    };
+    (NativeModules as Record<string, unknown>).ScreenAudio = native;
+    return native;
+  }
+
+  function captureWithoutAudioTrack() {
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: makeTrack('video'),
+      audioTrack: null,
+      audioShared: false,
+    });
+  }
+
+  beforeEach(() => {
+    Platform.OS = 'android';
+    resetSystemAudioState();
+  });
+
+  afterEach(() => {
+    Platform.OS = originalPlatform;
+    delete (NativeModules as Record<string, unknown>).ScreenAudio;
+  });
+
+  test('mixes system audio instead of asking getDisplayMedia for a track', async () => {
+    const native = installMixer();
+    captureWithoutAudioTrack();
+    const { resultRef, params, peerConnection } = setup();
+
+    await act(async () => {
+      await resultRef.current.startScreenShare();
+    });
+
+    // Asking for an audio track the platform never returns would teach the app
+    // that screen audio is impossible and disable the option for the session.
+    expect(screenShare.startScreenCapture).toHaveBeenCalledWith({ withAudio: false });
+    expect(native.start).toHaveBeenCalled();
+    expect(resultRef.current.isScreenAudioShared).toBe(true);
+    // The mix rides the existing microphone track, so no extra sender exists.
+    expect(peerConnection.addTrack).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'audio' }),
+      expect.anything(),
+    );
+    expect(params.setStatus).toHaveBeenLastCalledWith('Sharing screen with audio', 'success');
+  });
+
+  test('offers screen audio even after a capture returned no audio track', async () => {
+    installMixer();
+    (screenShare.isScreenAudioCaptureSupported as jest.Mock).mockReturnValue(false);
+    captureWithoutAudioTrack();
+    const { resultRef } = setup();
+
+    await act(async () => {
+      await resultRef.current.startScreenShare();
+    });
+
+    expect(resultRef.current.isScreenAudioSupported).toBe(true);
+  });
+
+  test('warns with the reason when the mixer cannot start', async () => {
+    installMixer({
+      start: jest.fn().mockResolvedValue({
+        installed: true,
+        state: 'UNAVAILABLE',
+        sharing: false,
+        reason: 'No screen share is running',
+      }),
+    });
+    captureWithoutAudioTrack();
+    const { resultRef, params } = setup();
+
+    await act(async () => {
+      await resultRef.current.startScreenShare();
+    });
+
+    expect(resultRef.current.isScreenAudioShared).toBe(false);
+    expect(params.setStatus).toHaveBeenLastCalledWith(
+      'Screen sharing started without system audio: No screen share is running.',
+      'warning',
+    );
+  });
+
+  test('does not promise audio while the capture is hearing only silence', async () => {
+    installMixer({
+      start: jest
+        .fn()
+        .mockResolvedValue({ installed: true, state: 'SILENT', sharing: true, mixedFrames: 0 }),
+    });
+    captureWithoutAudioTrack();
+    const { resultRef, params } = setup();
+
+    await act(async () => {
+      await resultRef.current.startScreenShare();
+    });
+
+    expect(params.setStatus).toHaveBeenLastCalledWith(
+      'Sharing screen. No system audio captured yet — some apps block audio capture.',
+      'warning',
+    );
+  });
+
+  test('re-enables a muted microphone track so the mix is not silenced with it', async () => {
+    const native = installMixer();
+    captureWithoutAudioTrack();
+    const { resultRef, microphoneTrack } = setup();
+    // Muting before the share disabled the track; the mix travels on it.
+    applyMicrophoneMute(true);
+    microphoneTrack.enabled = false;
+
+    await act(async () => {
+      await resultRef.current.startScreenShare();
+    });
+
+    expect(microphoneTrack.enabled).toBe(true);
+    expect(native.setMicrophoneMuted).toHaveBeenCalledWith(true);
+  });
+
+  test('hands the mute back to the track when the share stops', async () => {
+    const native = installMixer();
+    captureWithoutAudioTrack();
+    const { resultRef, microphoneTrack } = setup();
+    applyMicrophoneMute(true);
+
+    await act(async () => {
+      await resultRef.current.startScreenShare();
+    });
+    expect(microphoneTrack.enabled).toBe(true);
+
+    await act(async () => {
+      await resultRef.current.stopScreenShare();
+    });
+
+    expect(native.stop).toHaveBeenCalled();
+    expect(microphoneTrack.enabled).toBe(false);
+  });
+
+  test('stops the mix when the share fails to attach', async () => {
+    const native = installMixer();
+    captureWithoutAudioTrack();
+    const { resultRef, peerConnection } = setup();
+    peerConnection.removeTrack.mockImplementation(() => undefined);
+    (screenShare.verifyScreenShareFrames as jest.Mock).mockRejectedValue(new Error('attach failed'));
+
+    await act(async () => {
+      await resultRef.current.startScreenShare();
+    });
+
+    expect(native.stop).toHaveBeenCalled();
+    expect(resultRef.current.isScreenAudioShared).toBe(false);
   });
 });

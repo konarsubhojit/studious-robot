@@ -163,6 +163,7 @@ any failure.  Run them before opening a pull request.
 | `mobile` | `__tests__/hooks/useCompactCallView.test.tsx` | PiP compact-view logic                               |
 | `mobile` | `__tests__/hooks/useScreenShare.test.tsx` | Screen sharing start/stop, optional screen audio + renegotiation |
 | `mobile` | `__tests__/screenShare.test.ts`       | `getDisplayMedia` capture, audio fallback, cancellation      |
+| `mobile` | `__tests__/screenAudio.test.ts`       | Android system-audio mixer lifecycle, status, mute routing   |
 | `mobile` | `__tests__/components/SettingsScreen.test.tsx` | Settings screen (username/server edit, sign out) |
 | `mobile` | `__tests__/pushNotifications.test.ts`  | Deep links + push-token acquisition/registration            |
 | `mobile` | `__tests__/components/`               | Incoming/outgoing/in-call UI components                      |
