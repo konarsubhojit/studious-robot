@@ -318,6 +318,9 @@ consent dialog through `getDisplayMedia` and, once granted:
 - keeps the camera track alive but disabled, so the previous video source is
   restored instantly when sharing stops (also when the user stops the share
   from the OS overlay);
+- on an **audio-only call** there is no video sender to borrow, so one is
+  added for the share and removed again on stop — left in place it would keep
+  the remote peer on the last captured frame for the rest of the call;
 - disables the camera on/off and camera-switch buttons while sharing.
 
 ### Encoding tuned for screen content

@@ -40,6 +40,8 @@ type ScreenShareResources = {
   cameraTrack: any;
   audioSender: any;
   videoSender: any;
+  /** Whether {@link attachScreenVideo} created `videoSender` for the share. */
+  addedVideoSender: boolean;
   previousVideoParameters: any;
 };
 
@@ -49,6 +51,7 @@ function takeScreenShareResources(refs: {
   screenAudioSender: MutableValue;
   cameraTrack: MutableValue;
   screenVideoSender: MutableValue;
+  screenVideoSenderAdded: MutableValue<boolean>;
   previousVideoParameters: MutableValue;
 }): ScreenShareResources {
   const resources = {
@@ -57,6 +60,7 @@ function takeScreenShareResources(refs: {
     cameraTrack: refs.cameraTrack.current,
     audioSender: refs.screenAudioSender.current,
     videoSender: refs.screenVideoSender.current,
+    addedVideoSender: refs.screenVideoSenderAdded.current,
     previousVideoParameters: refs.previousVideoParameters.current,
   };
   refs.screenStream.current = null;
@@ -64,6 +68,7 @@ function takeScreenShareResources(refs: {
   refs.screenAudioSender.current = null;
   refs.cameraTrack.current = null;
   refs.screenVideoSender.current = null;
+  refs.screenVideoSenderAdded.current = false;
   refs.previousVideoParameters.current = null;
   return resources;
 }
@@ -82,13 +87,18 @@ function resetScreenShareState({
   setScreenShareDelivery('idle');
 }
 
-async function removeScreenAudioSender(pc: any, audioSender: any) {
-  if (!pc || !audioSender) return;
+/**
+ * Detach and drop a sender that only existed for the share.
+ *
+ * @param kind - names the sender in the log line when removal fails.
+ */
+async function removeScreenSender(pc: any, sender: any, kind: 'audio' | 'video') {
+  if (!pc || !sender) return;
   try {
-    await audioSender.replaceTrack?.(null);
-    pc.removeTrack?.(audioSender);
+    await sender.replaceTrack?.(null);
+    pc.removeTrack?.(sender);
   } catch (error) {
-    logWarn('Failed to remove screen audio sender', {
+    logWarn(`Failed to remove screen ${kind} sender`, {
       message: errorMessage(error),
     });
   }
@@ -239,7 +249,14 @@ async function attachScreenVideo(pc: any, stream: any, videoTrack: any) {
   });
   if (cameraTrack) cameraTrack.enabled = false;
   const previousVideoParameters = applyScreenEncodingHints(videoTrack, sender);
-  return { cameraTrack, videoSender: sender, previousVideoParameters };
+  return {
+    cameraTrack,
+    videoSender: sender,
+    // An audio-only call has no video sender to borrow, so one is created for
+    // the share and has to be taken away again when it ends.
+    addedVideoSender: !existingSender && Boolean(sender),
+    previousVideoParameters,
+  };
 }
 
 function attachScreenAudio(pc: any, stream: any, audioTrack: any) {
@@ -329,6 +346,7 @@ function resetFailedScreenShareStart({
   screenAudioSenderRef,
   cameraTrackRef,
   screenVideoSenderRef,
+  screenVideoSenderAddedRef,
   previousVideoParametersRef,
   setIsScreenSharing,
   setIsScreenAudioShared,
@@ -341,6 +359,7 @@ function resetFailedScreenShareStart({
   screenAudioSenderRef: MutableValue;
   cameraTrackRef: MutableValue;
   screenVideoSenderRef: MutableValue;
+  screenVideoSenderAddedRef: MutableValue<boolean>;
   previousVideoParametersRef: MutableValue;
   setIsScreenSharing: (value: boolean) => void;
   setIsScreenAudioShared: (value: boolean) => void;
@@ -352,6 +371,7 @@ function resetFailedScreenShareStart({
   screenVideoTrackRef.current = null;
   screenAudioSenderRef.current = null;
   screenVideoSenderRef.current = null;
+  screenVideoSenderAddedRef.current = false;
   previousVideoParametersRef.current = null;
   if (cameraTrackRef.current) {
     cameraTrackRef.current.enabled = true;
@@ -407,6 +427,7 @@ export default function useScreenShare({
   const screenAudioSenderRef = useRef((null as any));
   const cameraTrackRef = useRef((null as any));
   const screenVideoSenderRef = useRef((null as any));
+  const screenVideoSenderAddedRef = useRef(false);
   const previousVideoParametersRef = useRef((null as any));
   const isTogglingRef = useRef(false);
   // Mirrored into state because the control has to *look* busy: the toggle
@@ -435,6 +456,7 @@ export default function useScreenShare({
         screenAudioSender: screenAudioSenderRef,
         cameraTrack: cameraTrackRef,
         screenVideoSender: screenVideoSenderRef,
+        screenVideoSenderAdded: screenVideoSenderAddedRef,
         previousVideoParameters: previousVideoParametersRef,
       });
 
@@ -444,13 +466,20 @@ export default function useScreenShare({
       }
 
       const pc = peerConnectionRef.current;
-      await removeScreenAudioSender(pc, resources.audioSender);
-      await restoreCameraTrack(
-        pc,
-        resources.cameraTrack,
-        resources.videoSender,
-        resources.previousVideoParameters,
-      );
+      await removeScreenSender(pc, resources.audioSender, 'audio');
+      if (resources.addedVideoSender) {
+        // Nothing to restore: leaving the sender in place would keep the
+        // remote peer staring at the last captured frame for the rest of an
+        // otherwise audio-only call.
+        await removeScreenSender(pc, resources.videoSender, 'video');
+      } else {
+        await restoreCameraTrack(
+          pc,
+          resources.cameraTrack,
+          resources.videoSender,
+          resources.previousVideoParameters,
+        );
+      }
       restoreLocalStream(
         localStreamRef.current,
         resources.screenVideoTrack,
@@ -495,13 +524,11 @@ export default function useScreenShare({
     const { stream, videoTrack, audioTrack, audioShared, audioFallbackReason } = capture as any;
 
     try {
-      const { cameraTrack, videoSender, previousVideoParameters } = await attachScreenVideo(
-        pc,
-        stream,
-        videoTrack,
-      );
+      const { cameraTrack, videoSender, addedVideoSender, previousVideoParameters } =
+        await attachScreenVideo(pc, stream, videoTrack);
       cameraTrackRef.current = cameraTrack;
       screenVideoSenderRef.current = videoSender;
+      screenVideoSenderAddedRef.current = addedVideoSender;
       previousVideoParametersRef.current = previousVideoParameters;
       const audioSender = attachScreenAudio(pc, stream, audioTrack);
       screenStreamRef.current = stream;
@@ -539,6 +566,7 @@ export default function useScreenShare({
         screenAudioSenderRef,
         cameraTrackRef,
         screenVideoSenderRef,
+        screenVideoSenderAddedRef,
         previousVideoParametersRef,
         setIsScreenSharing,
         setIsScreenAudioShared,

@@ -36,6 +36,8 @@ function setup({
   renegotiate = jest.fn(() => Promise.resolve()),
   senderSupportsParameters = true,
   initialParameters = { encodings: [{ maxBitrate: 500_000 }] } as any,
+  // An audio-only call has no video sender for the screen track to borrow.
+  hasCameraSender = true,
 } = {}) {
   const cameraTrack = makeTrack('video');
   const sender: any = { track: cameraTrack, replaceTrack: jest.fn(() => Promise.resolve()) };
@@ -44,9 +46,10 @@ function setup({
     sender.setParameters = jest.fn();
   }
   const audioSender = { replaceTrack: jest.fn(() => Promise.resolve()) };
+  const addedVideoSender = { replaceTrack: jest.fn(() => Promise.resolve()) };
   const peerConnection = {
-    getSenders: jest.fn(() => [sender]),
-    addTrack: jest.fn(() => audioSender),
+    getSenders: jest.fn(() => (hasCameraSender ? [sender] : [])),
+    addTrack: jest.fn((track: any) => (track?.kind === 'audio' ? audioSender : addedVideoSender)),
     removeTrack: jest.fn(),
   };
   const localStream = { addTrack: jest.fn(), removeTrack: jest.fn() };
@@ -65,7 +68,16 @@ function setup({
     renderer.create(<TestHook resultRef={resultRef} params={params} />);
   });
 
-  return { resultRef, params, peerConnection, sender, audioSender, cameraTrack, localStream };
+  return {
+    resultRef,
+    params,
+    peerConnection,
+    sender,
+    audioSender,
+    addedVideoSender,
+    cameraTrack,
+    localStream,
+  };
 }
 
 beforeEach(() => {
@@ -272,6 +284,33 @@ describe('useScreenShare', () => {
     expect(audioSender.replaceTrack).toHaveBeenCalledWith(null);
     expect(peerConnection.removeTrack).toHaveBeenCalledWith(audioSender);
     expect(renegotiate).toHaveBeenCalledTimes(2);
+  });
+
+  test('removes the video sender it added for an audio-only call on stop', async () => {
+    const screenVideoTrack = makeTrack('video');
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: screenVideoTrack,
+      audioTrack: null,
+      audioShared: false,
+    });
+    const { resultRef, peerConnection, addedVideoSender } = setup({ hasCameraSender: false });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(peerConnection.addTrack).toHaveBeenCalledWith(screenVideoTrack, { id: 'screen' });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    // Left in place, the sender would freeze the last captured frame on the
+    // remote side for the rest of the call.
+    expect(addedVideoSender.replaceTrack).toHaveBeenCalledWith(null);
+    expect(peerConnection.removeTrack).toHaveBeenCalledWith(addedVideoSender);
   });
 
   test('reports a cancelled capture without changing sharing state', async () => {
