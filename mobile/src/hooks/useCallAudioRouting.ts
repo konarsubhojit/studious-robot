@@ -20,6 +20,7 @@ import {
 import { errorMessage } from '../errors';
 import { triggerHaptic } from '../haptics';
 import { MediaStreamLike, setTrackEnabled } from '../mediaControls';
+import { applyMicrophoneMute, recordMicrophoneMute } from '../screenAudio';
 
 type AudioDeviceSnapshot = {
   available: readonly string[];
@@ -71,10 +72,18 @@ export default function useCallAudioRouting({
 
   const handleMuteToggle = useCallback(() => {
     const nextMuted = !isMuted;
-    if (!setTrackEnabled(localStreamRef.current, 'audio', !nextMuted)) {
+    // While system audio is being shared it is mixed into the microphone
+    // track, so disabling that track would silence the shared audio too. The
+    // audio device module mutes the microphone before the mix happens, which
+    // keeps the two independent.
+    const mutedNatively = applyMicrophoneMute(nextMuted);
+    if (!mutedNatively && !setTrackEnabled(localStreamRef.current, 'audio', !nextMuted)) {
       updateStatus('Start preview to control audio', 'error');
       return;
     }
+    // Only once the mute is genuinely in effect: the mirror is replayed onto
+    // whichever of the two paths is correct when sharing starts or stops.
+    recordMicrophoneMute(nextMuted);
     triggerHaptic('tap');
     setIsMuted(nextMuted);
 

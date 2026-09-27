@@ -6,6 +6,9 @@ buildscript {
         targetSdkVersion = 36
         ndkVersion = "27.1.12297006"
         kotlinVersion = "2.2.10"
+        // libwebrtc build substituted in below; the only one with the audio
+        // buffer callback that system-audio screen sharing mixes into.
+        webrtcSdkVersion = "125.6422.07"
     }
     repositories {
         google()
@@ -24,5 +27,22 @@ apply plugin: "com.facebook.react.rootproject"
 allprojects {
     dependencyLocking {
         lockAllConfigurations()
+    }
+
+    // react-native-webrtc depends on `org.jitsi:webrtc`, a libwebrtc build whose
+    // Java audio device module offers no way to reach the microphone buffer. That
+    // is the single reason screen sharing cannot carry system audio: there is no
+    // seam to mix captured playback into.
+    //
+    // `io.github.webrtc-sdk:android` is the same libwebrtc at a newer revision —
+    // a public-API superset of 124.0.0 for everything react-native-webrtc touches
+    // — and additionally exposes `JavaAudioDeviceModule.setAudioBufferCallback`,
+    // which is exactly that seam. See docs/android-system-audio-decision.md.
+    configurations.configureEach {
+        resolutionStrategy.dependencySubstitution {
+            substitute module("org.jitsi:webrtc") using
+                    module("io.github.webrtc-sdk:android:${rootProject.ext.webrtcSdkVersion}") because
+                    "Provides JavaAudioDeviceModule.AudioBufferCallback for system audio sharing"
+        }
     }
 }

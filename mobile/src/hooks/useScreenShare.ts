@@ -4,6 +4,15 @@ import type { CallStatus } from '../components/StatusBanner';
 import type { ScreenShareDelivery } from '../callUx';
 import { SCREEN_SHARE_UNVERIFIED_GUIDANCE } from '../callUx';
 import { errorMessage } from '../errors';
+import { setTrackEnabled } from '../mediaControls';
+import {
+  isMicrophoneMuted,
+  isSystemAudioSharing,
+  isSystemAudioSupported,
+  startSystemAudio,
+  stopSystemAudio,
+  type SystemAudioStatus,
+} from '../screenAudio';
 import {
   isScreenAudioCaptureSupported,
   isScreenShareSupported,
@@ -263,6 +272,31 @@ function attachScreenAudio(pc: any, stream: any, audioTrack: any) {
   return audioTrack ? pc.addTrack?.(audioTrack, stream) ?? null : null;
 }
 
+/**
+ * Start mixing the device's own audio into the call, when this build can.
+ *
+ * Unlike a `getDisplayMedia` audio track this needs no sender and no
+ * renegotiation: the mix rides the microphone track that is already being
+ * sent. The local audio track is re-enabled because mute moves to the audio
+ * device module for as long as the mix runs (see `screenAudio.ts`), and a
+ * disabled track would silence the shared audio along with the microphone.
+ *
+ * @returns the native outcome, or `null` when this build has no mixer.
+ */
+async function attachSystemAudio(localStream: any): Promise<SystemAudioStatus | null> {
+  if (!isSystemAudioSupported()) return null;
+  const status = await startSystemAudio();
+  if (status.sharing) setTrackEnabled(localStream, 'audio', true);
+  return status;
+}
+
+/** Stop the mix and hand mute back to the local audio track. */
+async function detachSystemAudio(localStream: any) {
+  if (!isSystemAudioSharing()) return;
+  await stopSystemAudio();
+  setTrackEnabled(localStream, 'audio', !isMicrophoneMuted());
+}
+
 function replaceLocalCamera(
   localStream: any,
   cameraTrack: any,
@@ -299,6 +333,7 @@ async function verifyScreenShareDelivery({
   isScreenAudioEnabled,
   audioShared,
   audioFallbackReason,
+  systemAudio,
   setStatus,
 }: {
   stream: any;
@@ -308,6 +343,7 @@ async function verifyScreenShareDelivery({
   isScreenAudioEnabled: boolean;
   audioShared: boolean;
   audioFallbackReason?: 'unsupported' | 'denied';
+  systemAudio?: SystemAudioStatus | null;
   setStatus: UseScreenShareParams['setStatus'];
 }) {
   await logScreenShareAudioRtpStats(peerConnectionRef.current, {
@@ -330,8 +366,17 @@ async function verifyScreenShareDelivery({
     setScreenShareDelivery(frameCheck.ok && frameCheck.verified ? 'confirmed' : 'unverified');
   }
   if (audioFallbackReason || (isScreenAudioEnabled && !audioShared)) {
+    const reason = systemAudio?.reason ?? `audio capture ${audioFallbackReason ?? 'unsupported'}`;
+    setStatus(`Screen sharing started without system audio: ${reason}.`, 'warning');
+    return;
+  }
+  // Android playback capture is opt-out per app, so a capture that is running
+  // is not the same as a capture that can hear anything: DRM-protected audio
+  // and apps that refuse capture come through as digital silence. Say so
+  // rather than promising audio the other side will never receive.
+  if (audioShared && systemAudio?.state === 'silent') {
     setStatus(
-      `Screen sharing started without system audio: audio capture ${audioFallbackReason ?? 'unsupported'}.`,
+      'Sharing screen. No system audio captured yet — some apps block audio capture.',
       'warning',
     );
     return;
@@ -350,6 +395,7 @@ async function verifyScreenShareDelivery({
 async function resetFailedScreenShareStart({
   pc,
   stream,
+  localStreamRef,
   screenStreamRef,
   screenVideoTrackRef,
   screenAudioSenderRef,
@@ -364,6 +410,7 @@ async function resetFailedScreenShareStart({
 }: {
   pc: any;
   stream: any;
+  localStreamRef: MutableValue;
   screenStreamRef: MutableValue;
   screenVideoTrackRef: MutableValue;
   screenAudioSenderRef: MutableValue;
@@ -376,6 +423,7 @@ async function resetFailedScreenShareStart({
   setScreenShareDelivery: (value: ScreenShareDelivery) => void;
   setStatus: UseScreenShareParams['setStatus'];
 }) {
+  await detachSystemAudio(localStreamRef.current);
   stopScreenCapture(stream);
   await removeScreenSender(pc, screenAudioSenderRef.current, 'audio');
   if (screenVideoSenderAddedRef.current) {
@@ -434,12 +482,12 @@ export default function useScreenShare({
     useState<ScreenShareDelivery>('idle');
   // User preference: include screen (system) audio with the next share.
   const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(() =>
-    isScreenAudioCaptureSupported());
+    isSystemAudioSupported() || isScreenAudioCaptureSupported());
   // Whether asking for screen audio is worth offering at all. Starts true and
   // flips once a capture has shown this runtime never returns an audio track,
   // so the control can say so instead of silently dropping the request.
   const [isScreenAudioSupported, setIsScreenAudioSupported] = useState(() =>
-    isScreenAudioCaptureSupported());
+    isSystemAudioSupported() || isScreenAudioCaptureSupported());
 
   const screenStreamRef = useRef((null as any));
   const screenVideoTrackRef = useRef((null as any));
@@ -480,9 +528,13 @@ export default function useScreenShare({
       });
 
       if (!resources.screenStream && !resources.screenVideoTrack) {
+        await detachSystemAudio(localStreamRef.current);
         resetScreenShareState({ setIsScreenSharing, setIsScreenAudioShared, setScreenShareDelivery });
         return;
       }
+
+      // Before the capture is torn down: the mix borrows its MediaProjection.
+      await detachSystemAudio(localStreamRef.current);
 
       const pc = peerConnectionRef.current;
       await removeScreenSender(pc, resources.audioSender, 'audio');
@@ -529,18 +581,29 @@ export default function useScreenShare({
       return;
     }
 
+    // When the native mixer is available it replaces the `getDisplayMedia`
+    // audio request outright. Asking for a track this runtime never returns
+    // would only teach `isScreenAudioCaptureSupported` that screen audio is
+    // impossible and disable the option for the rest of the session.
+    const usesSystemAudioMixer = isScreenAudioEnabled && isSystemAudioSupported();
     const capture = acceptedScreenCapture(
-      await startScreenCapture({ withAudio: isScreenAudioEnabled }),
+      await startScreenCapture({ withAudio: isScreenAudioEnabled && !usesSystemAudioMixer }),
       setStatus,
     );
     if (!capture) return;
-    // The capture is the only place the runtime's screen-audio capability
-    // becomes observable; publish it so the control can stop offering an
-    // option this device will never honour.
-    const audioCaptureSupported = isScreenAudioCaptureSupported();
+    // Without the mixer, the capture is the only place the runtime's
+    // screen-audio capability becomes observable; publish it so the control
+    // can stop offering an option this device will never honour.
+    const audioCaptureSupported = isSystemAudioSupported() || isScreenAudioCaptureSupported();
     setIsScreenAudioSupported(audioCaptureSupported);
     if (!audioCaptureSupported) setIsScreenAudioEnabled(false);
-    const { stream, videoTrack, audioTrack, audioShared, audioFallbackReason } = capture as any;
+    const {
+      stream,
+      videoTrack,
+      audioTrack,
+      audioShared: capturedAudioShared,
+      audioFallbackReason,
+    } = capture as any;
 
     try {
       const { cameraTrack, videoSender, addedVideoSender, previousVideoParameters } =
@@ -554,6 +617,13 @@ export default function useScreenShare({
       screenVideoTrackRef.current = videoTrack;
       screenAudioSenderRef.current = audioSender;
       replaceLocalCamera(localStreamRef.current, cameraTrack, videoTrack, setLocalStream);
+      // Started once the projection exists and before renegotiation, though it
+      // needs neither a sender nor an SDP change: the mix rides the microphone
+      // track the call is already sending.
+      const systemAudio = usesSystemAudioMixer
+        ? await attachSystemAudio(localStreamRef.current)
+        : null;
+      const audioShared = systemAudio ? systemAudio.sharing : Boolean(capturedAudioShared);
       // The OS "stop sharing" affordance ends the track directly.
       videoTrack.onended = () => {
         logInfo('Screen capture ended by the system');
@@ -574,6 +644,7 @@ export default function useScreenShare({
         isScreenAudioEnabled,
         audioShared,
         audioFallbackReason,
+        systemAudio,
         setStatus,
       });
     } catch (error) {
@@ -581,6 +652,7 @@ export default function useScreenShare({
       await resetFailedScreenShareStart({
         pc,
         stream,
+        localStreamRef,
         screenStreamRef,
         screenVideoTrackRef,
         screenAudioSenderRef,

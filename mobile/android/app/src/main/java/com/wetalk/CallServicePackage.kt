@@ -4,6 +4,7 @@ import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
+import com.wetalk.screenaudio.ScreenAudioModule
 
 class CallServicePackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
@@ -12,6 +13,7 @@ class CallServicePackage : ReactPackage {
       AttachmentOpenerModule(reactContext),
       IncomingCallNotificationModule(reactContext),
       MessageNotificationModule(reactContext),
+      ScreenAudioModule(reactContext),
     )
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> = emptyList()

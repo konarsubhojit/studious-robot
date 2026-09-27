@@ -7,6 +7,7 @@ import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.oney.WebRTCModule.WebRTCModuleOptions
+import com.wetalk.screenaudio.ScreenAudioDevice
 
 class MainApplication :
   Application(),
@@ -32,6 +33,12 @@ class MainApplication :
     // by default, and without it the remote peer receives a black video track.
     // Must be set before the WebRTC native module is initialised.
     WebRTCModuleOptions.getInstance().enableMediaProjectionService = true
+    // Screen sharing carries no audio on Android: `getDisplayMedia` returns a
+    // video-only stream. The fix is to mix the device's playback into the
+    // microphone buffer WebRTC already sends, which needs a custom audio device
+    // module. Also has to be set before the WebRTC native module is
+    // initialised, and degrades to plain video-only sharing if it fails.
+    ScreenAudioDevice.install(this)
     loadReactNative(this)
   }
 }

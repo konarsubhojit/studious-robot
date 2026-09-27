@@ -368,68 +368,64 @@ Next to the share button is a **screen audio** toggle, equivalent to the MS
 Teams _Include computer sound_ option. It applies to the next share and cannot
 be changed mid-share (that would churn the SDP).
 
-When enabled, the capture requests `{ video: true, audio: true }`. If the
-platform returns an audio track it is added as an **additional** sender — the
-microphone track is untouched, so mute keeps working independently. Stopping
-the share removes the sender and renegotiates once more.
+On **Android** the audio is captured natively and mixed into the microphone
+track the call is already sending, so there is no extra sender and **no
+renegotiation** — an unmodified peer hears it immediately. On every other
+platform the capture falls back to asking `getDisplayMedia` for an audio track;
+if one comes back it is added as an additional sender, and if not the share
+still starts and the UI says audio was not included.
 
-Screen audio is strictly best-effort: many Android builds and iOS (without a
-broadcast upload extension) only return a video track. In that case the share
-still starts and the UI shows a non-fatal _"screen audio unavailable on this
-device"_ warning. A denied/cancelled consent dialog is reported as a plain
-status message and leaves the call untouched.
+#### How Android system audio works
 
-**Known platform limit.** `react-native-webrtc` (124) declares
+`getDisplayMedia` cannot deliver it: `react-native-webrtc` declares
 `getDisplayMedia()` **without parameters**, so the constraints object never
 reaches the native module, and both native implementations build a video-only
-stream (`GetUserMediaImpl.createScreenStream` on Android,
-`WebRTCModule+RTCMediaStream.m` on iOS). No permission can change that — the
-manifest already carries `RECORD_AUDIO` and
-`FOREGROUND_SERVICE_MEDIA_PROJECTION`, which is everything Android's playback
-capture asks for.
+stream. No permission can change that — the manifest already carries
+`RECORD_AUDIO` and `FOREGROUND_SERVICE_MEDIA_PROJECTION`.
 
-Patching `react-native-webrtc` would not be enough either, so please don't
-start there. Android system audio has to arrive as PCM from an `AudioRecord`
-built with `AudioPlaybackCaptureConfiguration`, and the bundled
-`org.jitsi:webrtc:124` binary offers nowhere to put it:
+Patching `react-native-webrtc` to forward the constraint would produce PCM and
+leave nowhere to put it: libwebrtc has no external or push audio source. So the
+audio takes the other route. `com.wetalk.screenaudio` installs a custom
+`JavaAudioDeviceModule` (via `WebRTCModuleOptions.audioDeviceModule`, from
+`MainApplication.onCreate`) whose `AudioBufferCallback` receives the recording
+buffer every 10 ms, and adds playback captured with
+`AudioPlaybackCaptureConfiguration` into it.
 
-- `PeerConnectionFactory.createAudioSource(MediaConstraints)` is the only way
-  to make an `AudioSource`, and it always binds the process-global audio
-  device module (the microphone). There is no "external" or "push" source.
-- `JavaAudioDeviceModule.Builder` accepts only `setAudioSource(int)` — a
-  `MediaRecorder.AudioSource` constant. An `AudioPlaybackCaptureConfiguration`
-  cannot be expressed as one, and `SamplesReadyCallback` reads samples *out*
-  rather than feeding them in.
-- The `AudioDeviceModule` interface exposes just
-  `getNativeAudioDeviceModulePointer()`, so a replacement must be a C++
-  object. The AAR ships prebuilt `.so` files and a jar with no headers, so
-  there is nothing to compile against.
+Three things follow, and all three are load-bearing:
 
-Delivering system audio would therefore mean replacing the WebRTC binary with
-a custom libwebrtc build that exposes an external audio source — a
-supply-chain change well beyond a `patch-package` patch. Upstream
-`react-native-webrtc` has not implemented display-media audio in any release
-up to 124.0.8.
+- **The WebRTC build matters.** `mobile/android/build.gradle` substitutes
+  `org.jitsi:webrtc` with `io.github.webrtc-sdk:android`, which is the build
+  that has the callback. Run `tools/webrtc-audio-probe/probe.sh` before
+  changing that version; a failure there means system audio is broken on it.
+- **Mute is routed, not toggled.** Both streams share one track, so disabling
+  it would silence both. While sharing, `useCallAudioRouting` mutes at the
+  audio device module — libwebrtc zeroes the microphone *before* the mixing
+  callback runs, so the shared audio survives.
+- **The MediaProjection is borrowed.** Android allows one at a time and stops
+  the old one when a new one starts, so requesting separate consent for audio
+  would stop the screen share. `mobile/patches/react-native-webrtc+124.0.7.patch`
+  publishes the running capturer's projection so the capture can reuse it.
 
-There is one Java-level seam that avoids a custom build (shadowing
-`WebRtcAudioRecord`), but it costs the microphone, because the audio device
-module is a single input stream per `PeerConnectionFactory`. Before attempting
-any of this, read the
-[Android system audio decision](../docs/android-system-audio-decision.md): it
-records the three trade-offs and a spike protocol ordered so the step that
-actually fails is the first one you run.
+Playback capture is opt-out per source app (`ALLOW_CAPTURE_BY_NONE`) and never
+available for DRM audio, so "capturing" and "the far end can hear something"
+are different facts. `screenAudio.ts` reports four states rather than a
+boolean, and a capture that hears only silence says so instead of promising
+audio. iOS has no equivalent and stays video-only. The full design, and what
+still needs a device to verify, is in the
+[Android system audio decision](../docs/android-system-audio-decision.md).
 
-The capability therefore cannot be probed up front — `getDisplayMedia`
-ignores the `audio` key instead of rejecting — so `screenShare.ts` learns it
-from the first capture: a share that asked for audio and got none records the
-runtime as unable to capture it (`isScreenAudioCaptureSupported`). From then on
-the request is not repeated, `useScreenShare` clears the preference and reports
+#### When there is no native mixer
+
+Without it — iOS, or an older build — the capture asks `getDisplayMedia` for
+audio and learns the answer from the result, because the capability cannot be
+probed up front: `getDisplayMedia` ignores the `audio` key instead of
+rejecting. A share that asked for audio and got none records the runtime as
+unable to capture it (`isScreenAudioCaptureSupported`). From then on the
+request is not repeated, `useScreenShare` clears the preference and reports
 `isScreenAudioSupported: false`, and the sheet row reads _"Not supported on
 this device"_ instead of silently dropping the request and warning after every
 share. A refused consent never disables the option: it says nothing about the
-capability. If a future runtime does return an audio track, nothing is
-remembered and the option keeps working — the sender is added exactly as
-described above.
+capability.
 
 ### Required native setup
 
@@ -446,6 +442,14 @@ sharer's UI looks perfectly fine. Both platforms therefore need explicit setup:
   `loadReactNative`. The service posts a notification whose small icon is
   resolved by name, so `res/drawable/ic_notification.xml` must exist —
   `startForeground` fails without it and capture stays black.
+  System audio adds three more requirements, all checked by
+  `tools/webrtc-audio-probe/probe.sh`: the WebRTC substitution in
+  `android/build.gradle` (keep `app/gradle.lockfile` in step with it), the
+  `react-native-webrtc` patch that publishes the active MediaProjection, and
+  `ScreenAudioDevice.install(this)` in `MainApplication.onCreate` — which must
+  run *before* `loadReactNative`, since `WebRTCModule` reads the audio device
+  module in its constructor. If any is missing the call still works and
+  sharing stays silent: `ScreenAudio.getStatus()` reports `unavailable`.
 - **iOS** — ReplayKit can only capture the screen from a **Broadcast Upload
   Extension**; the app process itself cannot. The extension and the host app
   must share an App Group, and the app's `Info.plist` must declare
