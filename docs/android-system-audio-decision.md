@@ -154,6 +154,13 @@ playback capture at all. Do not document or present system audio as guaranteed.
 
 ## 7. Verification note
 
-Everything above is from source and binary inspection. None of it is
-runtime-verified: CI has no Android device or emulator, so §5 needs a human with
-hardware.
+Everything above is from source and binary inspection. The API facts in §3 are
+now re-checkable on demand: [`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md)
+asserts them against the real AAR bytecode (9/9 passing at
+`org.jitsi:webrtc:124.0.0`) and should be re-run on any WebRTC version bump. One
+finding it adds: the published `webrtc-124.0.0-sources.jar` is a stub, so a
+shadowed `WebRtcAudioRecord` must be reimplemented rather than patched — see the
+[native client plan §3.1](./android-native-client-plan.md#31-static-verification--done-and-repeatable).
+
+The runtime behaviour is still unverified: CI has no Android device or emulator,
+so §5 needs a human with hardware.

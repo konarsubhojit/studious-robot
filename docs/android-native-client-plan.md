@@ -79,9 +79,12 @@ connection, its own DTLS handshake and its own signalling.
 
 1. Whether a shadowed `WebRtcAudioRecord` can be made *conditional* — playback
    capture for factory B, ordinary mic for factory A — given that class
-   shadowing is process-wide. A sentinel audio-source constant read by the
-   shadowed class is the obvious attempt and may not survive the private JNI
-   entry points.
+   shadowing is process-wide. **Statically de-risked** (see §3.1): the audio
+   source is a plain `int` carried from
+   `JavaAudioDeviceModule.Builder.setAudioSource(int)` into a
+   `WebRtcAudioRecord` field, and no JNI entry point reads it, so a sentinel
+   constant is expressible. Whether the resulting `AudioRecord` initialises is
+   still a device question.
 2. Whether two ADMs can initialize concurrently in one process at all. Only a
    device can answer this.
 3. Whether the second peer connection is acceptable: doubled ICE/TURN usage,
@@ -94,6 +97,42 @@ remaining path to separate tracks is a custom libwebrtc build (option 2 of the
 decision record) — which the decision record already shows is independent of
 the UI framework.
 
+### 3.1 Static verification — done, and repeatable
+
+Every API fact above and in the decision record's §3 has been re-verified
+against the real bytecode of `org.jitsi:webrtc:124.0.0`, and the inspection is
+now a script rather than prose: [`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md).
+It needs no Android SDK, emulator or device, and it runs in about a minute.
+
+| Verified claim | Consequence |
+| --- | --- |
+| `org.webrtc.audio.WebRtcAudioRecord` is package-private and non-final | The shadowing seam is open at this version. |
+| `nativeCreateAudioDeviceModule` is typed to the **concrete** `WebRtcAudioRecord` | Subclassing cannot work; shadowing is the only Java seam. |
+| `JavaAudioDeviceModule.Builder.setAudioSource(int)` exists; `WebRtcAudioRecord`'s public constructor takes that `int` | A sentinel audio-source constant can select playback capture per ADM — this is what makes step 1 above plausible. |
+| `createAudioRecordOnMOrHigher` is `private static` | A shadow must reimplement the **whole** class; it cannot delegate or override. See the risk below. |
+| `PeerConnectionFactory.Builder.setAudioDeviceModule` is public | The two-factory topology is constructible — the one thing native adds. |
+| `createAudioSource(MediaConstraints)` is the only `AudioSource` route, and `AudioDeviceModule` exposes only a native pointer | No external/push audio source; PCM cannot be fed in. Confirms a `patch-package` patch cannot deliver this. |
+
+**Newly discovered risk — there is no upstream source to patch.** The published
+`webrtc-124.0.0-sources.jar` is a stub containing a single
+`org/jitsi/webrtc/NothingToSeeHere.java`. Combined with
+`createAudioRecordOnMOrHigher` being private static, a shadow cannot be produced
+as a small diff against vendored sources. It must be hand-written against the
+bytecode, or lifted from upstream `webrtc.googlesource.com` and matched to the
+AAR's exact revision by hand. Three things follow, and D0 must budget for them:
+
+- The shadow is **several hundred lines of reimplemented third-party code**,
+  carrying its own BSD-3 header and provenance note, not a patch.
+- Its correctness cannot be diffed against an original, so it needs its own
+  tests and its own review.
+- A WebRTC version bump silently desynchronises it. The AAR version becomes
+  load-bearing: pin it, and re-run the probe on every bump.
+
+This does not change the go/no-go, but it materially raises the cost of the
+"cheap" option and is exactly the kind of finding that belongs **before**
+someone books device time.
+
+
 ## 4. Gate D0 — the only work authorized today
 
 Run the spike protocol in
@@ -102,14 +141,22 @@ in a throwaway app, on real hardware, extended by one step:
 
 | Step | Question | Fail ⇒ |
 | --- | --- | --- |
+| D0.0 | *(desk, no device)* Do the libwebrtc API seams still exist? `tools/webrtc-audio-probe/probe.sh` | Seam closed ⇒ stop; system audio needs a custom libwebrtc build on either stack. **Status: run, 9/9 passing at `org.jitsi:webrtc:124.0.0` — see §3.1.** |
 | D0.1 | Does a synthetic tone pushed through a shadowed `WebRtcAudioRecord` reach a second device? | Stop. No rewrite can help. Record the result and close this document. |
 | D0.2 | Can a live microphone track survive alongside it in **one** factory? | Expected to fail; proceed to D0.3. |
 | D0.3 | *(native-only, new)* Do two `PeerConnectionFactory` instances with two ADMs coexist, one mic and one playback capture, with both tracks live on two peer connections? | Native buys nothing. Choose option 1 or 3 of the decision record and close this document. |
 | D0.4 | Does real `MediaProjection` + `AudioPlaybackCaptureConfiguration` (API 29+) capture from a permitting app, and degrade cleanly against `ALLOW_CAPTURE_BY_NONE`? | Ship the capability as unavailable-by-detection, not as a promise. |
 
+Run D0.0 first and re-run it whenever the WebRTC version changes; it is the
+only step that can be answered without hardware, and it costs a minute.
+
+Before booking device time, note the shadow-authoring cost recorded in §3.1:
+D0.1 is not "write a few lines", it is "reimplement `WebRtcAudioRecord` from
+bytecode". Budget that into the spike, not into the phase after it.
+
 Record the outcome as a new section in this file (`## D0 result — <date>`),
-including device models and OS versions. D0 needs a human with hardware; CI has
-no Android device or emulator.
+including device models and OS versions. D0.1–D0.4 need a human with hardware;
+CI has no Android device or emulator.
 
 **Exit gate.** D0.1 and D0.3 both green ⇒ proceed to D1. Anything else ⇒ this
 document is closed as *no-go* and the request is answered with the decision
@@ -269,10 +316,11 @@ session-sized unit. Status is `blocked` / `ready` / `in progress` / `done` /
 | ID | Item | Phase | Depends on | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
 | AN-00 | This plan | — | — | done | Written; premise corrected in §1. |
-| AN-01 | Run D0.1–D0.4 on hardware, record result in §4 | D0 | AN-00 | blocked | Needs a human with two Android devices. CI cannot do this. |
-| AN-02 | Choose delivery shape A/B/C, record the reason in §5 | D1 | AN-01 | blocked | If B, the reason must not be system audio or video calling. |
+| AN-01a | Static API verification, scripted | D0 | AN-00 | done | `tools/webrtc-audio-probe`, 9/9 at `webrtc:124.0.0`. Seams confirmed open; §3 step 1 de-risked; no-upstream-sources risk found (§3.1). |
+| AN-01b | Run D0.1–D0.4 on hardware, record result in §4 | D0 | AN-01a | blocked | Needs a human with two Android devices. CI cannot do this. Budget the shadow-authoring cost in §3.1. |
+| AN-02 | Choose delivery shape A/B/C, record the reason in §5 | D1 | AN-01b | blocked | If B, the reason must not be system audio or video calling. |
 | AN-03 | Gradle/Compose skeleton under `android/` | P0 | AN-02 = B | blocked | |
-| AN-04 | Screen-audio capture module | P1 | AN-01 green | blocked | Lands in `mobile/android/` under shape A. |
+| AN-04 | Screen-audio capture module | P1 | AN-01b green | blocked | Lands in `mobile/android/` under shape A. |
 | AN-05 | Second-connection signalling | P2 | AN-04 | blocked | |
 | AN-06 | Socket/REST/auth/session | P3 | AN-03 | blocked | |
 | AN-07 | Room store and outbox | P4 | AN-03 | blocked | |
@@ -319,8 +367,12 @@ Rules for sessions picking up a row:
 
 ## 12. Verification note
 
-Everything here is desk analysis over this repository plus the source and binary
-inspection already recorded in the system-audio decision record. Nothing in §3
-or §4 is runtime-verified: CI has no Android device or emulator. The line counts
-and file counts in §1 and §6 were measured over `mobile/src` and
-`mobile/__tests__` at the time of writing.
+The libwebrtc API facts in §3.1 **are** verified, mechanically, by
+[`tools/webrtc-audio-probe`](../tools/webrtc-audio-probe/README.md) — 9/9 checks
+passing against `org.jitsi:webrtc:124.0.0`. Re-run it on any WebRTC bump.
+
+Everything else is desk analysis over this repository. Nothing in §4's D0.1–D0.4
+is runtime-verified: CI has no Android device or emulator, and an API being
+*shaped* to permit something is not evidence that it works. The line counts and
+file counts in §1 and §6 were measured over `mobile/src` and `mobile/__tests__`
+at the time of writing.
