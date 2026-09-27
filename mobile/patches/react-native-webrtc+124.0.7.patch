@@ -1,0 +1,76 @@
+diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ScreenCaptureController.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ScreenCaptureController.java
+index c22a241..e99f963 100644
+--- a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ScreenCaptureController.java
++++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ScreenCaptureController.java
+@@ -11,6 +11,9 @@ import android.view.OrientationEventListener;
+ import org.webrtc.ScreenCapturerAndroid;
+ import org.webrtc.VideoCapturer;
+ 
++import java.lang.ref.WeakReference;
++import java.util.concurrent.atomic.AtomicReference;
++
+ public class ScreenCaptureController extends AbstractVideoCaptureController {
+     /**
+      * The {@link Log} tag with which {@code ScreenCaptureController} is to log.
+@@ -25,6 +28,31 @@ public class ScreenCaptureController extends AbstractVideoCaptureController {
+ 
+     private final Context context;
+ 
++    /**
++     * The screen capturer backing the screen share that is currently running.
++     * Held weakly so publishing it here can never keep a disposed capturer, and
++     * with it a {@link MediaProjection}, alive.
++     */
++    private static final AtomicReference<WeakReference<ScreenCapturerAndroid>> activeScreenCapturer =
++            new AtomicReference<>(null);
++
++    /**
++     * The {@link MediaProjection} backing the running screen share, or
++     * {@code null} when no screen share is active.
++     *
++     * Android allows a single active projection per device and stops the
++     * previous one whenever a new projection starts, so a feature that needs a
++     * projection while a screen share is live — capturing system audio, for
++     * instance — has to borrow this one. Requesting its own consent would stop
++     * the very screen share it is meant to accompany.
++     */
++    public static MediaProjection getActiveMediaProjection() {
++        WeakReference<ScreenCapturerAndroid> reference = activeScreenCapturer.get();
++        ScreenCapturerAndroid capturer = reference == null ? null : reference.get();
++
++        return capturer == null ? null : capturer.getMediaProjection();
++    }
++
+     public ScreenCaptureController(Context context, int width, int height, Intent mediaProjectionPermissionResultData) {
+         super(width, height, DEFAULT_FPS);
+ 
+@@ -64,17 +92,19 @@ public class ScreenCaptureController extends AbstractVideoCaptureController {
+ 
+     @Override
+     public void dispose() {
++        activeScreenCapturer.set(null);
+         MediaProjectionService.abort(context);
+         super.dispose();
+     }
+ 
+     @Override
+     protected VideoCapturer createVideoCapturer() {
+-        VideoCapturer videoCapturer =
++        ScreenCapturerAndroid videoCapturer =
+                 new ScreenCapturerAndroid(mediaProjectionPermissionResultData, new MediaProjection.Callback() {
+                     @Override
+                     public void onStop() {
+                         Log.w(TAG, "Media projection stopped.");
++                        activeScreenCapturer.set(null);
+                         orientationListener.disable();
+                         stopCapture();
+ 
+@@ -84,6 +114,8 @@ public class ScreenCaptureController extends AbstractVideoCaptureController {
+                     }
+                 });
+ 
++        activeScreenCapturer.set(new WeakReference<>(videoCapturer));
++
+         return videoCapturer;
+     }
+ }
