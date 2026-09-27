@@ -151,6 +151,10 @@ None.
     the capturer being disposed; the projection's own `onStop` still clears
     unconditionally, which is what it means. Patch regenerated and recompiled
     against the 125 AAR.
+  - **Re-review note:** the first attempt treated a `null` capturer as "clear
+    whatever is published", which reintroduced the same bug for a controller
+    disposed before it ever captured. Tightened to require a published
+    capturer identical to the one being disposed.
 
 ## Resolution summary
 
@@ -163,6 +167,13 @@ suites / **2563** tests passing; `tools/webrtc-audio-probe/probe.sh` 11/11;
 android-36, React Android, WebRTC 125 and patched `react-native-webrtc` jars;
 the patched `react-native-webrtc` Java compiles cleanly (61 classes); and the
 PCM harness re-run from the current sources passes 18/18.
+
+## Re-review gate
+
+Re-reviewed after the fix pass. One self-introduced defect was found and
+fixed (the `null`-capturer hole noted under the last Nit); no other new
+Critical, High or Medium finding. The gate is clear: the only finding left
+open is the deferred Low, which has no public API to implement it against.
 
 ## Verified, not findings
 
