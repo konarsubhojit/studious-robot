@@ -20,7 +20,7 @@ import {
 import { errorMessage } from '../errors';
 import { triggerHaptic } from '../haptics';
 import { MediaStreamLike, setTrackEnabled } from '../mediaControls';
-import { applyMicrophoneMute } from '../screenAudio';
+import { applyMicrophoneMute, recordMicrophoneMute } from '../screenAudio';
 
 type AudioDeviceSnapshot = {
   available: readonly string[];
@@ -81,6 +81,9 @@ export default function useCallAudioRouting({
       updateStatus('Start preview to control audio', 'error');
       return;
     }
+    // Only once the mute is genuinely in effect: the mirror is replayed onto
+    // whichever of the two paths is correct when sharing starts or stops.
+    recordMicrophoneMute(nextMuted);
     triggerHaptic('tap');
     setIsMuted(nextMuted);
 

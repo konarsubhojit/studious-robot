@@ -181,16 +181,22 @@ internal class SystemAudioCapture {
   // Guarded by `lock`.
   private fun stopLocked() {
     keepAlive = false
-    thread?.join(THREAD_JOIN_TIMEOUT_MS)
-    thread = null
-    record?.let { active ->
+    val active = record
+    // Stopped before the join, not after: the reader spends nearly all its
+    // time blocked inside `read`, and only `stop` unblocks it. Releasing
+    // first and joining afterwards would risk freeing the native record
+    // underneath a read still in flight, which crashes the process rather
+    // than throwing.
+    if (active != null) {
       try {
         active.stop()
       } catch (error: IllegalStateException) {
         Log.w(TAG, "Playback capture was already stopped", error)
       }
-      active.release()
     }
+    thread?.join(THREAD_JOIN_TIMEOUT_MS)
+    thread = null
+    active?.release()
     record = null
     sampleRate = 0
     channelCount = 0

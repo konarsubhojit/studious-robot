@@ -41,7 +41,7 @@ allprojects {
     configurations.configureEach {
         resolutionStrategy.dependencySubstitution {
             substitute module("org.jitsi:webrtc") using
-                    module("io.github.webrtc-sdk:android:$webrtcSdkVersion") because
+                    module("io.github.webrtc-sdk:android:${rootProject.ext.webrtcSdkVersion}") because
                     "Provides JavaAudioDeviceModule.AudioBufferCallback for system audio sharing"
         }
     }

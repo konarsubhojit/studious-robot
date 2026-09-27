@@ -3,7 +3,11 @@ import { NativeModules, Platform } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import useCallAudioRouting from '../../src/hooks/useCallAudioRouting';
 import { AUDIO_ROUTES } from '../../src/audioRouting';
-import { resetSystemAudioState, startSystemAudio } from '../../src/screenAudio';
+import {
+  isMicrophoneMuted,
+  resetSystemAudioState,
+  startSystemAudio,
+} from '../../src/screenAudio';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -234,5 +238,50 @@ describe('useCallAudioRouting while system audio is shared', () => {
       'Start preview to control audio',
       'error',
     );
+  });
+});
+
+describe('useCallAudioRouting mute bookkeeping', () => {
+  beforeEach(() => {
+    resetSystemAudioState();
+  });
+
+  afterEach(() => {
+    resetSystemAudioState();
+  });
+
+  test('remembers a mute that was applied to the local track', () => {
+    const { resultRef } = setup({ isMuted: false });
+
+    act(() => {
+      resultRef.current.handleMuteToggle();
+    });
+
+    expect(isMicrophoneMuted()).toBe(true);
+  });
+
+  test('does not remember a mute it could not apply', () => {
+    // Muted, and the mirror agrees, having been applied to the track.
+    const first = setup({ isMuted: false });
+    act(() => {
+      first.resultRef.current.handleMuteToggle();
+    });
+    expect(isMicrophoneMuted()).toBe(true);
+
+    // Now there is nothing to unmute, so the toggle fails and `isMuted` keeps
+    // saying muted. The mirror must keep saying so too: it is replayed onto
+    // the audio device module when system audio starts, so recording this
+    // would silently unmute a microphone the UI shows as muted.
+    const second = setup({ isMuted: true, localStreamRef: { current: null } });
+    act(() => {
+      second.resultRef.current.handleMuteToggle();
+    });
+
+    expect(second.params.updateStatus).toHaveBeenCalledWith(
+      'Start preview to control audio',
+      'error',
+    );
+    expect(second.params.setIsMuted).not.toHaveBeenCalled();
+    expect(isMicrophoneMuted()).toBe(true);
   });
 });

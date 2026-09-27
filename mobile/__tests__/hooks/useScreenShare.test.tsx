@@ -2,7 +2,7 @@ import React from 'react';
 import { NativeModules, Platform } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import useScreenShare from '../../src/hooks/useScreenShare';
-import { applyMicrophoneMute, resetSystemAudioState } from '../../src/screenAudio';
+import { recordMicrophoneMute, resetSystemAudioState } from '../../src/screenAudio';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -728,8 +728,8 @@ describe('useScreenShare with the native system-audio mixer', () => {
     captureWithoutAudioTrack();
     const { resultRef, microphoneTrack } = setup();
     // Muting before the share disabled the track; the mix travels on it.
-    applyMicrophoneMute(true);
     microphoneTrack.enabled = false;
+    recordMicrophoneMute(true);
 
     await act(async () => {
       await resultRef.current.startScreenShare();
@@ -743,7 +743,8 @@ describe('useScreenShare with the native system-audio mixer', () => {
     const native = installMixer();
     captureWithoutAudioTrack();
     const { resultRef, microphoneTrack } = setup();
-    applyMicrophoneMute(true);
+    microphoneTrack.enabled = false;
+    recordMicrophoneMute(true);
 
     await act(async () => {
       await resultRef.current.startScreenShare();

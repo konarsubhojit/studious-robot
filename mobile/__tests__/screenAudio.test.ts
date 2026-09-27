@@ -5,6 +5,7 @@ import {
   isMicrophoneMuted,
   isSystemAudioSharing,
   isSystemAudioSupported,
+  recordMicrophoneMute,
   resetSystemAudioState,
   startSystemAudio,
   stopSystemAudio,
@@ -165,7 +166,7 @@ describe('screenAudio', () => {
     it('carries an existing mute over to the audio device module', async () => {
       const native = makeNativeModule();
       installNativeModule(native);
-      applyMicrophoneMute(true);
+      recordMicrophoneMute(true);
       await startSystemAudio();
       expect(native.setMicrophoneMuted).toHaveBeenCalledWith(true);
     });
@@ -182,7 +183,7 @@ describe('screenAudio', () => {
     it('releases the native mute so the track can carry it again', async () => {
       const native = makeNativeModule();
       installNativeModule(native);
-      applyMicrophoneMute(true);
+      recordMicrophoneMute(true);
       await startSystemAudio();
       await stopSystemAudio();
       expect(native.setMicrophoneMuted).toHaveBeenLastCalledWith(false);
@@ -205,6 +206,17 @@ describe('screenAudio', () => {
     it('declines to handle the mute when nothing is being mixed', () => {
       installNativeModule(makeNativeModule());
       expect(applyMicrophoneMute(true)).toBe(false);
+      // Declining means the caller still has to apply it to the track, and
+      // only the caller knows whether that worked, so nothing is recorded
+      // here. Recording a mute that never took effect would later replay it
+      // onto a microphone the UI is describing the other way.
+      expect(isMicrophoneMuted()).toBe(false);
+    });
+
+    it('records the mute it applied natively', async () => {
+      installNativeModule(makeNativeModule());
+      await startSystemAudio();
+      expect(applyMicrophoneMute(true)).toBe(true);
       expect(isMicrophoneMuted()).toBe(true);
     });
 

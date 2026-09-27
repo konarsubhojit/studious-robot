@@ -79,7 +79,12 @@ assert_file() {
   local description="$1" path="$2" pattern="$3"
 
   if [[ ! -f "${REPO_ROOT}/${path}" ]]; then
-    fail "${description}" "file not found: ${path}"
+    # An absent file is usually an uninstalled dependency rather than a claim
+    # that stopped being true, so say which it is instead of reading like the
+    # seam closed.
+    local hint="file not found: ${path}"
+    [[ "${path}" == mobile/node_modules/* ]] && hint="${hint} (run 'npm install' in mobile/)"
+    fail "${description}" "${hint}"
     return
   fi
   if grep -qE -- "${pattern}" "${REPO_ROOT}/${path}"; then

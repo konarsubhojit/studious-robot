@@ -237,19 +237,33 @@ export async function getSystemAudioStatus(): Promise<SystemAudioStatus> {
 }
 
 /**
- * Record the requested microphone mute and apply it natively while system
- * audio is being shared.
+ * Apply a microphone mute natively, which is only correct while system audio
+ * is being mixed into the microphone track.
  *
  * @returns whether the mute was handled natively. `false` means the caller
  *   must fall back to disabling the local audio track, which is correct when
  *   nothing is being mixed into it.
  */
 export function applyMicrophoneMute(muted: boolean): boolean {
-  microphoneMuted = muted;
   const native = getNativeModule();
   if (!native || !sharing) return false;
+  recordMicrophoneMute(muted);
   native.setMicrophoneMuted(muted).catch(error => {
     logWarn('Unable to mute the microphone natively', { message: errorMessage(error) });
   });
   return true;
+}
+
+/**
+ * Remember a microphone mute that is now in effect, so it can be re-applied
+ * the other way round when sharing starts or stops.
+ *
+ * Callers must only record a mute they actually managed to apply. The mirror
+ * is replayed onto the audio device module by {@link startSystemAudio} and
+ * back onto the local track when sharing ends, so recording a mute that never
+ * took effect would later mute — or worse, silently unmute — a microphone the
+ * UI is describing the other way.
+ */
+export function recordMicrophoneMute(muted: boolean): void {
+  microphoneMuted = muted;
 }

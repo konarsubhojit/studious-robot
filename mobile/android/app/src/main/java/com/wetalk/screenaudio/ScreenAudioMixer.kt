@@ -112,12 +112,17 @@ internal class ScreenAudioMixer : JavaAudioDeviceModule.AudioBufferCallback {
     if (audioFormat != AudioFormat.ENCODING_PCM_16BIT) return captureTimeNs
     if (!capture.isCapturing) {
       val started = capture.start(active, sampleRate, channelCount)
-      startSignal?.countDown()
       if (!started) {
         projection = null
+        startSignal?.countDown()
         return captureTimeNs
       }
     }
+    // Settled by any delivered buffer, not only the one that starts capture,
+    // so a second `start` while capture is already running returns at once
+    // instead of waiting out the timeout and reporting a working mix as
+    // unavailable.
+    startSignal?.countDown()
     mixInto(buffer)
     return captureTimeNs
   }

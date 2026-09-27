@@ -113,6 +113,15 @@ object ScreenAudioDevice {
     return state
   }
 
+  /**
+   * Stop mixing and put the noise suppressor back on.
+   *
+   * `true` is asserted rather than restored because `JavaAudioDeviceModule`
+   * has no getter for the setting — its setter reports whether the change
+   * applied, not what the value was. That is safe here only because this
+   * object is the sole writer in the app; a second one would have to take
+   * ownership of the setting instead.
+   */
   fun stop() {
     mixer.stop()
     audioDeviceModule?.setNoiseSuppressorEnabled(true)
@@ -136,10 +145,15 @@ object ScreenAudioDevice {
   }
 
   /** Current state plus the counters that make a silent share diagnosable. */
-  fun status(): Map<String, Any?> =
-    mapOf(
+  fun status(): Map<String, Any?> {
+    // Without the module there is no mixing seam at all, which the mixer's own
+    // state cannot express: it would report `IDLE`, meaning "supported,
+    // nothing running", about a build where sharing can never work.
+    val state = if (isInstalled) mixer.state else ScreenAudioState.UNAVAILABLE
+    return mapOf(
       "installed" to isInstalled,
-      "state" to mixer.state.name,
+      "state" to state.name,
       "reason" to (mixer.lastError ?: unavailableReason),
     ) + mixer.diagnostics
+  }
 }

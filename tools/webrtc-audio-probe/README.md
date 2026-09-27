@@ -22,9 +22,11 @@ tools/webrtc-audio-probe/probe.sh                 # defaults to 125.6422.07
 tools/webrtc-audio-probe/probe.sh 125.6422.08     # check a candidate upgrade
 ```
 
-Needs `curl`, `unzip` and `javap` (any JDK). **No Android SDK, no emulator and
-no device** — that is the point: it answers what can be answered at a desk, so
-scarce hardware time is spent only on what genuinely needs hardware.
+Needs `curl`, `unzip` and `javap` (any JDK), plus `npm install` in `mobile/`
+for the two checks that read the repository rather than the AAR. **No Android
+SDK, no emulator and no device** — that is the point: it answers what can be
+answered at a desk, so scarce hardware time is spent only on what genuinely
+needs hardware.
 
 The AAR is ~30 MB and is cached under `$TMPDIR/webrtc-audio-probe/<version>/`
 (override with `WEBRTC_PROBE_CACHE`). Exit status is 0 when every claim holds
