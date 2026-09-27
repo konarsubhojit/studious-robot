@@ -408,10 +408,17 @@ test('markRead returns how many messages it flipped, and zeroes the reader\'s co
   // Only the recipient's still-unread messages, which is exactly the partial
   // index `idx_messages_unread` covers.
   assert.match(queries[1].text, /"messages"\."recipient_id" = \$\d+ and "messages"\."read_at" is null/);
+  // A read implies delivery: the same idempotent `@>` guard `markDelivered`
+  // uses is backfilled in this statement, so a read with no prior delivery
+  // receipt still ends up marked delivered, in the same round trip.
+  assert.match(
+    queries[1].text,
+    /"delivered_to" = case when "messages"\."delivered_to" @> array\[\$\d+\]::text\[\]/
+  );
+  assert.match(queries[2].text, /update "conversations" set/);
   // Zero, not a decrement by the flipped count: self-healing against any
   // drift, and gated by a string comparison against the stored participant
   // columns rather than another lookup for which side "bob" is on.
-  assert.match(queries[2].text, /update "conversations" set/);
   assert.match(
     queries[2].text,
     /"unread_a" = case when "conversations"\."participant_a" = \$\d+\s*then 0 else "conversations"\."unread_a" end/

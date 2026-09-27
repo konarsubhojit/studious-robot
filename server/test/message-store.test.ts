@@ -476,6 +476,28 @@ test('markRead marks unread messages addressed to the user and is idempotent', a
   assert.equal(second, 0, 'idempotent: nothing left to mark read');
 });
 
+test('markRead backfills deliveredTo when the message was read without a prior delivery event', async () => {
+  const store = createMemoryMessageStore();
+  const conversationId = deriveConversationId('alice', 'bob');
+  const saved = await store.saveMessage({
+    conversationId,
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'hi',
+  });
+  assert.deepEqual(saved.deliveredTo, [], 'no delivery receipt was ever issued');
+
+  await store.markRead(conversationId, 'bob');
+
+  const [message] = await store.listMessages({ conversationId });
+  assert.ok(message.readAt, 'read marks readAt');
+  assert.deepEqual(
+    message.deliveredTo,
+    ['bob'],
+    'a read implies delivery even without a prior delivery event'
+  );
+});
+
 test('markRead only affects the requested conversation', async () => {
   const store = createMemoryMessageStore();
   await store.saveMessage({

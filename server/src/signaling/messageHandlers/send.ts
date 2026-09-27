@@ -133,6 +133,9 @@ async function persistAcceptedMessage(
     conversationsCachePrefix(message.recipientId),
     messagesCachePrefix(message.conversationId)
   );
+  if (result.inserted) {
+    state.telemetry.recordMessagePersisted();
+  }
   if (recipientWasOnline && result.inserted) {
     if (typeof state.messageStore.enqueueDeliveryReceipt === 'function') {
       state.messageStore.enqueueDeliveryReceipt({
@@ -147,6 +150,7 @@ async function persistAcceptedMessage(
         message.conversationId
       );
     }
+    state.telemetry.recordMessageDeliveryMarksIssued();
     // Distinct from the invalidation above: this one reflects the delivery
     // -status write just above it (`deliveredTo`), not the insert. It targets
     // the same `messagesCachePrefix` key but at a later point in this

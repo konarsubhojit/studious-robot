@@ -163,6 +163,11 @@ export function createMemoryMessageStore(): MessageStore {
           !message.readAt
         ) {
           message.readAt = now;
+          // A read implies delivery even when no delivery receipt preceded
+          // it, so backfill `deliveredTo` here to match the Postgres store.
+          if (!message.deliveredTo.includes(userId)) {
+            message.deliveredTo.push(userId);
+          }
           updated += 1;
         }
       }

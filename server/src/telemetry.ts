@@ -109,6 +109,8 @@ export type Telemetry = {
   recordRtcRelay: (eventName: string, recipients: number | null, isHeartbeat?: boolean) => void;
   recordSignalingError: (code?: string, eventName?: string) => void;
   recordMessagePersistenceFailure: () => void;
+  recordMessagePersisted: () => void;
+  recordMessageDeliveryMarksIssued: (count?: number) => void;
   recordCacheHit: () => void;
   recordCacheMiss: () => void;
   recordDbQuery: (record: import('./lib/queryTiming.ts').QueryTimingRecord) => void;
@@ -363,6 +365,19 @@ function createTelemetry(): Telemetry {
     rtc_relays_no_recipient: 0,
     signaling_errors: 0, // acknowledgeError / error ack responses
     message_persist_errors: 0, // accepted messages that failed durable persistence
+    // These two mirror the diagnostic query that first surfaced the
+    // read-without-delivery defect (see docs/messages.md or the incident that
+    // added them): `messages_persisted_total` is every newly inserted
+    // message, `messages_delivery_marks_issued_total` is every time the
+    // idempotent `delivered_to @> array[$1]` guard was *issued* — whether or
+    // not it changed anything — across all three paths that can write it
+    // (immediate online delivery, an explicit delivery receipt, and the
+    // read-implies-delivery backfill in `markRead`). A growing gap between
+    // them, persisting well past the read-side delay a recipient can
+    // plausibly still catch up on, is exactly the shape of the regression
+    // this pair exists to catch without a database query.
+    messages_persisted_total: 0,
+    messages_delivery_marks_issued_total: 0,
     cache_hits: 0, // read served from the shared read cache
     cache_misses: 0, // read that fell through to the store
     db_queries_total: 0, // every timed datastore round trip
@@ -730,6 +745,23 @@ function createTelemetry(): Telemetry {
   }
 
   /**
+   * Record one newly inserted message (see `messages_persisted_total`).
+   */
+  function recordMessagePersisted() {
+    counters.messages_persisted_total += 1;
+  }
+
+  /**
+   * Record that the idempotent `delivered_to` guard was issued for `count`
+   * messages (see `messages_delivery_marks_issued_total`). Counts issuance,
+   * not effect, to match how `pg_stat_statements` counts the underlying
+   * statement — a no-op reissue still increments it.
+   */
+  function recordMessageDeliveryMarksIssued(count = 1) {
+    counters.messages_delivery_marks_issued_total += count;
+  }
+
+  /**
    * Record a read that missed the shared cache and hit the underlying store.
    */
   function recordCacheMiss() {
@@ -858,6 +890,16 @@ function createTelemetry(): Telemetry {
     snap.derived.cache_hit_rate =
       cacheReads > 0 ? Number((cache_hits / cacheReads).toFixed(4)) : null;
 
+    // Surfaces the exact regression described above: how far behind delivery
+    // marking has fallen from persistence, in both count and proportion.
+    const { messages_persisted_total, messages_delivery_marks_issued_total } = snap.counters;
+    snap.derived.messages_delivery_marking_gap =
+      messages_persisted_total - messages_delivery_marks_issued_total;
+    snap.derived.messages_delivery_marking_rate =
+      messages_persisted_total > 0
+        ? Number((messages_delivery_marks_issued_total / messages_persisted_total).toFixed(4))
+        : null;
+
     return snap;
   }
 
@@ -868,6 +910,8 @@ function createTelemetry(): Telemetry {
     recordRtcRelay,
     recordSignalingError,
     recordMessagePersistenceFailure,
+    recordMessagePersisted,
+    recordMessageDeliveryMarksIssued,
     recordCacheHit,
     recordCacheMiss,
     recordDbQuery,
