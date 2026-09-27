@@ -2,6 +2,17 @@
 
 `rig.mjs` is a self-contained Socket.IO load-testing harness for the signaling server. Its only non-builtin dependency is `socket.io-client`, kept under `tools/loadrig/` so the server's production dependency graph is unchanged.
 
+## Server-side authentication switch
+
+The rig authenticates each simulated user with `POST /session` using
+`idToken: userId` (its generated `lt-<n>` user id) rather than a real Firebase
+ID token. The target server only accepts this when it is started with
+`TEST_AUTH_BYPASS_ENABLED=true` (see `server/README.md`); every other
+`idToken` is still verified against Firebase as normal, so leaving the switch
+enabled does not weaken authentication for real users. Set
+`TEST_AUTH_BYPASS_ENABLED=true` on the server under test before running the
+rig against it, and unset it once the run is done.
+
 ## Quickstart
 
 ```sh

@@ -143,6 +143,8 @@ same provider chain as incoming calls (see [Push notifications](#push-notificati
 | `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
 | `DATABASE_POOL_MAX` | `10`     | Maximum app-side `pg` pool connections. |
 | `FCM_SERVICE_ACCOUNT_JSON` | _(required)_ | Firebase service-account credentials used for ID-token verification and FCM HTTP v1 push delivery. Either the raw JSON string or a path to the JSON key file. |
+| `TEST_AUTH_BYPASS_ENABLED` | `false` | When `true`, `POST /session` skips Firebase ID-token verification for any `idToken` starting with `TEST_AUTH_USER_PREFIX` (default `lt-`), so load-test traffic (see [`tools/loadrig`](../tools/loadrig/README.md)) can authenticate without real Firebase ID tokens. Tokens that don't match the prefix are still verified normally. Explicit opt-in only — leave unset outside of load testing, and never rely on it to skip provisioning `FCM_SERVICE_ACCOUNT_JSON` for real users. |
+| `TEST_AUTH_USER_PREFIX` | `lt-` | Prefix an `idToken` must start with to be accepted by the `TEST_AUTH_BYPASS_ENABLED` bypass. Matches the load rig's generated `lt-<n>` user ids. |
 | `APNS_KEY` / `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_BUNDLE_ID` | _(unset)_ | APNs token-auth credentials. All four required to enable APNs pushes. |
 | `APNS_PRODUCTION` | `false` | Use the APNs production gateway when `true`, sandbox otherwise. |
 | `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` | _(unset)_ | Azure Notification Hubs `DefaultFullSharedAccessSignature` connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Enables the **preferred** push transport. Absent or unparseable ⇒ `notification_hub_not_configured` and the direct FCM/APNs path is used. See [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md). |
@@ -257,7 +259,10 @@ longer used.
 
 The server uses the service account for both Firebase ID-token verification and
 short-lived FCM OAuth2 access tokens. Production startup fails when
-`FCM_SERVICE_ACCOUNT_JSON` is absent or invalid.
+`FCM_SERVICE_ACCOUNT_JSON` is absent or invalid, unless `TEST_AUTH_BYPASS_ENABLED`
+is set (see the env var table above) — that switch exists solely so the load-test
+rig can authenticate without provisioning real Firebase ID tokens, and should not
+be used as a substitute for configuring `FCM_SERVICE_ACCOUNT_JSON` for real users.
 
 ### APNs (Apple Push Notification service) — fallback
 
