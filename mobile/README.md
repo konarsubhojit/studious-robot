@@ -411,6 +411,14 @@ supply-chain change well beyond a `patch-package` patch. Upstream
 `react-native-webrtc` has not implemented display-media audio in any release
 up to 124.0.8.
 
+There is one Java-level seam that avoids a custom build (shadowing
+`WebRtcAudioRecord`), but it costs the microphone, because the audio device
+module is a single input stream per `PeerConnectionFactory`. Before attempting
+any of this, read the
+[Android system audio decision](../docs/android-system-audio-decision.md): it
+records the three trade-offs and a spike protocol ordered so the step that
+actually fails is the first one you run.
+
 The capability therefore cannot be probed up front — `getDisplayMedia`
 ignores the `audio` key instead of rejecting — so `screenShare.ts` learns it
 from the first capture: a share that asked for audio and got none records the

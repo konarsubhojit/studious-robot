@@ -2,6 +2,7 @@
 
 | Document | Coverage |
 | --- | --- |
+| [Android system audio decision](./android-system-audio-decision.md) | Why screen sharing ships without system audio, the three trade-offs, and the fail-fast spike protocol. |
 | [Azure setup](./AZURE_SETUP.md) | Configure Azure Notification Hubs and Cosmos DB. |
 | [Complexity baseline](./complexity-baseline.md) | Baselines cognitive complexity at 15 and maps the debt to decomposition phases. |
 | [End-to-end encryption design](./e2ee-design.md) | Threat model, subsystem impact and the go/no-go decision for end-to-end encrypted messages and attachments. |
