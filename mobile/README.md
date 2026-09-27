@@ -383,10 +383,35 @@ status message and leaves the call untouched.
 `getDisplayMedia()` **without parameters**, so the constraints object never
 reaches the native module, and both native implementations build a video-only
 stream (`GetUserMediaImpl.createScreenStream` on Android,
-`WebRTCModule+RTCMediaStream.m` on iOS). No permission can change that: on
-Android, delivering system audio would need `AudioPlaybackCaptureConfiguration`
-feeding a custom `AudioDeviceModule`, which the bundled WebRTC build does not
-expose. The capability therefore cannot be probed up front — `getDisplayMedia`
+`WebRTCModule+RTCMediaStream.m` on iOS). No permission can change that — the
+manifest already carries `RECORD_AUDIO` and
+`FOREGROUND_SERVICE_MEDIA_PROJECTION`, which is everything Android's playback
+capture asks for.
+
+Patching `react-native-webrtc` would not be enough either, so please don't
+start there. Android system audio has to arrive as PCM from an `AudioRecord`
+built with `AudioPlaybackCaptureConfiguration`, and the bundled
+`org.jitsi:webrtc:124` binary offers nowhere to put it:
+
+- `PeerConnectionFactory.createAudioSource(MediaConstraints)` is the only way
+  to make an `AudioSource`, and it always binds the process-global audio
+  device module (the microphone). There is no "external" or "push" source.
+- `JavaAudioDeviceModule.Builder` accepts only `setAudioSource(int)` — a
+  `MediaRecorder.AudioSource` constant. An `AudioPlaybackCaptureConfiguration`
+  cannot be expressed as one, and `SamplesReadyCallback` reads samples *out*
+  rather than feeding them in.
+- The `AudioDeviceModule` interface exposes just
+  `getNativeAudioDeviceModulePointer()`, so a replacement must be a C++
+  object. The AAR ships prebuilt `.so` files and a jar with no headers, so
+  there is nothing to compile against.
+
+Delivering system audio would therefore mean replacing the WebRTC binary with
+a custom libwebrtc build that exposes an external audio source — a
+supply-chain change well beyond a `patch-package` patch. Upstream
+`react-native-webrtc` has not implemented display-media audio in any release
+up to 124.0.8.
+
+The capability therefore cannot be probed up front — `getDisplayMedia`
 ignores the `audio` key instead of rejecting — so `screenShare.ts` learns it
 from the first capture: a share that asked for audio and got none records the
 runtime as unable to capture it (`isScreenAudioCaptureSupported`). From then on
