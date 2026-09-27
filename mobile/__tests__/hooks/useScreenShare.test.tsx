@@ -11,6 +11,7 @@ jest.mock('../../src/screenShare', () => ({
   SCREEN_SHARE_CANCELLED: 'cancelled',
   SCREEN_SHARE_NO_FRAMES: 'no_frames',
   isScreenShareSupported: jest.fn(() => true),
+  isScreenAudioCaptureSupported: jest.fn(() => true),
   startScreenCapture: jest.fn(),
   stopScreenCapture: jest.fn(),
   logScreenShareAudioRtpStats: jest.fn(() => Promise.resolve()),
@@ -35,6 +36,8 @@ function setup({
   renegotiate = jest.fn(() => Promise.resolve()),
   senderSupportsParameters = true,
   initialParameters = { encodings: [{ maxBitrate: 500_000 }] } as any,
+  // An audio-only call has no video sender for the screen track to borrow.
+  hasCameraSender = true,
 } = {}) {
   const cameraTrack = makeTrack('video');
   const sender: any = { track: cameraTrack, replaceTrack: jest.fn(() => Promise.resolve()) };
@@ -43,9 +46,10 @@ function setup({
     sender.setParameters = jest.fn();
   }
   const audioSender = { replaceTrack: jest.fn(() => Promise.resolve()) };
+  const addedVideoSender = { replaceTrack: jest.fn(() => Promise.resolve()) };
   const peerConnection = {
-    getSenders: jest.fn(() => [sender]),
-    addTrack: jest.fn(() => audioSender),
+    getSenders: jest.fn(() => (hasCameraSender ? [sender] : [])),
+    addTrack: jest.fn((track: any) => (track?.kind === 'audio' ? audioSender : addedVideoSender)),
     removeTrack: jest.fn(),
   };
   const localStream = { addTrack: jest.fn(), removeTrack: jest.fn() };
@@ -64,12 +68,22 @@ function setup({
     renderer.create(<TestHook resultRef={resultRef} params={params} />);
   });
 
-  return { resultRef, params, peerConnection, sender, audioSender, cameraTrack, localStream };
+  return {
+    resultRef,
+    params,
+    peerConnection,
+    sender,
+    audioSender,
+    addedVideoSender,
+    cameraTrack,
+    localStream,
+  };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   (screenShare.isScreenShareSupported as jest.Mock).mockReturnValue(true);
+  (screenShare.isScreenAudioCaptureSupported as jest.Mock).mockReturnValue(true);
   (screenShare.verifyScreenShareFrames as jest.Mock).mockResolvedValue({ ok: true, frames: 1, verified: true });
 });
 
@@ -272,6 +286,33 @@ describe('useScreenShare', () => {
     expect(renegotiate).toHaveBeenCalledTimes(2);
   });
 
+  test('removes the video sender it added for an audio-only call on stop', async () => {
+    const screenVideoTrack = makeTrack('video');
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: screenVideoTrack,
+      audioTrack: null,
+      audioShared: false,
+    });
+    const { resultRef, peerConnection, addedVideoSender } = setup({ hasCameraSender: false });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(peerConnection.addTrack).toHaveBeenCalledWith(screenVideoTrack, { id: 'screen' });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    // Left in place, the sender would freeze the last captured frame on the
+    // remote side for the rest of the call.
+    expect(addedVideoSender.replaceTrack).toHaveBeenCalledWith(null);
+    expect(peerConnection.removeTrack).toHaveBeenCalledWith(addedVideoSender);
+  });
+
   test('reports a cancelled capture without changing sharing state', async () => {
     (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: false,
@@ -306,6 +347,33 @@ describe('useScreenShare', () => {
     );
   });
 
+  test('puts the camera back on the sender when the share fails to start', async () => {
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: makeTrack('video'),
+      audioTrack: makeTrack('audio'),
+      audioShared: true,
+    });
+    const { resultRef, params, sender, cameraTrack, peerConnection } = setup();
+    // The screen track is already on the sender by the time the audio sender
+    // fails to attach.
+    peerConnection.addTrack.mockImplementationOnce(() => {
+      throw new Error('peer connection is closed');
+    });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    // Without the restore the sender would stay pinned to the stopped screen
+    // track and the remote peer would see its last frame for the whole call.
+    expect(sender.replaceTrack).toHaveBeenLastCalledWith(cameraTrack);
+    expect(cameraTrack.enabled).toBe(true);
+    expect(resultRef.current.isScreenSharing).toBe(false);
+    expect(params.setStatus).toHaveBeenCalledWith('Unable to start screen sharing', 'error');
+  });
+
   test('requires an active peer connection', async () => {
     const { resultRef, params } = setup();
     params.peerConnectionRef.current = null;
@@ -338,6 +406,51 @@ describe('useScreenShare', () => {
     expect(resultRef.current.isScreenAudioEnabled).toBe(true);
     expect(params.setStatus).toHaveBeenCalledWith(
       'Stop sharing to change the screen audio setting',
+    );
+  });
+
+  test('stops offering screen audio once a capture proves it unavailable', async () => {
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: makeTrack('video'),
+      audioTrack: null,
+      audioShared: false,
+      audioFallbackReason: 'unsupported',
+    });
+    // Mirrors the module: audio is worth requesting until a capture has shown
+    // this runtime never hands one back.
+    (screenShare.isScreenAudioCaptureSupported as jest.Mock).mockImplementation(
+      () => (screenShare.startScreenCapture as jest.Mock).mock.calls.length === 0,
+    );
+    const { resultRef, params } = setup();
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(screenShare.startScreenCapture).toHaveBeenCalledWith({ withAudio: true });
+    expect(resultRef.current.isScreenAudioSupported).toBe(false);
+    expect(resultRef.current.isScreenAudioEnabled).toBe(false);
+    // The fallback is reported once, not once per phase of the start.
+    expect(
+      params.setStatus.mock.calls.filter(([message]: any[]) =>
+        String(message).includes('without system audio')).length,
+    ).toBe(1);
+  });
+
+  test('refuses the screen audio toggle on a device that cannot capture it', async () => {
+    (screenShare.isScreenAudioCaptureSupported as jest.Mock).mockReturnValue(false);
+    const { resultRef, params } = setup();
+
+    act(() => {
+      resultRef.current.handleScreenAudioToggle();
+    });
+
+    expect(resultRef.current.isScreenAudioEnabled).toBe(false);
+    expect(params.setStatus).toHaveBeenCalledWith(
+      'This device cannot capture system audio',
+      'warning',
     );
   });
 

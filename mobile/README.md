@@ -318,6 +318,9 @@ consent dialog through `getDisplayMedia` and, once granted:
 - keeps the camera track alive but disabled, so the previous video source is
   restored instantly when sharing stops (also when the user stops the share
   from the OS overlay);
+- on an **audio-only call** there is no video sender to borrow, so one is
+  added for the share and removed again on stop — left in place it would keep
+  the remote peer on the last captured frame for the rest of the call;
 - disables the camera on/off and camera-switch buttons while sharing.
 
 ### Encoding tuned for screen content
@@ -375,6 +378,58 @@ broadcast upload extension) only return a video track. In that case the share
 still starts and the UI shows a non-fatal _"screen audio unavailable on this
 device"_ warning. A denied/cancelled consent dialog is reported as a plain
 status message and leaves the call untouched.
+
+**Known platform limit.** `react-native-webrtc` (124) declares
+`getDisplayMedia()` **without parameters**, so the constraints object never
+reaches the native module, and both native implementations build a video-only
+stream (`GetUserMediaImpl.createScreenStream` on Android,
+`WebRTCModule+RTCMediaStream.m` on iOS). No permission can change that — the
+manifest already carries `RECORD_AUDIO` and
+`FOREGROUND_SERVICE_MEDIA_PROJECTION`, which is everything Android's playback
+capture asks for.
+
+Patching `react-native-webrtc` would not be enough either, so please don't
+start there. Android system audio has to arrive as PCM from an `AudioRecord`
+built with `AudioPlaybackCaptureConfiguration`, and the bundled
+`org.jitsi:webrtc:124` binary offers nowhere to put it:
+
+- `PeerConnectionFactory.createAudioSource(MediaConstraints)` is the only way
+  to make an `AudioSource`, and it always binds the process-global audio
+  device module (the microphone). There is no "external" or "push" source.
+- `JavaAudioDeviceModule.Builder` accepts only `setAudioSource(int)` — a
+  `MediaRecorder.AudioSource` constant. An `AudioPlaybackCaptureConfiguration`
+  cannot be expressed as one, and `SamplesReadyCallback` reads samples *out*
+  rather than feeding them in.
+- The `AudioDeviceModule` interface exposes just
+  `getNativeAudioDeviceModulePointer()`, so a replacement must be a C++
+  object. The AAR ships prebuilt `.so` files and a jar with no headers, so
+  there is nothing to compile against.
+
+Delivering system audio would therefore mean replacing the WebRTC binary with
+a custom libwebrtc build that exposes an external audio source — a
+supply-chain change well beyond a `patch-package` patch. Upstream
+`react-native-webrtc` has not implemented display-media audio in any release
+up to 124.0.8.
+
+There is one Java-level seam that avoids a custom build (shadowing
+`WebRtcAudioRecord`), but it costs the microphone, because the audio device
+module is a single input stream per `PeerConnectionFactory`. Before attempting
+any of this, read the
+[Android system audio decision](../docs/android-system-audio-decision.md): it
+records the three trade-offs and a spike protocol ordered so the step that
+actually fails is the first one you run.
+
+The capability therefore cannot be probed up front — `getDisplayMedia`
+ignores the `audio` key instead of rejecting — so `screenShare.ts` learns it
+from the first capture: a share that asked for audio and got none records the
+runtime as unable to capture it (`isScreenAudioCaptureSupported`). From then on
+the request is not repeated, `useScreenShare` clears the preference and reports
+`isScreenAudioSupported: false`, and the sheet row reads _"Not supported on
+this device"_ instead of silently dropping the request and warning after every
+share. A refused consent never disables the option: it says nothing about the
+capability. If a future runtime does return an audio track, nothing is
+remembered and the option keeps working — the sender is added exactly as
+described above.
 
 ### Required native setup
 
