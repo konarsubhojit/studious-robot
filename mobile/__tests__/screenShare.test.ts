@@ -1,6 +1,8 @@
 import {
   getScreenShareErrorMessage,
+  isScreenAudioCaptureSupported,
   isScreenShareSupported,
+  resetScreenAudioCaptureSupport,
   SCREEN_SHARE_CANCELLED,
   SCREEN_SHARE_NO_FRAMES,
   logScreenShareAudioRtpStats,
@@ -59,6 +61,9 @@ function expectNotOk<T extends { ok: boolean }>(result: T): Extract<T, { ok: fal
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Screen-audio support is learned from the captures themselves, so it has
+  // to start unknown for every case rather than leaking across them.
+  resetScreenAudioCaptureSupport();
 });
 
 describe('isScreenShareSupported', () => {
@@ -71,6 +76,47 @@ describe('isScreenShareSupported', () => {
     delete mediaDevices.getDisplayMedia;
     expect(isScreenShareSupported()).toBe(false);
     mediaDevices.getDisplayMedia = original;
+  });
+});
+
+describe('screen audio capture support', () => {
+  test('stops requesting screen audio once a capture returns none', async () => {
+    mediaDevices.getDisplayMedia.mockResolvedValue(
+      makeStream({ video: [makeTrack('video')] }),
+    );
+
+    expect(isScreenAudioCaptureSupported()).toBe(true);
+    await startScreenCapture({ withAudio: true });
+    expect(isScreenAudioCaptureSupported()).toBe(false);
+
+    // react-native-webrtc's getDisplayMedia ignores the constraints object, so
+    // asking again only buys another "audio unavailable" warning.
+    const result = expectOk(await startScreenCapture({ withAudio: true }));
+
+    expect(mediaDevices.getDisplayMedia).toHaveBeenLastCalledWith({ video: true, audio: false });
+    expect(result.audioShared).toBe(false);
+    expect(result.audioFallbackReason).toBe('unsupported');
+  });
+
+  test('keeps requesting screen audio on a runtime that provides it', async () => {
+    mediaDevices.getDisplayMedia.mockResolvedValue(
+      makeStream({ video: [makeTrack('video')], audio: [makeTrack('audio')] }),
+    );
+
+    await startScreenCapture({ withAudio: true });
+    const result = expectOk(await startScreenCapture({ withAudio: true }));
+
+    expect(isScreenAudioCaptureSupported()).toBe(true);
+    expect(mediaDevices.getDisplayMedia).toHaveBeenLastCalledWith({ video: true, audio: true });
+    expect(result.audioShared).toBe(true);
+  });
+
+  test('a refused consent does not mark screen audio as unsupported', async () => {
+    mediaDevices.getDisplayMedia.mockRejectedValue({ message: 'NotAllowedError' });
+
+    await startScreenCapture({ withAudio: true });
+
+    expect(isScreenAudioCaptureSupported()).toBe(true);
   });
 });
 

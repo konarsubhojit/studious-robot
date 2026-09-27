@@ -11,6 +11,7 @@ jest.mock('../../src/screenShare', () => ({
   SCREEN_SHARE_CANCELLED: 'cancelled',
   SCREEN_SHARE_NO_FRAMES: 'no_frames',
   isScreenShareSupported: jest.fn(() => true),
+  isScreenAudioCaptureSupported: jest.fn(() => true),
   startScreenCapture: jest.fn(),
   stopScreenCapture: jest.fn(),
   logScreenShareAudioRtpStats: jest.fn(() => Promise.resolve()),
@@ -70,6 +71,7 @@ function setup({
 beforeEach(() => {
   jest.clearAllMocks();
   (screenShare.isScreenShareSupported as jest.Mock).mockReturnValue(true);
+  (screenShare.isScreenAudioCaptureSupported as jest.Mock).mockReturnValue(true);
   (screenShare.verifyScreenShareFrames as jest.Mock).mockResolvedValue({ ok: true, frames: 1, verified: true });
 });
 
@@ -338,6 +340,51 @@ describe('useScreenShare', () => {
     expect(resultRef.current.isScreenAudioEnabled).toBe(true);
     expect(params.setStatus).toHaveBeenCalledWith(
       'Stop sharing to change the screen audio setting',
+    );
+  });
+
+  test('stops offering screen audio once a capture proves it unavailable', async () => {
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: makeTrack('video'),
+      audioTrack: null,
+      audioShared: false,
+      audioFallbackReason: 'unsupported',
+    });
+    // Mirrors the module: audio is worth requesting until a capture has shown
+    // this runtime never hands one back.
+    (screenShare.isScreenAudioCaptureSupported as jest.Mock).mockImplementation(
+      () => (screenShare.startScreenCapture as jest.Mock).mock.calls.length === 0,
+    );
+    const { resultRef, params } = setup();
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(screenShare.startScreenCapture).toHaveBeenCalledWith({ withAudio: true });
+    expect(resultRef.current.isScreenAudioSupported).toBe(false);
+    expect(resultRef.current.isScreenAudioEnabled).toBe(false);
+    // The fallback is reported once, not once per phase of the start.
+    expect(
+      params.setStatus.mock.calls.filter(([message]: any[]) =>
+        String(message).includes('without system audio')).length,
+    ).toBe(1);
+  });
+
+  test('refuses the screen audio toggle on a device that cannot capture it', async () => {
+    (screenShare.isScreenAudioCaptureSupported as jest.Mock).mockReturnValue(false);
+    const { resultRef, params } = setup();
+
+    act(() => {
+      resultRef.current.handleScreenAudioToggle();
+    });
+
+    expect(resultRef.current.isScreenAudioEnabled).toBe(false);
+    expect(params.setStatus).toHaveBeenCalledWith(
+      'This device cannot capture system audio',
+      'warning',
     );
   });
 

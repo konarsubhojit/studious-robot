@@ -118,6 +118,24 @@ describe('CallControls screen sharing', () => {
     expect(findByTestId(tree, 'control-screen-audio').props.accessibilityState.disabled).toBe(true);
   });
 
+  test('disables only the audio row when the device cannot capture screen audio', () => {
+    const tree = render(
+      createProps({
+        onScreenShareToggle: jest.fn(),
+        onScreenAudioToggle: jest.fn(),
+        isScreenAudioSupported: false,
+      }),
+    );
+
+    openMoreSheet(tree);
+
+    expect(findByTestId(tree, 'control-screen-share').props.accessibilityState.disabled).toBe(false);
+    expect(findByTestId(tree, 'control-screen-audio').props.accessibilityState.disabled).toBe(true);
+    expect(findByTestId(tree, 'control-screen-audio').props.subtitle).toBe(
+      'Not supported on this device',
+    );
+  });
+
   test('shows the sharing indicator and blocks camera switching while sharing', () => {
     const tree = render(
       createProps({

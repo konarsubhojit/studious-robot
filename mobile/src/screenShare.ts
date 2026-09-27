@@ -8,9 +8,13 @@ import { errorMessage as describeThrowable } from './errors';
  *
  * Screen audio ("share system sound", like the MS Teams *Include computer
  * sound* option) is always **optional and best-effort**: several platforms and
- * OS versions only hand back a video track.  When that happens the share still
- * starts, and the caller is told that audio could not be included so it can
- * surface a non-fatal warning instead of failing the whole action.
+ * OS versions only hand back a video track — `react-native-webrtc`'s
+ * `getDisplayMedia` currently ignores the constraints object entirely and its
+ * Android/iOS modules build a video-only stream. When that happens the share
+ * still starts, the runtime is remembered as unable to capture screen audio
+ * (see {@link isScreenAudioCaptureSupported}) so later shares stop asking, and
+ * the caller is told that audio could not be included so it can surface a
+ * non-fatal warning instead of failing the whole action.
  *
  * @remarks Group calls (out of scope today): `isScreenSharing` /
  * `isRemoteScreenSharing` are single booleans because only one-to-one calls
@@ -178,6 +182,38 @@ export function isScreenShareSupported(): boolean {
 }
 
 /**
+ * What the runtime has been observed to do with a screen-audio request:
+ * `null` until one has been made, then whether a track came back.
+ *
+ * The capability cannot be probed up front. `getDisplayMedia` accepts the
+ * constraints object at runtime but several implementations — including
+ * `react-native-webrtc`, whose Android and iOS modules build a video-only
+ * stream — simply ignore the `audio` key instead of rejecting, so the only
+ * honest answer comes from the first capture. Remembering it keeps the app
+ * from asking for (and warning about) system audio on every later share.
+ */
+let screenAudioCaptureSupported: boolean | null = null;
+
+/**
+ * Whether screen audio is worth requesting: true until a capture proves the
+ * runtime never returns an audio track.
+ */
+export function isScreenAudioCaptureSupported(): boolean {
+  return screenAudioCaptureSupported !== false;
+}
+
+/** Test seam: forget what a capture taught us about screen-audio support. */
+export function resetScreenAudioCaptureSupport(): void {
+  screenAudioCaptureSupported = null;
+}
+
+function recordScreenAudioCaptureSupport(supported: boolean): void {
+  if (screenAudioCaptureSupported === supported) return;
+  screenAudioCaptureSupported = supported;
+  logInfo('Screen audio capture support observed', { supported });
+}
+
+/**
  * Human-readable message for a failed `getDisplayMedia` call.
  */
 export function getScreenShareErrorMessage(error: unknown): string {
@@ -272,6 +308,13 @@ function completeScreenCapture(
     };
   }
   const [audioTrack] = withAudio ? readTracks(stream, 'getAudioTracks') : [];
+  // A capture that was asked for audio and came back without any is the only
+  // reliable signal that this runtime cannot deliver screen audio at all. A
+  // refused audio consent says nothing about the capability, so it is not
+  // allowed to disable the feature.
+  if (withAudio && audioFallbackReason !== 'denied') {
+    recordScreenAudioCaptureSupport(Boolean(audioTrack));
+  }
   logInfo('Screen capture started; MediaProjection service running', {
     requestedAudio: Boolean(withAudio),
     audioShared: Boolean(audioTrack),
@@ -303,9 +346,18 @@ export async function startScreenCapture(
     };
   }
 
-  const capture = await requestDisplayMedia(withAudio);
+  // Once a capture has shown this runtime returns no audio track, stop asking
+  // for it: the request is silently dropped anyway, and every share would
+  // otherwise end on a "system audio unavailable" warning the user can do
+  // nothing about.
+  const audioRequested = withAudio && isScreenAudioCaptureSupported();
+  const capture = await requestDisplayMedia(audioRequested);
   if (!capture.ok) return capture;
-  return completeScreenCapture(capture.stream, withAudio, capture.audioFallbackReason);
+  return completeScreenCapture(
+    capture.stream,
+    audioRequested,
+    capture.audioFallbackReason ?? (withAudio && !audioRequested ? 'unsupported' : undefined),
+  );
 }
 
 /** @param ms */

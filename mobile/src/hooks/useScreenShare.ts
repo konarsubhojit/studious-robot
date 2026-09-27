@@ -5,6 +5,7 @@ import type { ScreenShareDelivery } from '../callUx';
 import { SCREEN_SHARE_UNVERIFIED_GUIDANCE } from '../callUx';
 import { errorMessage } from '../errors';
 import {
+  isScreenAudioCaptureSupported,
   isScreenShareSupported,
   SCREEN_SHARE_CANCELLED,
   startScreenCapture,
@@ -372,6 +373,9 @@ function resetFailedScreenShareStart({
  * and the platform provides an audio track, the track is added as an extra
  * sender, which does require a renegotiation round-trip through `renegotiate`.
  * The microphone track is left untouched so mute keeps working independently.
+ * A runtime that returns no audio track disables the option for the rest of
+ * the session (`isScreenAudioCaptureSupported`) instead of warning after every
+ * share about something the device cannot do.
  */
 export default function useScreenShare({
   peerConnectionRef,
@@ -388,7 +392,15 @@ export default function useScreenShare({
   const [screenShareDelivery, setScreenShareDelivery] =
     useState<ScreenShareDelivery>('idle');
   // User preference: include screen (system) audio with the next share.
-  const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(true);
+  const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(
+    isScreenAudioCaptureSupported,
+  );
+  // Whether asking for screen audio is worth offering at all. Starts true and
+  // flips once a capture has shown this runtime never returns an audio track,
+  // so the control can say so instead of silently dropping the request.
+  const [isScreenAudioSupported, setIsScreenAudioSupported] = useState(
+    isScreenAudioCaptureSupported,
+  );
 
   const screenStreamRef = useRef((null as any));
   const screenVideoTrackRef = useRef((null as any));
@@ -474,6 +486,12 @@ export default function useScreenShare({
       setStatus,
     );
     if (!capture) return;
+    // The capture is the only place the runtime's screen-audio capability
+    // becomes observable; publish it so the control can stop offering an
+    // option this device will never honour.
+    const audioCaptureSupported = isScreenAudioCaptureSupported();
+    setIsScreenAudioSupported(audioCaptureSupported);
+    if (!audioCaptureSupported) setIsScreenAudioEnabled(false);
     const { stream, videoTrack, audioTrack, audioShared, audioFallbackReason } = capture as any;
 
     try {
@@ -501,12 +519,6 @@ export default function useScreenShare({
       setIsScreenSharing(true);
       setIsScreenAudioShared(audioShared);
       setScreenShareDelivery('checking');
-      if (isScreenAudioEnabled && !audioShared) {
-        setStatus(
-          `Starting screen share without system audio: audio capture ${audioFallbackReason ?? 'unsupported'}.`,
-          'warning',
-        );
-      }
       await renegotiateAfterScreenShareStart(pc, renegotiateRef);
       await verifyScreenShareDelivery({
         stream,
@@ -569,12 +581,16 @@ export default function useScreenShare({
       setStatus('Stop sharing to change the screen audio setting');
       return;
     }
+    if (!isScreenAudioSupported) {
+      setStatus('This device cannot capture system audio', 'warning');
+      return;
+    }
     setIsScreenAudioEnabled(previous => {
       const next = !previous;
       setStatus(next ? 'Screen audio will be shared' : 'Screen audio will not be shared');
       return next;
     });
-  }, [setStatus]);
+  }, [isScreenAudioSupported, setStatus]);
 
   /** Release capture resources without touching signaling (call teardown). */
   const resetScreenShare = useCallback(() => {
@@ -597,6 +613,7 @@ export default function useScreenShare({
     isTogglingScreenShare,
     isScreenAudioShared,
     isScreenAudioEnabled,
+    isScreenAudioSupported,
     screenShareDelivery,
     isScreenShareSupported: isScreenShareSupported(),
     startScreenShare,

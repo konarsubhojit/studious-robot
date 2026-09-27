@@ -19,6 +19,7 @@ export type CallControlsProps = {
   /** True while a start/stop is in flight (capture prompt, renegotiation). */
   isTogglingScreenShare?: boolean;
   isScreenAudioEnabled?: boolean;
+  isScreenAudioSupported?: boolean;
   isScreenAudioShared?: boolean;
   /** How far the share has got towards reaching the remote peer. */
   screenShareDelivery?: ScreenShareDelivery;
@@ -245,11 +246,13 @@ function ScreenShareOptions({
   isScreenSharing,
   isTogglingScreenShare,
   isScreenAudioEnabled,
+  isScreenAudioSupported,
   isScreenShareSupported,
   onScreenShareToggle,
   onScreenAudioToggle,
 }: Pick<CallControlsProps, 'isScreenSharing' | 'isTogglingScreenShare' | 'isScreenAudioEnabled' |
-  'isScreenShareSupported' | 'onScreenShareToggle' | 'onScreenAudioToggle'> & {
+  'isScreenAudioSupported' | 'isScreenShareSupported' | 'onScreenShareToggle' |
+  'onScreenAudioToggle'> & {
   visible: boolean;
   onClose: () => void;
 }) {
@@ -258,6 +261,7 @@ function ScreenShareOptions({
     ? (isScreenSharing ? 'Stopping…' : 'Starting…')
     : (isScreenSharing ? 'Stop sharing your screen' : 'Share your screen');
   const unsupportedSubtitle = isScreenShareSupported ? null : 'Not supported on this device';
+  const audioOptionAvailable = Boolean(isScreenShareSupported && isScreenAudioSupported);
   return (
     <Sheet visible={visible} onClose={onClose} title="More options" testID="call-more-sheet">
       <ListItem
@@ -283,17 +287,19 @@ function ScreenShareOptions({
       {onScreenAudioToggle ? (
         <ListItem
           title="Include screen audio"
+          // A device whose capture never returns an audio track says so
+          // rather than leaving an inert switch that quietly shares nothing.
           subtitle={
-            isScreenShareSupported
+            audioOptionAvailable
               ? 'Shares what your device is playing while you present'
               : 'Not supported on this device'
           }
           icon={isScreenAudioEnabled ? 'screenAudioOn' : 'screenAudioOff'}
-          disabled={!isScreenShareSupported}
+          disabled={!audioOptionAvailable}
           accessibilityRole="switch"
           accessibilityState={{
             checked: isScreenAudioEnabled,
-            disabled: !isScreenShareSupported,
+            disabled: !audioOptionAvailable,
           }}
           onPress={onScreenAudioToggle}
           testID="control-screen-audio"
@@ -323,6 +329,7 @@ export default function CallControls({
   isScreenSharing = false,
   isTogglingScreenShare = false,
   isScreenAudioEnabled = false,
+  isScreenAudioSupported = true,
   isScreenAudioShared = false,
   screenShareDelivery = 'idle',
   isScreenShareSupported = true,
@@ -388,6 +395,7 @@ export default function CallControls({
         isScreenSharing={isScreenSharing}
         isTogglingScreenShare={isTogglingScreenShare}
         isScreenAudioEnabled={isScreenAudioEnabled}
+        isScreenAudioSupported={isScreenAudioSupported}
         isScreenShareSupported={isScreenShareSupported}
         onScreenShareToggle={onScreenShareToggle}
         onScreenAudioToggle={onScreenAudioToggle}

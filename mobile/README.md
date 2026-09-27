@@ -376,6 +376,25 @@ still starts and the UI shows a non-fatal _"screen audio unavailable on this
 device"_ warning. A denied/cancelled consent dialog is reported as a plain
 status message and leaves the call untouched.
 
+**Known platform limit.** `react-native-webrtc` (124) declares
+`getDisplayMedia()` **without parameters**, so the constraints object never
+reaches the native module, and both native implementations build a video-only
+stream (`GetUserMediaImpl.createScreenStream` on Android,
+`WebRTCModule+RTCMediaStream.m` on iOS). No permission can change that: on
+Android, delivering system audio would need `AudioPlaybackCaptureConfiguration`
+feeding a custom `AudioDeviceModule`, which the bundled WebRTC build does not
+expose. The capability therefore cannot be probed up front — `getDisplayMedia`
+ignores the `audio` key instead of rejecting — so `screenShare.ts` learns it
+from the first capture: a share that asked for audio and got none records the
+runtime as unable to capture it (`isScreenAudioCaptureSupported`). From then on
+the request is not repeated, `useScreenShare` clears the preference and reports
+`isScreenAudioSupported: false`, and the sheet row reads _"Not supported on
+this device"_ instead of silently dropping the request and warning after every
+share. A refused consent never disables the option: it says nothing about the
+capability. If a future runtime does return an audio track, nothing is
+remembered and the option keeps working — the sender is added exactly as
+described above.
+
 ### Required native setup
 
 `getDisplayMedia` happily resolves with a video track on both platforms even
