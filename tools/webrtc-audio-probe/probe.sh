@@ -230,31 +230,31 @@ main() {
   #    camera path reaches, so a signature change is caught here instead.
   assert_member 'CameraEnumerator.createCapturer keeps its signature' \
     'org.webrtc.CameraEnumerator' \
-    'createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
+    'public abstract org\.webrtc\.CameraVideoCapturer createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
   assert_member 'Camera1Enumerator.createCapturer keeps its signature' \
     'org.webrtc.Camera1Enumerator' \
-    'createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
+    'public org\.webrtc\.CameraVideoCapturer createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
   assert_member 'Camera2Enumerator.createCapturer keeps its signature' \
     'org.webrtc.Camera2Enumerator' \
-    'createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
+    'public org\.webrtc\.CameraVideoCapturer createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
   assert_member 'CameraVideoCapturer.switchCamera keeps its signature' \
     'org.webrtc.CameraVideoCapturer' \
-    'switchCamera\(org\.webrtc\.CameraVideoCapturer\$CameraSwitchHandler\)'
+    'public abstract void switchCamera\(org\.webrtc\.CameraVideoCapturer\$CameraSwitchHandler\)'
   assert_member 'CameraVideoCapturer.CameraEventsHandler keeps its callback methods' \
     'org.webrtc.CameraVideoCapturer$CameraEventsHandler' \
-    'onCameraError\(java\.lang\.String\)'
+    'public abstract void onCameraError\(java\.lang\.String\)'
   assert_member 'SurfaceTextureHelper.create keeps its signature' \
     'org.webrtc.SurfaceTextureHelper' \
-    'create\(java\.lang\.String, org\.webrtc\.EglBase\$Context\)'
+    'public static org\.webrtc\.SurfaceTextureHelper create\(java\.lang\.String, org\.webrtc\.EglBase\$Context\)'
   assert_member 'VideoCapturer.initialize keeps its signature' \
     'org.webrtc.VideoCapturer' \
-    'initialize\(org\.webrtc\.SurfaceTextureHelper, android\.content\.Context, org\.webrtc\.CapturerObserver\)'
+    'public abstract void initialize\(org\.webrtc\.SurfaceTextureHelper, android\.content\.Context, org\.webrtc\.CapturerObserver\)'
   assert_member 'VideoSource.getCapturerObserver keeps its signature' \
     'org.webrtc.VideoSource' \
-    'getCapturerObserver\(\)'
+    'public org\.webrtc\.CapturerObserver getCapturerObserver\(\)'
   assert_member 'SurfaceViewRenderer.init keeps its signature' \
     'org.webrtc.SurfaceViewRenderer' \
-    'init\(org\.webrtc\.EglBase\$Context, org\.webrtc\.RendererCommon\$RendererEvents\)'
+    'public void init\(org\.webrtc\.EglBase\$Context, org\.webrtc\.RendererCommon\$RendererEvents\)'
   assert_member 'EglBase.create() keeps its signature' \
     'org.webrtc.EglBase' \
     'public static org\.webrtc\.EglBase create\(\)'

@@ -134,7 +134,7 @@ export default function useLocalMedia({
       updateStatus('Camera enabled');
     } catch (error) {
       cameraStream?.getTracks().forEach(track => track.stop());
-      logError('[CallFlow] Failed to enable camera', error);
+      logError('[CallFlow] Failed to enable camera', { error });
       updateStatus(getMediaAccessStatus(error), 'error');
     } finally {
       cameraChangeRef.current = false;
