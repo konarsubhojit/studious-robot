@@ -71,6 +71,7 @@ export default function useLocalMedia({
       });
     }
 
+    logInfo('[CallFlow] Requesting local media', { mediaType });
     try {
       const stream = await mediaDevices.getUserMedia({
         audio: true,
@@ -80,9 +81,13 @@ export default function useLocalMedia({
         stream.getTracks().forEach(track => track.stop());
         return epoch === mediaEpochRef.current ? localStreamRef.current : null;
       }
+      const [videoTrack] = stream.getVideoTracks();
       logInfo('[CallFlow] Local media stream acquired', {
         audio: stream.getAudioTracks().length,
         video: stream.getVideoTracks().length,
+        videoTrackId: videoTrack?.id ?? null,
+        videoTrackEnabled: videoTrack?.enabled ?? null,
+        videoTrackReadyState: videoTrack?.readyState ?? null,
       });
       localStreamRef.current = stream;
       setLocalStream(stream);
@@ -90,7 +95,7 @@ export default function useLocalMedia({
       setIsVideoEnabled(mediaType !== 'audio' && isTrackEnabled(stream, 'video'));
       return stream;
     } catch (error) {
-      logError('[CallFlow] Failed to acquire media', error);
+      logError('[CallFlow] Failed to acquire media', { mediaType, error });
       updateStatus(getMediaAccessStatus(error), 'error');
       throw error;
     }
@@ -107,6 +112,7 @@ export default function useLocalMedia({
         updateStatus(permissions.message, 'error');
         return;
       }
+      logInfo('[CallFlow] Requesting camera to enable video');
       cameraStream = await mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: 'user' },
@@ -124,10 +130,11 @@ export default function useLocalMedia({
       stream.addTrack(track);
       setIsVideoEnabled(true);
       setIsFrontCamera(true);
+      logInfo('[CallFlow] Camera enabled', { videoTrackId: track.id, videoTrackEnabled: track.enabled });
       updateStatus('Camera enabled');
     } catch (error) {
       cameraStream?.getTracks().forEach(track => track.stop());
-      logError('[CallFlow] Failed to enable camera', error);
+      logError('[CallFlow] Failed to enable camera', { error });
       updateStatus(getMediaAccessStatus(error), 'error');
     } finally {
       cameraChangeRef.current = false;
@@ -165,6 +172,7 @@ export default function useLocalMedia({
       }
 
       const nextFacingMode = isFrontCamera ? 'environment' : 'user';
+      logInfo('[CallFlow] Requesting camera for switch', { facingMode: nextFacingMode });
       const newStream = await mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: nextFacingMode },

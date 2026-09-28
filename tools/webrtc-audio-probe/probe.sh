@@ -221,11 +221,50 @@ main() {
     'org.webrtc.audio.AudioDeviceModule' \
     '(setAudioSamples|pushSamples|ExternalAudio)' absent
 
+  # 7. The substitution in mobile/android/build.gradle is applied app-wide via
+  #    `configurations.configureEach`, not scoped to screen sharing, so every
+  #    ordinary camera capture also runs on this AAR. A version bump that is
+  #    fine for the audio seam above could still silently break the camera
+  #    path, and that would only surface at runtime (see docs/android-system-
+  #    audio-decision.md §7). These assertions cover every libwebrtc class the
+  #    camera path reaches, so a signature change is caught here instead.
+  assert_member 'CameraEnumerator.createCapturer keeps its signature' \
+    'org.webrtc.CameraEnumerator' \
+    'public abstract org\.webrtc\.CameraVideoCapturer createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
+  assert_member 'Camera1Enumerator.createCapturer keeps its signature' \
+    'org.webrtc.Camera1Enumerator' \
+    'public org\.webrtc\.CameraVideoCapturer createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
+  assert_member 'Camera2Enumerator.createCapturer keeps its signature' \
+    'org.webrtc.Camera2Enumerator' \
+    'public org\.webrtc\.CameraVideoCapturer createCapturer\(java\.lang\.String, org\.webrtc\.CameraVideoCapturer\$CameraEventsHandler\)'
+  assert_member 'CameraVideoCapturer.switchCamera keeps its signature' \
+    'org.webrtc.CameraVideoCapturer' \
+    'public abstract void switchCamera\(org\.webrtc\.CameraVideoCapturer\$CameraSwitchHandler\)'
+  assert_member 'CameraVideoCapturer.CameraEventsHandler keeps its callback methods' \
+    'org.webrtc.CameraVideoCapturer$CameraEventsHandler' \
+    'public abstract void onCameraError\(java\.lang\.String\)'
+  assert_member 'SurfaceTextureHelper.create keeps its signature' \
+    'org.webrtc.SurfaceTextureHelper' \
+    'public static org\.webrtc\.SurfaceTextureHelper create\(java\.lang\.String, org\.webrtc\.EglBase\$Context\)'
+  assert_member 'VideoCapturer.initialize keeps its signature' \
+    'org.webrtc.VideoCapturer' \
+    'public abstract void initialize\(org\.webrtc\.SurfaceTextureHelper, android\.content\.Context, org\.webrtc\.CapturerObserver\)'
+  assert_member 'VideoSource.getCapturerObserver keeps its signature' \
+    'org.webrtc.VideoSource' \
+    'public org\.webrtc\.CapturerObserver getCapturerObserver\(\)'
+  assert_member 'SurfaceViewRenderer.init keeps its signature' \
+    'org.webrtc.SurfaceViewRenderer' \
+    'public void init\(org\.webrtc\.EglBase\$Context, org\.webrtc\.RendererCommon\$RendererEvents\)'
+  assert_member 'EglBase.create() keeps its signature' \
+    'org.webrtc.EglBase' \
+    'public static org\.webrtc\.EglBase create\(\)'
+
   printf '\n%d checks, %d failures\n' "${checks}" "${failures}"
   if (( failures > 0 )); then
-    printf '\nA failure means system-audio screen sharing does not work on this\n'
-    printf 'WebRTC version. Do not move the substitution in\n'
-    printf 'mobile/android/build.gradle to it, and correct\n'
+    printf '\nA failure means either system-audio screen sharing or plain camera\n'
+    printf 'capture does not work on this WebRTC version (the substitution in\n'
+    printf 'mobile/android/build.gradle is app-wide, not scoped to screen\n'
+    printf 'sharing). Do not move the substitution to it, and correct\n'
     printf 'docs/android-system-audio-decision.md.\n'
     return 1
   fi
