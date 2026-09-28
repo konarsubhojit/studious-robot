@@ -3567,6 +3567,78 @@ describe('useCallFlow chat', () => {
     ]);
   });
 
+  // ── plain camera capture, screen sharing never touched ────────────────────
+
+  test('publishes a live camera track to the peer connection for a plain call, with screen sharing left untouched', async () => {
+    // Regression coverage: the camera must work on an ordinary call even
+    // though every project shares one libwebrtc build (the dependency
+    // substitution in mobile/android/build.gradle is app-wide, not scoped to
+    // screen sharing) and screen-share cleanup disables/restores the same
+    // camera track it borrows. Neither should ever be reachable from a call
+    // that never toggles screen sharing at all.
+    const { resultRef, tree } = await renderWithSocket();
+
+    const incomingHandler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await incomingHandler({ call: { callId: 'call-camera-1', callerId: 'bob' } });
+    });
+    await flushAsyncEffects();
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    const localVideoTrack = { kind: 'video', id: 'cam-video-1', enabled: true, stop: jest.fn() };
+    const localAudioTrack = { kind: 'audio', id: 'cam-audio-1', enabled: true, stop: jest.fn() };
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue({
+      getTracks: () => [localAudioTrack, localVideoTrack],
+      getVideoTracks: () => [localVideoTrack],
+      getAudioTracks: () => [localAudioTrack],
+    });
+    const addTrack = jest.fn();
+    (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
+      addTrack,
+      addTransceiver: jest.fn(),
+      getSenders: jest.fn(() => []),
+      onicecandidate: null,
+      ontrack: null,
+      close: jest.fn(),
+    }));
+
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
+      if (event === 'call.accept') {
+        cb?.({
+          ok: true,
+          call: {
+            callId: 'call-camera-1',
+            callerId: 'bob',
+            calleeId: 'alice',
+            status: 'accepted',
+          },
+        });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // Local preview: the camera track exists, is enabled, and video is on.
+    expect(resultRef.current.isVideoEnabled).toBe(true);
+    expect(resultRef.current.localStream?.getVideoTracks()).toEqual([localVideoTrack]);
+    // Publish to peer: the same track was hand off to the connection, not
+    // just rendered locally.
+    expect(addTrack).toHaveBeenCalledWith(localVideoTrack, expect.anything());
+    expect(addTrack).toHaveBeenCalledWith(localAudioTrack, expect.anything());
+    // Screen sharing was never touched.
+    expect(resultRef.current.isScreenSharing).toBe(false);
+  });
+
   test('an unanswered offer is re-sent, and each attempt reports an offer_sent receipt', async () => {
     // The incident this guards against: the server relays the offer into the
     // callee's user room and acks `ok` whether or not a socket is there, so a

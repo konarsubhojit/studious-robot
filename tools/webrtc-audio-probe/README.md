@@ -1,7 +1,9 @@
 # webrtc-audio-probe
 
 Asserts, against real libwebrtc bytecode, the API facts that Android
-system-audio screen sharing depends on — see
+system-audio screen sharing depends on, plus the camera-facing API surface
+that the same dependency substitution silently swaps for every ordinary call
+— see
 [`docs/android-system-audio-decision.md`](../../docs/android-system-audio-decision.md).
 
 Sharing the device's audio works by mixing captured playback into the
@@ -40,7 +42,7 @@ and 1 when any has drifted.
 
 ## What it checks
 
-Eleven claims, in six groups:
+Twenty-one claims, in seven groups:
 
 1. **The seam** — `AudioBufferCallback` exists, `onBuffer` has the signature the
    mixer implements, and `Builder.setAudioBufferCallback` installs it.
@@ -60,6 +62,16 @@ Eleven claims, in six groups:
 6. **There is still no external audio source.** If one ever appears it would be
    a cleaner mechanism than mixing into the microphone track, and the design
    should be revisited.
+7. **The camera surface hasn't drifted.** The dependency substitution in
+   `mobile/android/build.gradle` is app-wide (`configurations.configureEach`),
+   not scoped to screen sharing, so it also swaps the libwebrtc build behind
+   ordinary camera capture. This group asserts the signatures of every
+   libwebrtc class the camera path reaches — `CameraEnumerator`,
+   `Camera1Enumerator`, `Camera2Enumerator`, `CameraVideoCapturer` (and its
+   `CameraEventsHandler`), `SurfaceTextureHelper`, `VideoCapturer`,
+   `VideoSource`, `SurfaceViewRenderer`, `EglBase` — so a version bump that is
+   safe for the audio seam but breaks the camera at runtime (`NoSuchMethodError`,
+   `AbstractMethodError`) is still caught here instead of on a device.
 
 Checks 4 and 5 read files in this repository, so the halves of the mechanism
 that live outside the AAR are covered by the same run. Running the probe
@@ -68,9 +80,12 @@ whole point of the script.
 
 ## Reading a failure
 
-A failure means **system-audio sharing does not work on that WebRTC version**.
-Do not move the substitution in `mobile/android/build.gradle` to it, and correct
-the decision record.
+A failure in checks 1–6 means **system-audio sharing does not work on that
+WebRTC version**; do not move the substitution in `mobile/android/build.gradle`
+to it, and correct the decision record. A failure in check group 7 means the
+**camera** is at risk on that version instead — the substitution is app-wide,
+so ordinary camera capture (not just screen sharing) runs on whatever version
+is pinned in `mobile/android/build.gradle`.
 
 ## What it deliberately does not check
 

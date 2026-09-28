@@ -185,10 +185,13 @@ present system audio as guaranteed.
 | --- | --- |
 | The seam exists, has the expected signature, and sits between mute-zeroing and the native handoff | `tools/webrtc-audio-probe/probe.sh` — 11 assertions over real bytecode, including a bytecode **ordering** check |
 | The substituted AAR is a drop-in for `react-native-webrtc` | Public-API diff (0 classes missing; 3 unrelated member differences) plus a clean `javac` of every `react-native-webrtc` Java source against both AARs |
+| The substitution does not change the **camera** surface — it is applied app-wide (`configurations.configureEach` in `mobile/android/build.gradle`), not scoped to screen sharing, so ordinary camera capture runs on the substituted AAR too | `tools/webrtc-audio-probe/probe.sh` — 10 further assertions over real bytecode for `CameraEnumerator`, `Camera1Enumerator`, `Camera2Enumerator`, `CameraVideoCapturer` (incl. `CameraEventsHandler`), `SurfaceTextureHelper`, `VideoCapturer`, `VideoSource`, `SurfaceViewRenderer`, `EglBase`. Confirmed byte-for-byte identical public API between `org.jitsi:webrtc:124.0.0` and `io.github.webrtc-sdk:android:125.6422.07`, and the new AAR is a pure superset of classes (adds classes, removes none) |
 | Ring buffer and PCM mixing arithmetic | Executed on a JVM: overflow, wrap-around, clamping, endianness and buffer-cursor behaviour |
 | JS façade, capability reporting, mute routing, start/stop unwind | Jest — `mobile/__tests__/screenAudio.test.ts` and the hook suites |
 | **Everything in §5** | **Not verified. Needs a device.** |
 
-Re-run the probe on any WebRTC version bump. A failure there means system-audio
-sharing is broken on that version, and the substitution in
-`mobile/android/build.gradle` must not be moved to it.
+Re-run the probe on any WebRTC version bump. A failure in checks 1–6 means
+system-audio sharing is broken on that version; a failure in check group 7
+means the camera is at risk instead, because the substitution in
+`mobile/android/build.gradle` is app-wide. Either way, the substitution must
+not be moved to that version.

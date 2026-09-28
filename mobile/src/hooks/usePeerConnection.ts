@@ -238,6 +238,11 @@ export default function usePeerConnection({
       const attachedTracks = new Set((pc.getSenders?.() ?? []).map(s => s.track).filter(Boolean));
       currentLocalStream.getTracks().forEach(track => {
         if (!attachedTracks.has(track)) {
+          logInfo('[CallFlow] Publishing local track to peer connection', {
+            kind: track.kind,
+            trackId: track.id,
+            enabled: track.enabled,
+          });
           pc.addTrack(track, currentLocalStream);
         }
       });
