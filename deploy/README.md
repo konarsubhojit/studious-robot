@@ -1056,6 +1056,66 @@ Caddy upgrades WebSockets without extra configuration.
 curl -fsS http://127.0.0.1:4173/health
 systemctl is-active robot-signal
 systemd-analyze security robot-signal   # sandbox exposure score
+
+## Metrics history and redeploy hooks
+
+Install the telemetry tools as root. The token is never stored in this
+repository:
+
+```bash
+sudo install -d -m 0700 -o root -g root /var/log/robot-metrics/final
+sudo install -m 0600 -o root -g root /dev/null /etc/robot-metrics.env
+printf 'DEBUG_API_TOKEN=%s\n' "$(openssl rand -hex 32)" | sudo tee /etc/robot-metrics.env >/dev/null
+sudo chmod 0600 /etc/robot-metrics.env
+sudo install -m 0755 deploy/robot-metrics-check.sh /usr/local/bin/
+sudo install -m 0755 deploy/robot-metrics-snapshot.sh /usr/local/bin/
+sudo install -m 0644 deploy/robot-metrics-check.service /etc/systemd/system/
+sudo install -m 0644 deploy/robot-metrics-check.timer /etc/systemd/system/
+sudo install -m 0644 deploy/logrotate/robot-metrics /etc/logrotate.d/robot-metrics
+sudo install -d /etc/systemd/system/robot-signal.service.d
+sudo install -m 0644 deploy/systemd/robot-signal.service.d/*.conf /etc/systemd/system/robot-signal.service.d/
+sudo systemctl daemon-reload
+sudo systemctl enable --now robot-metrics-check.timer
+```
+
+The `robot-signal.service` unit must also contain
+`EnvironmentFile=-/etc/robot-metrics.env`; install the tracked unit or add
+that line to the deployed unit before restarting it. Install
+`deploy/redeploy.sh` on the host and invoke it for the production redeploy.
+It snapshots before pulling, applies locked dependencies and pending Drizzle
+migrations, restarts the service, then snapshots again. Node 22 strips the
+server's TypeScript types at runtime, so no compile step is needed.
+
+### Reading the history
+
+`snapshots.jsonl` stores one derived record per check. Useful trend queries are:
+
+```bash
+jq -r '[.t, .pg.max] | @tsv' /var/log/robot-metrics/snapshots.jsonl
+jq -r '[.t, .loopMax.max] | @tsv' /var/log/robot-metrics/snapshots.jsonl
+jq -r '[.t, .cacheRate] | @tsv' /var/log/robot-metrics/snapshots.jsonl
+jq -r '[.t, .connect.mean] | @tsv' /var/log/robot-metrics/snapshots.jsonl
+jq -r '[.t, (.dbq[0].operation), (.dbq[0].maxMs)] | @tsv' /var/log/robot-metrics/snapshots.jsonl
+jq -r 'group_by(.restartMarker)[] | .[] | [.t, .restartMarker, .counters.db_queries_total] | @tsv' /var/log/robot-metrics/snapshots.jsonl
+```
+
+Counters and histograms are in-process and reset on restart. A counter
+decrease between lines is a restart, not a regression; never calculate a
+delta across a `restartMarker` boundary. `call_setup_latency_ms` includes
+human ring time, while `call_connect_latency_ms` is the server-side machine
+number.
+
+Operational checks:
+
+* `systemctl show -p Environment` omits `EnvironmentFile` values. Verify the
+  real process environment with
+  `sudo tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value robot-signal.service)/environ | grep DEBUG_API_TOKEN`.
+* An inline `Environment=` takes precedence over an `EnvironmentFile`; do not
+  set the token in both places.
+* A CRLF in the env file appends `\r` to the token and breaks authentication;
+  inspect it with `cat -A /etc/robot-metrics.env`.
+* `/metrics` is bound to localhost and should also be blocked at the Caddy
+  edge if the reverse proxy is changed.
 ```
 
 `/health` must report `"stateAffinity":"shared"` on **both** VMs. `"sticky"`

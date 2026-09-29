@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic robot-signal metrics check
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
