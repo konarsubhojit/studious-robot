@@ -1,0 +1,8 @@
+[Unit]
+Description=Check robot-signal metrics
+After=robot-signal.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/robot-metrics.env
+ExecStart=/usr/local/bin/robot-metrics-check.sh

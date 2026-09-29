@@ -1,0 +1,9 @@
+/var/log/robot-metrics/*.log /var/log/robot-metrics/*.jsonl {
+    weekly
+    size 50M
+    rotate 8
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
