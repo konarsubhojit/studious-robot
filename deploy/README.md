@@ -1056,6 +1056,7 @@ Caddy upgrades WebSockets without extra configuration.
 curl -fsS http://127.0.0.1:4173/health
 systemctl is-active robot-signal
 systemd-analyze security robot-signal   # sandbox exposure score
+```
 
 ## Metrics history and redeploy hooks
 
@@ -1116,7 +1117,6 @@ Operational checks:
   inspect it with `cat -A /etc/robot-metrics.env`.
 * `/metrics` is bound to localhost and should also be blocked at the Caddy
   edge if the reverse proxy is changed.
-```
 
 `/health` must report `"stateAffinity":"shared"` on **both** VMs. `"sticky"`
 means that VM has no `REDIS_URL` and is keeping private state — fix it before

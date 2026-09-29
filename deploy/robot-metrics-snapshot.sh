@@ -24,7 +24,9 @@ fi
 mkdir -p "$FINAL_DIR" || exit 0
 rev="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+target="${FINAL_DIR}/${stamp}-${label}.json"
+final_tmp="$(mktemp "${FINAL_DIR}/.snapshot.XXXXXX")"
+trap 'rm -f "$tmp" "$final_tmp"' EXIT
 
 if curl --silent --show-error --fail --connect-timeout 5 --max-time 15 \
   -H "x-debug-token: ${DEBUG_API_TOKEN:-}" "$METRICS_URL" >"$tmp" &&
@@ -32,7 +34,8 @@ if curl --silent --show-error --fail --connect-timeout 5 --max-time 15 \
     if (type == "object") then . + {_label: $label, _gitRev: $rev, _snapshotAt: $t}
     else error("metrics is not an object")
     end
-  ' "$tmp" >"${FINAL_DIR}/${stamp}-${label}.json"; then
+  ' "$tmp" >"$final_tmp" &&
+  mv -f "$final_tmp" "$target"; then
   :
 else
   printf '%s snapshot failed\n' "$now" >&2
