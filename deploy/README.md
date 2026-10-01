@@ -1106,6 +1106,44 @@ delta across a `restartMarker` boundary. `call_setup_latency_ms` includes
 human ring time, while `call_connect_latency_ms` is the server-side machine
 number.
 
+### Check severities
+
+`robot-metrics-check.sh` appends one line per finding to `checks.log`, or a
+single `OK calls=… msgs=…` line when there are none:
+
+* `FAIL` — the check itself could not run (token unset, `/metrics`
+  unreachable, unexpected response shape, snapshot write or jq failure).
+* `RESET` — `calls_initiated`, `messages_persisted_total` or
+  `db_queries_total` decreased since the previous snapshot, so the process
+  restarted and `restartMarker` advances. A run with all-zero counters is
+  **not** treated as a restart on its own: an idle, freshly started process
+  would otherwise log `RESET` and move the marker on every run.
+* `ANOMALY` — reserved for states that are impossible on a healthy server:
+  `calls_ended > calls_initiated`, any `message_persist_errors`, any
+  `db_query_errors_total`.
+* `WARN` — worth a look but legitimately non-zero: `rtc_relays_no_recipient`,
+  `signaling_errors`, `db_slow_queries_total`, and a **positive**
+  `delivery_marking_gap`.
+* `PERF` — latency, event-loop lag and cache-hit thresholds.
+
+Two derived fields are deliberately not invariants:
+
+* `derived.call_completion_rate` is `calls_ended / calls_in_call`.
+  `calls_ended` also counts calls that ended without ever connecting (for
+  example, cancelled while ringing), and on a fleet the two counters can be
+  recorded by different instances, so a value above `1.0` is normal. It is
+  not checked; read it only as a fleet-wide trend (see `server/README.md`).
+* `derived.messages_delivery_marking_gap` is
+  `messages_persisted_total - messages_delivery_marks_issued_total`. A mark
+  counts each time the idempotent `delivered_to` guard is *issued*, not each
+  message or device. A message delivered online is marked once on send and
+  again when the recipient reads it, and a read can also mark messages
+  persisted before the last restart. A negative gap is therefore expected.
+  Only a positive gap (fewer marks than messages persisted) points at
+  undelivered messages. It is still only `WARN`, because messages to an
+  offline recipient stay unmarked until delivered or read; act on it only
+  when it keeps growing across consecutive runs within one `restartMarker`.
+
 Operational checks:
 
 * `systemctl show -p Environment` omits `EnvironmentFile` values. Verify the

@@ -62,10 +62,6 @@ messages="$(jq -er '.counters.messages_persisted_total // 0' "$record")" || exit
 queries="$(jq -er '.counters.db_queries_total // 0' "$record")" || exit 1
 reset=0
 reset_reason=()
-if [ "$calls" -eq 0 ] && [ "$messages" -eq 0 ] && [ "$queries" -eq 0 ]; then
-  reset=1
-  reset_reason+=("no_accumulated_activity")
-fi
 if [ "$previous_valid" -eq 1 ]; then
   old_calls="$(jq -er '.counters.calls_initiated' <<<"$previous")" || exit 1
   old_messages="$(jq -er '.counters.messages_persisted_total' <<<"$previous")" || exit 1
@@ -114,16 +110,14 @@ if ! statuses="$(jq -r '
   [
     (if (.counters.calls_ended // 0) > (.counters.calls_initiated // 0)
       then "ANOMALY calls_ended_exceeds_calls_initiated" else empty end),
-    (if (.derived.call_completion_rate // 0) > 1
-      then "ANOMALY call_completion_rate=\(.derived.call_completion_rate)" else empty end),
-    (if (.derived.messages_delivery_marking_gap // 0) != 0
-      then "ANOMALY delivery_marking_gap=\(.derived.messages_delivery_marking_gap)" else empty end),
     (if (.counters.message_persist_errors // 0) > 0
       then "ANOMALY message_persist_errors=\(.counters.message_persist_errors)" else empty end),
     (if (.counters.db_query_errors_total // 0) > 0
       then "ANOMALY db_query_errors_total=\(.counters.db_query_errors_total)" else empty end),
     (if (.counters.rtc_relays_no_recipient // 0) > 0
       then "WARN rtc_relays_no_recipient=\(.counters.rtc_relays_no_recipient)" else empty end),
+    (if (.derived.messages_delivery_marking_gap // 0) > 0
+      then "WARN delivery_marking_gap=\(.derived.messages_delivery_marking_gap)" else empty end),
     (if (.counters.signaling_errors // 0) > 0
       then "WARN signaling_errors=\(.counters.signaling_errors)" else empty end),
     (if (.counters.db_slow_queries_total // 0) > 0
