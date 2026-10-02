@@ -19,7 +19,7 @@
  *   - conversations  projection of one row per 1:1 message conversation
  */
 
-import { pgTable, uuid, integer, text, timestamp, jsonb, index, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, integer, real, text, timestamp, jsonb, index, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
 import { desc, sql } from 'drizzle-orm';
 
 /**
@@ -104,6 +104,26 @@ const callEvents = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index('idx_call_events_call').on(t.callId, t.createdAt)],
+);
+
+const callQualitySamples = pgTable(
+  'call_quality_samples',
+  {
+    sampleId: uuid('sample_id').primaryKey().defaultRandom(),
+    callId: uuid('call_id')
+      .notNull()
+      .references(() => calls.callId, { onDelete: 'cascade' }),
+    rttMs: real('rtt_ms').notNull(),
+    jitterMs: real('jitter_ms').notNull(),
+    packetLossPercent: real('packet_loss_percent').notNull(),
+    bitrateBps: real('bitrate_bps').notNull(),
+    codec: text('codec').notNull(),
+    sampledAt: timestamp('sampled_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('idx_call_quality_call_sampled').on(t.callId, desc(t.sampledAt)),
+    index('idx_call_quality_sampled').on(t.sampledAt),
+  ],
 );
 
 /**
@@ -325,4 +345,4 @@ const accountDeletions = pgTable(
   (t) => [index('idx_account_deletions_due').on(t.status, t.scheduledFor)],
 );
 
-export { users, calls, callEvents, devices, auditLog, blocks, messages, conversations, accountDeletions };
+export { users, calls, callEvents, callQualitySamples, devices, auditLog, blocks, messages, conversations, accountDeletions };

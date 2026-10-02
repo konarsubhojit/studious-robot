@@ -7,7 +7,7 @@ import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from '../cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_RATE_LIMIT, DEFAULT_SESSION_RATE_WINDOW_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS, DEFAULT_FANOUT_PROBE_INTERVAL_MS, DEFAULT_ACCOUNT_DELETION_GRACE_MS, DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS } from '../config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_RATE_LIMIT, DEFAULT_SESSION_RATE_WINDOW_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_CALL_QUALITY_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS, DEFAULT_FANOUT_PROBE_INTERVAL_MS, DEFAULT_ACCOUNT_DELETION_GRACE_MS, DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS } from '../config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
 import { runRetentionSweep } from '../lib/retention.ts';
 import { hydrateAccountDeletions, runAccountDeletionSweep } from '../domain/accountDeletion.ts';
@@ -120,6 +120,10 @@ function createServer(opts: CreateServerOptions = {}) {
   const rtcRateLimiter = createRateLimiter({
     maxRequests: opts.rtcRateLimit ?? parseEnv('RTC_RATE_LIMIT', 100),
     windowMs: opts.rtcRateWindowMs ?? parseEnv('RTC_RATE_WINDOW_MS', 10_000),
+  });
+  const callStatsRateLimiter = createRateLimiter({
+    maxRequests: opts.callStatsRateLimit ?? parseEnv('CALL_STATS_RATE_LIMIT', 10),
+    windowMs: opts.callStatsRateWindowMs ?? parseEnv('CALL_STATS_RATE_WINDOW_MS', 10_000),
   });
   const turnCredentialsRateLimiter = createRateLimiter({
     maxRequests: opts.turnRateLimit ?? parseEnv('TURN_CREDENTIALS_RATE_LIMIT', 10),
@@ -249,6 +253,8 @@ function createServer(opts: CreateServerOptions = {}) {
     sessionRateLimiter,
     /** Rate limiter for RTC signaling events. */
     rtcRateLimiter,
+    /** Rate limiter for call-quality reports. */
+    callStatsRateLimiter,
     /** Rate limiter for TURN credential minting. */
     turnCredentialsRateLimiter,
     messageSendRateLimiter,
@@ -283,6 +289,7 @@ function createServer(opts: CreateServerOptions = {}) {
      * during a rolling deploy.
      */
     draining: false,
+    socketDisconnects: new Map(),
   };
   // Drop locally cached entries when another instance reports a write.
   // The resolved unsubscribe handle is retained so `shutdown()` can release
@@ -506,9 +513,21 @@ function createServer(opts: CreateServerOptions = {}) {
   const messageRetentionMs =
     opts.messageRetentionMs ??
     parseNonNegativeNumber('MESSAGE_RETENTION_MS', process.env.MESSAGE_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS);
+  const configuredCallQualityRetentionMs =
+    opts.callQualityRetentionMs ??
+    parseNonNegativeNumber(
+      'CALL_QUALITY_RETENTION_MS',
+      process.env.CALL_QUALITY_RETENTION_MS,
+      DEFAULT_CALL_QUALITY_RETENTION_MS
+    );
+  const callQualityRetentionMs =
+    Number.isFinite(configuredCallQualityRetentionMs) && configuredCallQualityRetentionMs > 0
+      ? configuredCallQualityRetentionMs
+      : DEFAULT_CALL_QUALITY_RETENTION_MS;
   const retentionSweepTimer = setInterval(() => {
     runRetentionSweep(db, {
       callRetentionMs: dbCallRetentionMs,
+      callQualityRetentionMs,
       auditRetentionMs,
       messageRetentionMs,
     }).catch((error) => {

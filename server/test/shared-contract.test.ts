@@ -159,6 +159,31 @@ test('signaling payload schemas cover both directions and pass unknown events th
   assert.equal(unknownEvent.success, true);
 });
 
+test('call.stats requires bounded WebRTC metrics and a non-empty codec', () => {
+  const valid = {
+    version: 1,
+    callId: 'call-1',
+    rttMs: 120,
+    jitterMs: 25,
+    packetLossPercent: 1.5,
+    bitrateBps: 64_000,
+    codec: 'opus',
+  };
+  assert.equal(parseEventPayload(CLIENT_EVENTS.CALL_STATS, valid).success, true);
+
+  for (const invalid of [
+    { ...valid, rttMs: -1 },
+    { ...valid, jitterMs: 10_001 },
+    { ...valid, packetLossPercent: 101 },
+    { ...valid, bitrateBps: Infinity },
+    { ...valid, codec: '' },
+    { ...valid, codec: 'x'.repeat(65) },
+    { ...valid, callId: undefined },
+  ]) {
+    assert.equal(parseEventPayload(CLIENT_EVENTS.CALL_STATS, invalid).success, false);
+  }
+});
+
 // ─── server-side rejection of malformed payloads ─────────────────────────────
 
 test('malformed signaling payloads are rejected with bad_request, not crashes', async (t) => {

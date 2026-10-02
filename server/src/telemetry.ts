@@ -111,6 +111,8 @@ export type Telemetry = {
   recordMessagePersistenceFailure: () => void;
   recordMessagePersisted: () => void;
   recordMessageDeliveryMarksIssued: (count?: number) => void;
+  recordCallStats: () => void;
+  recordSocketReconnect: () => void;
   recordCacheHit: () => void;
   recordCacheMiss: () => void;
   recordDbQuery: (record: import('./lib/queryTiming.ts').QueryTimingRecord) => void;
@@ -294,6 +296,9 @@ function createTelemetry(): Telemetry {
     calls_in_call: 0, // successfully reached in_call
     calls_ended: 0, // reached terminal ended state
     calls_failed: 0, // ended with endReason=failed
+    call_setup_failures_total: 0,
+    socket_reconnects_total: 0,
+    call_stats_received_total: 0,
     // ── Latency-sample provenance ───────────────────────────────────────────
     // Both call-latency histograms are fed from two different clocks (the call
     // record's, shared between instances, and this process's own), and a shift
@@ -458,8 +463,10 @@ function createTelemetry(): Telemetry {
       counters.calls_ringing += 1;
     } else if (call.status === 'busy') {
       counters.calls_busy += 1;
+      counters.call_setup_failures_total += 1;
     } else if (call.status === 'unreachable') {
       counters.calls_unreachable += 1;
+      counters.call_setup_failures_total += 1;
     }
   }
 
@@ -634,6 +641,13 @@ function createTelemetry(): Telemetry {
         recordRingEnd('calls_missed', call, ts, nowMs);
         break;
       case 'ended':
+        if (
+          previousStatus !== 'in_call' &&
+          call.endReason !== 'user_hangup' &&
+          call.endReason !== 'cancelled'
+        ) {
+          counters.call_setup_failures_total += 1;
+        }
         recordCallEnd(call, ts, nowMs);
         break;
       default:
@@ -748,6 +762,14 @@ function createTelemetry(): Telemetry {
    */
   function recordMessagePersisted() {
     counters.messages_persisted_total += 1;
+  }
+
+  function recordCallStats() {
+    counters.call_stats_received_total += 1;
+  }
+
+  function recordSocketReconnect() {
+    counters.socket_reconnects_total += 1;
   }
 
   /**
@@ -911,6 +933,8 @@ function createTelemetry(): Telemetry {
     recordMessagePersistenceFailure,
     recordMessagePersisted,
     recordMessageDeliveryMarksIssued,
+    recordCallStats,
+    recordSocketReconnect,
     recordCacheHit,
     recordCacheMiss,
     recordDbQuery,

@@ -236,6 +236,9 @@ const DEFAULT_MAX_RETAINED_CALLS = 500;
  */
 const DEFAULT_DB_CALL_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** Quality samples are operational telemetry and are retained for 30 days. */
+const DEFAULT_CALL_QUALITY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 /**
  * How long an `audit_log` row is kept before the retention sweep deletes it.
  *
@@ -436,6 +439,7 @@ export {
   DEFAULT_CALL_RETENTION_MS,
   DEFAULT_MAX_RETAINED_CALLS,
   DEFAULT_DB_CALL_RETENTION_MS,
+  DEFAULT_CALL_QUALITY_RETENTION_MS,
   DEFAULT_AUDIT_RETENTION_MS,
   DEFAULT_MESSAGE_RETENTION_MS,
   DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS,
