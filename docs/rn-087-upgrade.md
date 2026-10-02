@@ -1,91 +1,36 @@
-# React Native 0.87 upgrade
+# React Native 0.87 — upgrade decision record
 
-## Why this is a separate task
+Audited against `ab7591677e979d0a86b1137e99743fc5f3bdc5fd` on 2026-10-02.
 
-React Native uses semver-minor releases as its breaking-change channel. This
-upgrade must not ride in a grouped dependency PR: the toolchain and native
-packages need to move as a tested set, followed by an APK/device build and
-manual QA.
+## Implemented configuration
 
-## Version set
+`mobile/package.json` already pins React Native **0.87.1** and the matching
+Babel, ESLint, Metro, codegen and Jest preset packages. `mobile/jest.config.js`
+uses `@react-native/jest-preset`. The old dependency-upgrade sequence and
+candidate version list are no longer pending work; use the manifest and lockfile
+for the current dependency set.
 
-Upgrade and verify these together:
+`ThemeProvider.tsx` passes the OS colour scheme through `resolveScheme` in
+`theme.ts`, while preserving the saved System/Light/Dark preference.
+Android `minSdkVersion` is **24** in `mobile/android/build.gradle`.
 
-- `react-native` 0.87.1
-- `@react-native/babel-preset`, `@react-native/eslint-config`, and
-  `@react-native/metro-config` 0.87.1
-- `@react-native/jest-preset` compatible with 0.87.1; the
-  `react-native/jest-preset` subpath was removed, so Jest must use the package
-  form
-- `react-native-reanimated` 4.6.0 with `react-native-worklets` 0.12.1.
-  Reanimated 4.6 supports RN 0.83–0.87 and pairs with Worklets 0.12.x.
-- `react-native-gesture-handler` 3.2.1
-- `react` and `react-test-renderer` 19.2.8
+## Rationale to retain
 
-## Code and configuration audit
+React Native toolchain/native-package upgrades should be validated together
+and separately from unrelated build changes. A native build failure is easier
+to attribute when a Gradle wrapper change is not bundled with the framework
+upgrade. Passing Jest/typecheck/lint does not establish native build or device
+compatibility.
 
-- **`mobile/src/ThemeProvider.tsx`:** `useColorScheme()` now returns
-  `ColorSchemeName | null`. Handle `null` explicitly instead of relying on the
-  old non-null/`'unspecified'` behavior. Preserve System/Light/Dark overrides,
-  including persistence to `wetalk-theme.json`; System mode must still follow
-  live OS changes.
-- **Jest:** use `preset: '@react-native/jest-preset'`, not the removed
-  `react-native/jest-preset` subpath. The repository already uses the package
-  form; retain and verify it.
-- **Deep imports:** search for `react-native/src/private/...`. They may still
-  resolve at runtime but lose TypeScript coverage; replace them with public
-  APIs or explicitly document and accept each remaining import. None are
-  present before this upgrade.
-- **List keyboard behavior:** reject boolean `keyboardShouldPersistTaps`
-  values in `ScrollView`, `FlatList`, and `SectionList`; use supported string
-  values. The current call sites use `"handled"`.
-- **Touchable types:** replace any `Touchable` type imports with `ViewProps`.
-  None are present before this upgrade.
-- **Node:** RN 0.87 requires Node >= 22.13.0. `.nvmrc` pins Node 24, so the
-  development and CI runtime already satisfies the requirement. Verify that
-  the `engines.node` ranges in `mobile/package.json` and `server/package.json`
-  remain compatible (they are currently `>=22`) and record the versions used
-  for the upgrade build.
+## Device checks
 
-## Gesture-handler risk
+No completed physical-device results are asserted by this record. For native
+dependency changes, verify:
 
-RNGH 3.2 reimplemented `Pressable` on `Touchable` and refactored `Touchable`
-off `GestureDetector` on Android, iOS, and Web. The most exposed components are:
-
-- `SwipeableRow`, used by chat-list and call-history actions, especially its
-  `activeOffsetX`/`failOffsetY` arbitration
-- `MediaViewer`, which composes Pinch, Pan, and Tap gestures
-
-Specifically re-test the long-press-inside-swipe race documented in the Phase 6
-notes: a message long press must remain available without blocking horizontal
-swipe or normal vertical scrolling.
-
-## `react-native-incall-manager` 4.2.2
-
-Version 4.2.2 raises Android `minSdkVersion` from 21 to 24. The current value in
-`mobile/android/build.gradle` is **24**, so no SDK bump is needed.
-
-The release also fixes Android ringtone restoration overriding call audio. That
-overlaps the audio-session work merged in #166; verify that ringtone cleanup
-does not undo the intended in-call route or conflict with that work.
-
-## Device QA checklist
-
-Run this checklist on a physical device after unit/CI checks and an APK build:
-
-- [ ] Switch among System, Light, and Dark; in System mode, change the OS theme
-      and verify that the app follows it live.
-- [ ] Use chat-list and call-history swipe actions and verify vertical-scroll
-      arbitration.
-- [ ] Long-press a message bubble, including from inside the swipe surface.
-- [ ] In the media viewer, pinch, pan, and double-tap.
-- [ ] Complete a call: connect → mute → speaker/earpiece → camera switch → end.
-- [ ] Connect a Bluetooth audio device, remove it mid-call, and verify routing.
-- [ ] Start and stop screen sharing.
-- [ ] Enter and exit picture-in-picture.
-
-## Sequencing
-
-Land this task **after** the cheap Dependabot work (#184, the Actions bumps,
-and Jest), and **separately** from the Gradle wrapper bump in #183. This keeps
-an APK build failure attributable to one candidate cause instead of several.
+- System/Light/Dark preferences, including live OS theme changes.
+- Chat-list and call-history swipe actions without breaking vertical scroll.
+- Message long press within swipe surfaces.
+- Media-viewer pinch, pan and double tap.
+- Call connect, mute, speaker/earpiece, camera switch and end.
+- Bluetooth routing, including device removal mid-call.
+- Screen-share start/stop and PiP enter/exit.

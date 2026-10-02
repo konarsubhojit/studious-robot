@@ -535,10 +535,9 @@ local mail spool, which is usually unread.
 
 The script explicitly uses instance-principal authentication, stages the dump
 to a temporary file, and refuses to upload files smaller than `MIN_SIZE`
-(default: `100000` bytes). Real dumps are ~141 KB following the removal of
-~400 users on 2026-09-23; before that removal they were ~1.1 MB. The 100 KB
-floor is therefore comfortably below a healthy dump but still catches an empty
-or wrong-database dump.
+(default: `100000` bytes). Calibrate the floor against current healthy dumps;
+an old database-size snapshot does not establish a safe threshold after data
+growth or erasure.
 
 `MIN_SIZE` is measured on the **plaintext** dump, before encryption, so it
 compares against `pg_dump` output rather than an `age` payload.
