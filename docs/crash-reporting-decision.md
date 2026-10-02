@@ -7,7 +7,8 @@
 Use `@sentry/react-native` for JavaScript and native crash reporting when crash
 reporting is integrated. This is a vendor decision; the SDK and its native
 configuration are now wired (optionally, see below — `mobile/src/crashReporting.ts`),
-and the CI symbol/source-map upload steps remain follow-up work.
+and Android APK CI uploads Hermes source maps before publishing reporting-enabled
+release APKs. Native-symbol upload remains follow-up work.
 
 Sentry's Hermes-aware JavaScript stack traces and support for self-hosting make
 it the best fit for diagnosing failures across this React Native app and the
@@ -23,7 +24,7 @@ upload source maps and native symbols for release builds.
 
 ## Configuration and secrets
 
-The eventual integration and CI symbol/source-map upload need:
+The integration and CI source-map upload use:
 
 | Setting | Purpose | Secret? |
 | --- | --- | --- |
@@ -36,6 +37,49 @@ The eventual integration and CI symbol/source-map upload need:
 The upload integration must run for release builds and associate uploaded
 artifacts with the same release identifier used by the app. Runtime DSN
 configuration must not require the upload token.
+
+### Android APK CI setup
+
+In repository **Settings → Secrets and variables → Actions**, set:
+
+- Secrets: `SENTRY_DSN` (the runtime endpoint) and `SENTRY_AUTH_TOKEN` (an upload
+  token authorized for the project, including `org:read` and `project:releases`).
+- Variables: `SENTRY_ORG` and `SENTRY_PROJECT` (slugs), and optionally `SENTRY_URL`
+  for self-hosting (defaults to `https://sentry.io/`).
+
+The token is exposed only to the upload step, never to Gradle or Babel. PRs skip
+uploads entirely and need no upload credentials. Non-PR builds without a DSN
+remain credential-free; when a DSN is configured, missing upload configuration
+or failed processing blocks APK publication rather than shipping unreadable
+release stacks.
+
+CI inlines `SENTRY_RELEASE=com.wetalk@<commit SHA>` and
+`SENTRY_DIST=<run ID>.<run attempt>` and passes the exact same values to the CLI.
+`Sentry.init` uses these explicit identifiers; local builds without them retain
+the SDK's native version/build defaults. Gradle tracks all three Sentry bundle
+configuration values as task inputs so its build cache cannot reuse stale
+identifiers. A rerun gets a new dist even at the same commit.
+
+The upload uses the locked SDK's transitive `sentry-cli` (3.x) React Native
+command with the release bytecode bundle and the **composed Metro + Hermes map**
+at `android/app/build/generated/sourcemaps/react/release/index.android.bundle.map`.
+The React Native Gradle plugin registers one `createBundleReleaseJsAndAssets`
+task per variant, not per ABI: the CI arm64-only and local four-ABI builds use
+the same bundle/map layout.
+
+The CLI uploads both files as one checksummed artifact bundle, then assembles
+it on the server; interrupted chunk transfers do not publish half a map via
+individual release-file replacement. `--wait` requires successful server
+processing before the workflow publishes the APK. Existing workflow cancellation
+stays enabled: a cancelled run can leave unused chunks or a complete bundle, but
+its unique release/dist cannot overwrite a later build's maps. Self-hosted Sentry
+must support artifact-bundle uploads; there is no legacy individual-file fallback.
+
+To verify end-to-end, dispatch a reporting-enabled release build, install its APK,
+and capture a known JS exception. Confirm the event's release/dist match the
+workflow and its stack resolves to the original TypeScript file and line. This
+requires the repository configuration above and access to the Sentry project;
+unit tests alone cannot prove server-side symbolication.
 
 ## Optional native-module and test requirement
 

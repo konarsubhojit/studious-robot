@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import path from 'path';
+import { transformSync } from '@babel/core';
 
 /**
  * Crash reporting is wired as an *optional* native module: the JS loader is
@@ -28,10 +29,66 @@ describe('crash reporting native wiring', () => {
   test('the DSN is inlined into the bundle like the other build-time config', () => {
     expect(babelConfig).toContain("'SIGNALING_URL'");
     expect(babelConfig).toContain("'SENTRY_DSN'");
+    expect(babelConfig).toContain("'SENTRY_RELEASE'");
+    expect(babelConfig).toContain("'SENTRY_DIST'");
   });
 
   test('the release APK build is handed the DSN secret', () => {
     expect(apkWorkflow).toContain('SENTRY_DSN: ${{ secrets.SENTRY_DSN }}');
+  });
+
+  test('runtime release and dist are inlined from the same build identifiers as the upload', () => {
+    expect(apkWorkflow).toContain('SENTRY_RELEASE: com.wetalk@${{ github.sha }}');
+    expect(apkWorkflow).toContain('SENTRY_DIST: ${{ github.run_id }}.${{ github.run_attempt }}');
+    const previousRelease = process.env.SENTRY_RELEASE;
+    const previousDist = process.env.SENTRY_DIST;
+    try {
+      process.env.SENTRY_RELEASE = 'com.wetalk@test-commit';
+      process.env.SENTRY_DIST = '123.2';
+      const compiled = transformSync(read(MOBILE_DIR, 'src', 'crashReporting.ts'), {
+        filename: path.join(MOBILE_DIR, 'src', 'crashReporting.ts'),
+        cwd: MOBILE_DIR,
+      })?.code;
+      expect(compiled).toMatch(/release:\s*"com\.wetalk@test-commit"/);
+      expect(compiled).toMatch(/dist:\s*"123\.2"/);
+      expect(compiled).not.toContain('process.env.SENTRY_RELEASE');
+      expect(compiled).not.toContain('process.env.SENTRY_DIST');
+      expect(compiled).not.toContain('SENTRY_AUTH_TOKEN');
+    } finally {
+      if (previousRelease === undefined) delete process.env.SENTRY_RELEASE;
+      else process.env.SENTRY_RELEASE = previousRelease;
+      if (previousDist === undefined) delete process.env.SENTRY_DIST;
+      else process.env.SENTRY_DIST = previousDist;
+    }
+  });
+
+  test('the Gradle bundle cache tracks the inlined Sentry configuration', () => {
+    expect(appBuildGradle).toMatch(
+      /tasks\.withType\(com\.facebook\.react\.tasks\.BundleHermesCTask\)\.configureEach \{[\s\S]*\["SENTRY_DSN", "SENTRY_RELEASE", "SENTRY_DIST"\]\.each \{ key ->\s*inputs\.property\(key, System\.getenv\(key\) \?: ""\)/,
+    );
+  });
+
+  test('only non-PR builds upload the composed Hermes map before publishing an APK', () => {
+    const upload = apkWorkflow.split('- name: Upload Hermes source maps to Sentry')[1]
+      .split('- name: Upload release APK')[0];
+    expect(upload).toContain("if: github.event_name != 'pull_request'");
+    expect(upload).toContain('if [[ -z "${SENTRY_DSN:-}" ]]');
+    expect(upload).toContain('${SENTRY_AUTH_TOKEN:?');
+    expect(upload).toContain('${SENTRY_ORG:?');
+    expect(upload).toContain('${SENTRY_PROJECT:?');
+    expect(upload).toContain('SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}');
+    expect(upload).toContain('generated/assets/react/release/index.android.bundle');
+    expect(upload).toContain('generated/sourcemaps/react/release/index.android.bundle.map');
+    expect(upload).not.toContain('intermediates/sourcemaps');
+    expect(upload).toContain('test -s "$BUNDLE"');
+    expect(upload).toContain('test -s "$SOURCEMAP"');
+    expect(upload).toContain('sentry-cli react-native gradle');
+    expect(upload).toContain('--release "$SENTRY_RELEASE"');
+    expect(upload).toContain('--dist "$SENTRY_DIST"');
+    expect(upload).toContain('--wait');
+    expect(apkWorkflow.split('- name: Upload Hermes source maps to Sentry')[0])
+      .not.toContain('SENTRY_AUTH_TOKEN');
+    expect(babelConfig).not.toContain('SENTRY_AUTH_TOKEN');
   });
 
   test('Sentry\'s Gradle plugin is on the build classpath', () => {
