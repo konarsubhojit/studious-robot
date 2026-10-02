@@ -1,5 +1,7 @@
 import express from 'express';
+import { eq } from 'drizzle-orm';
 import { API_ROUTES } from '../../../shared/index.ts';
+import { users as usersTable } from '../../db/schema.ts';
 import { loadR2Config } from '../attachments.ts';
 import {
   avatarKeyOwner,
@@ -13,7 +15,6 @@ import {
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { describeError } from '../lib/errors.ts';
 import { normaliseId } from '../lib/normalize.ts';
-import { persistUser } from '../lib/persistence.ts';
 import { hasKnownUser } from '../lib/state.ts';
 import { isDirectoryVisible } from '../security.ts';
 
@@ -60,23 +61,54 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
   /**
    * Publish `key` as `userId`'s avatar.
    *
-   * The durable write happens first: if persistence fails the previous object
-   * is left alone, so the account keeps a picture that still exists rather
-   * than a reference to bytes that were deleted on its behalf.
+   * The durable write happens first, and only the avatar columns are touched:
+   * if it fails, the caller returns an error and the previous object is left
+   * alone, so an account keeps a picture that still exists rather than a
+   * reference to bytes that were deleted on its behalf.
    *
    * @returns the key that was replaced, or `null` when there was none.
    */
   async function setAvatarKey(userId: string, key: string | null): Promise<string | null> {
     const user = state.users.get(userId);
-    if (!user) throw new Error('avatar owner is not a claimed identity');
+    if (!db && !user) throw new Error('avatar owner is not a claimed identity');
 
-    const previousKey = user.avatarKey;
+    const previousKey = await currentAvatarKey(userId);
     if (previousKey === key) return null;
 
-    const updated = { ...user, avatarKey: key, updatedAt: new Date().toISOString() };
-    await persistUser(db, updated);
-    state.users.set(userId, updated);
+    if (db) {
+      await db
+        .update(usersTable)
+        .set({ avatarKey: key, updatedAt: new Date() })
+        .where(eq(usersTable.userId, userId));
+    }
+    if (user) state.users.set(userId, { ...user, avatarKey: key, updatedAt: new Date().toISOString() });
     return previousKey;
+  }
+
+  /**
+   * The avatar key currently published for `userId`.
+   *
+   * Read from Postgres when there is one, because `state.users` is per
+   * instance: an avatar changed on the other signaling VM would otherwise be
+   * served here as the key it replaced — a key whose object has already been
+   * deleted. Falls back to the local copy when there is no database (or it is
+   * unreachable), which is also the single-instance case where the two agree
+   * by construction.
+   */
+  async function currentAvatarKey(userId: string): Promise<string | null> {
+    if (db) {
+      try {
+        const rows = await db
+          .select({ avatarKey: usersTable.avatarKey })
+          .from(usersTable)
+          .where(eq(usersTable.userId, userId))
+          .limit(1);
+        if (rows.length > 0) return rows[0].avatarKey ?? null;
+      } catch (error) {
+        console.error(`[avatar] failed to read an avatar key: ${describeError(error)}`);
+      }
+    }
+    return state.users.get(userId)?.avatarKey ?? null;
   }
 
   /**
@@ -187,6 +219,20 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
       return;
     }
 
+    const rateCheck = state.messageSendRateLimiter.check(session.userId);
+    if (!rateCheck.allowed) {
+      state.auditLog.record({
+        event: 'avatar_update.rate_limited',
+        actor: session.userId,
+        outcome: 'rejected',
+      });
+      res.status(429).json({
+        error: 'too many requests',
+        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
+      });
+      return;
+    }
+
     const key = normaliseId(req.body?.key);
     // The owner segment is recovered from the key and compared with the
     // session, so a caller can only publish an object minted under their own
@@ -230,6 +276,20 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
     const session = await getSessionFromRequestAsync(req, state).catch(() => null);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const rateCheck = state.messageSendRateLimiter.check(session.userId);
+    if (!rateCheck.allowed) {
+      state.auditLog.record({
+        event: 'avatar_update.rate_limited',
+        actor: session.userId,
+        outcome: 'rejected',
+      });
+      res.status(429).json({
+        error: 'too many requests',
+        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
+      });
       return;
     }
 
@@ -313,7 +373,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
       return;
     }
 
-    const avatarKey = state.users.get(ownerId)?.avatarKey ?? null;
+    const avatarKey = await currentAvatarKey(ownerId);
     // A stored key whose owner segment no longer matches its row is not
     // fetchable: the profile column is authoritative for *which* object, the
     // key's own shape for *whose* it is, and both must agree.

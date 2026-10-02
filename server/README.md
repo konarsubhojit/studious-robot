@@ -199,7 +199,7 @@ own key namespace and its own rule (`src/avatars.ts`).
 - `GET /avatar/download` never takes a key from the caller — it reads the owner's stored `avatarKey` — and authorises with `isDirectoryVisible`, the same block-aware predicate `GET /users` filters on, so a blocked user cannot fetch the avatar of somebody who has vanished from their directory.
 - Uploads are presigned `PUT`s with `cache-control`, `content-length` and `content-type` signed in. The allowlist is narrower than the one for image attachments — `image/jpeg`, `image/png`, `image/webp`, 2 MB — because an avatar is stored in the clear and handed to every viewer's image decoder, so a server-side allowlist is a real control rather than a claim about opaque bytes.
 - Replacing or removing an avatar deletes the previous object with a signed `DELETE`, and account erasure deletes the current one: the bucket has no lifecycle rule that would collect either.
-- Download links live an hour (attachments get 15 minutes) because avatars are re-rendered constantly; clients cache the **bytes** under the stable `avatarKey` published by `GET /users`, never the URL, which expires.
+- Download links live an hour (attachments get 15 minutes) because avatars are re-rendered constantly; clients cache the **bytes** under the stable `avatarKey`, never the URL, which expires. `GET /users` publishes `avatarKey` as a cache hint; the key returned by `GET /avatar/download` is the authoritative one, read from Postgres so an avatar changed on the other instance is never served as the key it replaced.
 - When R2 is not configured every avatar endpoint answers `503` and clients fall back to initials; nothing else changes, and the server still starts.
 
 ## Push notifications

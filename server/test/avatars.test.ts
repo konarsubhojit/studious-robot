@@ -18,7 +18,8 @@ import {
 } from '../src/avatars.ts';
 import { loadR2Config } from '../src/attachments.ts';
 import { createServer } from '../src/index.ts';
-import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import * as schema from '../db/schema.ts';
+import { asDatabase, closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 const R2_ENV = {
   R2_ACCOUNT_ID: 'test-account',
@@ -402,4 +403,76 @@ test('a presigned avatar download expires an hour after it is minted', () => {
   });
   assert.equal(AVATAR_DOWNLOAD_TTL_SECONDS, 3600);
   assert.equal(Date.parse(expiresAt), now.getTime() + AVATAR_DOWNLOAD_TTL_SECONDS * 1000);
+});
+
+// ─── Multi-instance consistency ──────────────────────────────────────────────
+
+test('a download signs the durably stored key, not this instance\u2019s copy', async (t) => {
+  withR2Env(t);
+  // `state.users` is per instance, so an avatar replaced on the other
+  // signaling VM would otherwise be served here as the key it replaced — a key
+  // whose object that VM has already deleted.
+  const durableKey = 'avatars/avatar-alice/11111111-1111-4111-8111-111111111111.png';
+  const updates: { set: any; }[] = [];
+  const db = asDatabase({
+    select() {
+      return {
+        from(table: any) {
+          const rows = table === schema.users ? [{ avatarKey: durableKey }] : [];
+          const chain: any = {
+            where: () => chain,
+            orderBy: () => chain,
+            limit: () => chain,
+            then: (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject),
+          };
+          return chain;
+        },
+      };
+    },
+    insert() {
+      return { values: () => ({ onConflictDoUpdate: () => Promise.resolve(), onConflictDoNothing: () => Promise.resolve() }) };
+    },
+    update() {
+      const entry: { set: any; } = { set: null };
+      updates.push(entry);
+      return {
+        set(values: any) {
+          entry.set = values;
+          return { where: () => Promise.resolve() };
+        },
+      };
+    },
+    delete() {
+      return { where: () => Promise.resolve() };
+    },
+  });
+
+  const server = createServer({ db });
+  const port = await listenOnRandomPort(server.httpServer);
+  const url = `http://127.0.0.1:${port}`;
+  t.after(() => closeTestServer(server));
+  const storageRequests = captureStorageRequests(t);
+
+  const session = await createSession(url, 'avatar-alice');
+  const presigned = await postJson(
+    url,
+    '/avatar/presign',
+    { mimeType: 'image/png', sizeBytes: 1024 },
+    session
+  );
+  assert.equal(presigned.status, 200);
+  assert.equal(
+    (await sendJson(url, 'PUT', '/avatar', { key: presigned.body.key }, session)).status,
+    200
+  );
+
+  // The durable row is what the replacement is measured against, so the object
+  // actually deleted is the one Postgres says was current.
+  assert.equal(updates.at(-1)?.set.avatarKey, presigned.body.key);
+  assert.equal(storageRequests.length, 1);
+  assert.equal(new URL(storageRequests[0].url).pathname, `/${R2_ENV.R2_BUCKET}/${durableKey}`);
+
+  const download = await getJson(url, '/avatar/download', session);
+  assert.equal(download.status, 200);
+  assert.equal(download.body.avatarKey, durableKey);
 });
