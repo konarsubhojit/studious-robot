@@ -5,6 +5,31 @@ if (file("google-services.json").exists()) {
     apply plugin: "com.google.gms.google-services"
 }
 
+// Crash reporting (@sentry/react-native) is wired the same conditional way:
+// the native module always autolinks, but Sentry's Gradle integration only
+// uploads source maps, the R8 mapping and native symbols, and every one of
+// those needs credentials (`android/sentry.properties`, or SENTRY_AUTH_TOKEN
+// for the plugin). Apply it only when that file is present so a
+// credential-free build - CI, and every local build - still assembles, exactly
+// as it does without google-services.json.
+if (file("../sentry.properties").exists()) {
+    apply from: file("../../node_modules/@sentry/react-native/sentry.gradle")
+    apply plugin: "io.sentry.android.gradle"
+
+    sentry {
+        autoUploadProguardMapping = true
+        uploadNativeSymbols = true
+        includeNativeSources = true
+        includeSourceContext = true
+        // @sentry/react-native ships its own sentry-android; letting the
+        // plugin add a second one crashes at startup with "Sentry SDK has
+        // detected a mix of versions".
+        autoInstallation {
+            enabled = false
+        }
+    }
+}
+
 // Bundle the vector-icon font(s) used by the calling UI into the APK assets so
 // react-native-vector-icons glyphs render on-device instead of falling back to
 // emoji.  Only MaterialCommunityIcons is used by the app (see mobile/src/vectorIcons.js),

@@ -39,6 +39,10 @@ mobile/android/build/
 mobile/android/app/build/
 mobile/android/app/.cxx/
 mobile/android/local.properties
+# Sentry credentials (auth token / org / project) for the optional
+# symbol-and-source-map upload; never committed.
+mobile/android/sentry.properties
+mobile/ios/sentry.properties
 mobile/android/.cxx/
 mobile/android/.kotlin/
 mobile/ios/build/

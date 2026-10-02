@@ -119,6 +119,14 @@ function toSafeValue(value: any, key?: string | undefined, seen: WeakSet<object>
 }
 
 /**
+ * @returns `value` with sensitive fields redacted and cycles broken, for sinks
+ * that forward structured payloads off-device (see `crashReporting.js`).
+ */
+export function redactSensitive(value: unknown): unknown {
+  return toSafeValue(value);
+}
+
+/**
  * @returns JSON for the redacted metadata, if any.
  */
 function safeSerialize(metadata: unknown): string | undefined {

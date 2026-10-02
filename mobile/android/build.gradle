@@ -18,6 +18,11 @@ buildscript {
         classpath("com.android.tools.build:gradle")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("com.google.gms:google-services:4.5.0")
+        // Sentry's Gradle plugin uploads the R8 mapping, native symbols and
+        // source context. It is only applied when credentials are present (see
+        // app/build.gradle), but the classpath entry must be unconditional for
+        // that `apply plugin` to resolve.
+        classpath("io.sentry:sentry-android-gradle-plugin:6.23.0")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
     }
 }

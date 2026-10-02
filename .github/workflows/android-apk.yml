@@ -130,6 +130,9 @@ jobs:
           ROOM_ID: ${{ secrets.ROOM_ID }}
           TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
           TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
+          # Inlined into the JS bundle by babel.config.js, like SIGNALING_URL.
+          # Crash reporting stays off when the secret is not configured.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           set -euo pipefail
           chmod +x android/gradlew

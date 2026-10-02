@@ -5,8 +5,9 @@
 ## Decision
 
 Use `@sentry/react-native` for JavaScript and native crash reporting when crash
-reporting is integrated. This is a vendor decision; adding the SDK, native
-configuration, and upload steps is follow-up work.
+reporting is integrated. This is a vendor decision; the SDK and its native
+configuration are now wired (optionally, see below — `mobile/src/crashReporting.ts`),
+and the CI symbol/source-map upload steps remain follow-up work.
 
 Sentry's Hermes-aware JavaScript stack traces and support for self-hosting make
 it the best fit for diagnosing failures across this React Native app and the
