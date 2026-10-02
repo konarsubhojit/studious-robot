@@ -37,8 +37,11 @@ async function persistUser(db: DrizzleDb | null, user: import('../identity.ts').
         authUid: user.authUid,
         email: user.email,
         authProvider: user.authProvider,
+        displayName: user.displayName,
+        avatarKey: user.avatarKey,
         createdAt: user.createdAt ? new Date(user.createdAt) : new Date(),
         verifiedAt: user.verifiedAt ? new Date(user.verifiedAt) : null,
+        updatedAt: user.updatedAt ? new Date(user.updatedAt) : new Date(),
       })
       .onConflictDoUpdate({
         target: usersTable.userId,
@@ -46,7 +49,10 @@ async function persistUser(db: DrizzleDb | null, user: import('../identity.ts').
           authUid: user.authUid,
           email: user.email,
           authProvider: user.authProvider,
+          displayName: user.displayName,
+          avatarKey: user.avatarKey,
           verifiedAt: user.verifiedAt ? new Date(user.verifiedAt) : null,
+          updatedAt: user.updatedAt ? new Date(user.updatedAt) : new Date(),
         },
       });
   } catch (err) {
@@ -276,8 +282,11 @@ async function hydrateUsers(db: DrizzleDb, state: Stores, usersTable: any): Prom
       authUid: row.authUid ?? null,
       email: row.email ?? null,
       authProvider: row.authProvider ?? null,
+      displayName: row.displayName ?? null,
+      avatarKey: row.avatarKey ?? null,
       createdAt: toIsoString(row.createdAt),
       verifiedAt: toIsoString(row.verifiedAt),
+      updatedAt: toIsoString(row.updatedAt),
     });
   }
   return rows.length;

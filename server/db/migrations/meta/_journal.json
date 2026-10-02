@@ -113,6 +113,13 @@
       "when": 1789608629575,
       "tag": "0015_backfill_read_implies_delivered",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790955955746,
+      "tag": "0016_add_user_profile_fields",
+      "breakpoints": true
     }
   ]
 }

@@ -34,8 +34,11 @@ const users = pgTable('users', {
   authUid: text('auth_uid').unique(),
   email: text('email'),
   authProvider: text('auth_provider'),
+  displayName: text('display_name'),
+  avatarKey: text('avatar_key'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   verifiedAt: timestamp('verified_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 const calls = pgTable(
