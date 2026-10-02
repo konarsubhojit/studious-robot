@@ -175,6 +175,7 @@ export type ServerState = Stores & {
   attachmentDownloadRateLimiter: RateLimiter;
   accountExportRateLimiter: RateLimiter;
   accountDeletionRateLimiter: RateLimiter;
+  profileUpdateRateLimiter: RateLimiter;
   telemetry: import('../telemetry.ts').Telemetry;
   messageStore: import('../messageStore.ts').MessageStore;
   cache: import('../cache.ts').Cache;
