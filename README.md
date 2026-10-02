@@ -152,6 +152,7 @@ any failure.  Run them before opening a pull request.
 | `server` | `test/push-fallback.test.ts`          | Push-notification fallback for offline callees               |
 | `server` | `test/identity.test.ts`               | Session, device registration, and presence APIs              |
 | `server` | `test/directory.test.ts`              | Contact directory (`GET /users`) search, paging, block filtering |
+| `server` | `test/profile.test.ts`                | Profile read/write, display-name validation, impersonation refusal, cache invalidation |
 | `server` | `test/telemetry.test.ts`              | Metrics counters and derived rates                           |
 | `server` | `test/query-timing.test.ts`           | SQL/Redis query timing, slow-query threshold, per-operation breakdown |
 | `server` | `test/security.test.ts`               | Rate limiting and blocklist                                  |
