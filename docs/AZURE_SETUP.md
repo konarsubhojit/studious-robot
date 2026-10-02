@@ -7,11 +7,8 @@ It is **entirely optional**. With none of the environment variables in this
 guide set, the server behaves exactly as it did before: pushes fall back to
 direct FCM/APNs.
 
-> **Chat persistence is no longer an Azure concern.** Message history used to
-> live in Azure Cosmos DB for MongoDB; it now lives in the `messages` table of
-> the same Postgres database as everything else. See
-> [`SETUP.md`](SETUP.md#message-store). Any `MONGODB_*` variables still set are
-> ignored.
+Message history lives in the `messages` table of the Postgres database, not in
+this Azure push service. See [`SETUP.md`](SETUP.md#message-store).
 
 ---
 

@@ -22,7 +22,7 @@ End-to-end instructions for configuring the signaling server and the React Nativ
    - [Android — Firebase setup](#android--firebase-setup)
    - [Android — Vector icon fonts](#android--vector-icon-fonts)
    - [iOS — Firebase setup](#ios--firebase-setup)
-   - [iOS — CallKit entitlement](#ios--callkit-entitlement)
+   - [iOS — CallKit setup](#ios--callkit-setup)
    - [iOS — Vector icon fonts](#ios--vector-icon-fonts)
    - [Running on device / simulator](#running-on-device--simulator)
 4. [CI / CD](#ci--cd)
@@ -34,9 +34,9 @@ End-to-end instructions for configuring the signaling server and the React Nativ
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Node.js | ≥ 22 (see `.nvmrc`) | Use [nvm](https://github.com/nvm-sh/nvm): `nvm install` |
+| Node.js | 24 (see `.nvmrc`) | Use [nvm](https://github.com/nvm-sh/nvm): `nvm install` |
 | npm | bundled with Node | |
-| React Native CLI | latest | `npm install -g react-native-cli` |
+| React Native CLI | Package-pinned | Installed with `mobile/` dependencies; use the package scripts |
 | Android Studio | latest | For Android emulator / device builds |
 | Xcode | ≥ 15 | macOS only, required for iOS builds |
 | CocoaPods | ≥ 1.14 | `sudo gem install cocoapods` |
@@ -52,7 +52,7 @@ End-to-end instructions for configuring the signaling server and the React Nativ
 ```bash
 cd server
 npm install
-npm run dev        # watch mode (nodemon)
+npm run dev        # Node --watch
 # or
 npm start          # production mode
 ```
@@ -63,7 +63,8 @@ The server listens on `PORT` (default **4173**) and exposes:
 - `GET /metrics` — call funnel counters, latency histograms, and per-operation
   SQL/Redis query timings (see *Query timing* below). Requires
   `x-debug-token` to match `DEBUG_API_TOKEN`.
-- `POST /session` — create / refresh a session token
+- `POST /session` — create a session token
+- `POST /session/refresh` — rotate a session token
 - WebSocket (Socket.IO) signaling on the same port
 
 ### Server environment variables
@@ -363,7 +364,9 @@ FCM_SERVICE_ACCOUNT_JSON=$(jq -c . < service-account.json)
 export FCM_SERVICE_ACCOUNT_JSON
 ```
 
-> The server uses `google-auth-library` to exchange the service-account credentials for short-lived OAuth 2.0 tokens on each FCM HTTP v1 request.
+> `server/src/push/tokens.ts` signs a service-account assertion with Node's
+> `crypto` and exchanges it over HTTPS for an OAuth 2.0 access token.
+> The token is cached; it is not exchanged on every push.
 
 ### Push notifications — APNs (iOS)
 
@@ -399,20 +402,19 @@ served by a `pg_trgm` GIN index on `lower(body)`. Migration `0010` creates the
 extension, so it must run with the owner connection — `DATABASE_URL_DIRECT`,
 which `drizzle.config.ts` already prefers.
 
-> Chat history used to live in a separate MongoDB/Cosmos deployment. It was
-> consolidated into Postgres: the second datastore bought nothing that a table
-> and five indexes do not, while costing a second connection pool, a second
-> backup story, and a hand-maintained `conversation_index` collection that could
-> silently disagree with the messages it summarised.
+Keeping chat history in the same datastore avoids a second connection pool
+and backup system. The conversation projection must stay consistent with the
+message rows it summarizes.
 
 ### Deploying to a VM (GCP + Ubuntu)
 
-The verified reference deployment is a **GCP e2-micro** instance running
-**Ubuntu**, with the signaling server as a **systemd service** listening on
+The following single-VM example uses **GCP with Ubuntu**, with the signaling
+server as a **systemd service** listening on
 `0.0.0.0:4173` behind an **nginx** reverse proxy, **DuckDNS** for dynamic DNS,
-and **certbot/Let's Encrypt** (`certbot.timer`) for TLS. Automated deploys are
-handled by the `backend-ci.yml` GitHub Actions workflow, which SSHes into the
-VM on every push to `master` and runs a git-pull + npm-ci + service-restart.
+and **certbot/Let's Encrypt** (`certbot.timer`) for TLS. The current
+`backend-ci.yml` invokes the configured host's `redeploy` command over SSH
+after backend CI on a matching push to `master`; configure that command for
+the host rather than assuming this example is the live deployment.
 
 > Oracle Cloud Ampere A1 (arm64) + `opc` user + firewalld + Caddy also works
 > and remains documented as an alternative — see
@@ -478,8 +480,6 @@ VM on every push to `master` and runs a git-pull + npm-ci + service-restart.
    | `DEPLOY_SSH_HOST` | VM public IP or hostname |
    | `DEPLOY_SSH_USER` | VM user (`ubuntu` on GCP; `opc` on Oracle Linux) |
    | `DEPLOY_SSH_PORT` | SSH port (optional, defaults to `22`) |
-   | `DATABASE_URL_DIRECT` | Neon direct Postgres URL for CI migrations |
-   | `FCM_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for FCM push |
 
 See [`deploy/README.md`](../deploy/README.md) for the full walkthrough including TLS options, sudoers configuration, Redis setup, and firewall/networking details for both GCP and OCI.
 
@@ -505,9 +505,13 @@ export TURN_USERNAME=your-turn-username               # TURN relay credentials
 export TURN_CREDENTIAL=your-turn-credential
 ```
 
-> **Note:** `TURN_URL` (optional) is read at runtime via `process.env` — you can set it at build time the same way. See [TURN server configuration](#turn-server-configuration) for details.
+> **Note:** `webrtcConfig.ts` reads optional `process.env.TURN_URL`, but
+> `mobile/babel.config.js` does not include it in the inlined environment
+> variables. Exporting it alone does not bake it into a release bundle. See
+> [TURN server configuration](#turn-server-configuration) for supported
+> credential paths.
 
-For CI, store these as repository secrets (`SIGNALING_URL`, `ROOM_ID`, `TURN_USERNAME`, `TURN_CREDENTIAL`) — both Android and iOS workflows consume them automatically.
+For Android CI, store these as repository secrets (`SIGNALING_URL`, `ROOM_ID`, `TURN_USERNAME`, `TURN_CREDENTIAL`). No iOS build workflow is checked in; supply the environment when building with Xcode.
 
 ### TURN server configuration
 
@@ -613,14 +617,15 @@ automatically.
 
 6. Register for APNs in the Apple Developer portal (see [Push notifications — APNs](#push-notifications--apns-ios)) and upload the `.p8` key to the server.
 
-### iOS — CallKit entitlement
+### iOS — CallKit setup
 
 CallKit displays native incoming-call UI and integrates with the system phone app.
 
-1. In Xcode, select your target → **Signing & Capabilities** → **+ Capability** → **VoIP Push Notifications**.
-2. The `react-native-callkeep` package (already in `package.json`) handles CallKit registration automatically when a session starts.
-
-> **Note:** CallKit requires a real device; it is silently disabled in the iOS Simulator.
+The optional `react-native-callkeep` package is already declared in
+`mobile/package.json`; `mobile/src/callKeep.ts` wraps setup and incoming-call
+reporting. Native-module absence or setup failure is handled as unavailable.
+Verify signing, push/background configuration and incoming-call behaviour on a
+physical iOS device; the checked-in wrapper alone does not prove those work.
 
 ### iOS — Vector icon fonts
 
@@ -679,24 +684,26 @@ npx react-native run-ios --simulator="iPhone 16"
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
-| `mobile-ci.yml` | push/PR to `master` touching `mobile/` | Runs Jest unit tests on Ubuntu |
-| `android-apk.yml` | push/PR + `workflow_dispatch` | Builds debug (PR) + debug+release (push) APKs |
-| `backend-ci.yml` | push/PR touching `server/` | Runs server unit tests; deploys to Oracle Ampere A1 VM on `master` push |
+| `mobile-ci.yml` | push/PR to `master`, path-filtered on mobile/shared/workflow files | Runs typecheck, lint and Jest on Ubuntu |
+| `android-apk.yml` | path-filtered push/PR to `master` + `workflow_dispatch` | Builds a release APK |
+| `backend-ci.yml` | push/PR to `master`, path-filtered on backend/shared/workflow files | Runs typecheck, lint and server tests; invokes the host's `redeploy` command over SSH on `master` push |
 
 **Required GitHub secrets** (set in repo Settings → Secrets and variables → Actions):
 
 | Secret | Used by | Description |
 |--------|---------|-------------|
-| `SIGNALING_URL` | Android, iOS | WebSocket URL baked into the JS bundle |
-| `ROOM_ID` | Android, iOS | Legacy room ID |
-| `TURN_USERNAME` | Android, iOS | TURN relay username |
-| `TURN_CREDENTIAL` | Android, iOS | TURN relay credential |
+| `SIGNALING_URL` | Android | WebSocket URL baked into the JS bundle |
+| `ROOM_ID` | Android | Legacy room ID |
+| `TURN_USERNAME` | Android | TURN relay username |
+| `TURN_CREDENTIAL` | Android | TURN relay credential |
 | `DEPLOY_SSH_KEY` | backend-ci | Private key for SSH deploy to Oracle VM |
 | `DEPLOY_SSH_HOST` | backend-ci | Oracle VM public IP or hostname |
 | `DEPLOY_SSH_USER` | backend-ci | VM user (`opc` on Oracle Linux) |
 | `DEPLOY_SSH_PORT` | backend-ci | SSH port (optional, defaults to `22`) |
-| `DATABASE_URL_DIRECT` | backend-ci | Neon direct Postgres URL for CI migrations |
-| `FCM_SERVICE_ACCOUNT_JSON` | backend-ci | Firebase service-account JSON for FCM push |
+
+Server database and push credentials belong in the host's service environment.
+The current backend workflow passes SSH credentials only, not those runtime
+credentials.
 
 ---
 

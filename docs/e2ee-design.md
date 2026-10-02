@@ -57,8 +57,9 @@ Local mobile storage is sandboxed SQLite, explicitly documented in
    cannot read message content.
 3. **Compelled disclosure of content.** A lawful request can only produce what
    the service holds; under E2EE that is metadata, not bodies.
-4. **Attachment URL leakage.** Today a leaked public R2 URL leaks the file;
-   encrypted blobs leak only ciphertext.
+4. **Attachment URL leakage.** The implemented download route issues
+   short-lived presigned reads. A leaked valid download URL still exposes
+   plaintext until expiry; encrypted blobs would expose only ciphertext.
 
 ### 2.2 Out of scope — what E2EE would *not* protect against
 
@@ -217,9 +218,9 @@ Consequences that must be accepted explicitly:
 - Blob lifecycle, deletion on account erasure (`deleteAttachmentObject`) and
   the "managed URL only" check (`isManagedAttachmentUrl`) are unaffected —
   they operate on keys and URLs, not content.
-- This composes with, and does not block, the independent
-  **private attachment access** work: short-lived authenticated reads are
-  valuable with or without E2EE.
+- This composes with the implemented **private attachment access** boundary
+  in `server/src/routes/attachments.routes.ts`: participant authorization
+  precedes a short-lived presigned read, independently of content encryption.
 
 ---
 
@@ -263,20 +264,22 @@ Consequences that must be accepted explicitly:
 
 Custom cryptography is out of the question. The realistic options:
 
-| Option | Protocol | Maintenance | Licence | Fit for React Native + Node |
-| --- | --- | --- | --- | --- |
-| **libsignal** (Signal) | X3DH + Double Ratchet, Sesame for multi-device | Actively maintained by Signal | AGPL-3.0 | Rust core with Java/Swift/TypeScript bindings. **The AGPL licence is the decisive constraint** and must be cleared by legal before anything else; it is not a drop-in for a proprietary client. No first-party React Native binding — a native module would have to be written and maintained for both platforms. |
-| **MLS (RFC 9420)** via OpenMLS | Continuous Group Key Agreement | Actively maintained | MIT/Apache-2.0 | Standardised and permissively licensed. Designed for groups; for 1:1 it is more machinery than needed. React Native bindings would have to be built and maintained. |
-| **vodozemac / Olm–Megolm** (Matrix) | Double Ratchet variant | Actively maintained by the Matrix.org Foundation | Apache-2.0 | Permissive, audited, Rust core. Mobile bindings exist but again not for React Native out of the box. |
-| **libsodium** primitives directly | None — we would design the protocol | Actively maintained | ISC | **Rejected.** Sound primitives do not give a sound protocol; this is exactly the "new cryptosystem" the issue forbids. |
+The recorded candidates are libsignal, MLS via OpenMLS, and the Matrix
+Olm–Megolm/vodozemac family. None is an installed dependency in the current
+mobile or server manifest. Candidate maintenance, bindings, licensing and
+audit status must be verified for the specific version evaluated by a future
+prototype; this source audit does not certify those external properties.
+
+Using libsodium primitives to invent a messaging protocol remains **rejected**:
+sound primitives alone do not establish a sound protocol.
 
 Common findings:
 
-- **Every option requires a maintained native module for React Native**, on
-  both iOS and Android, plus an upgrade treadmill. That ongoing cost, not the
-  initial integration, is the dominant expense.
-- **Licensing must be resolved first.** libsignal's AGPL-3.0 terms are a
-  go/no-go input in their own right.
+- **A maintained React Native integration is required**, on both iOS and
+  Android, plus an upgrade strategy. Evaluate that ongoing cost, not merely
+  the initial integration.
+- **Licensing must be resolved first** for the selected version and intended
+  distribution model.
 - A **third-party security review** of the integration (not of the library) is
   mandatory before any production claim: integration mistakes — key storage,
   identity binding, verification UX, ratchet-state persistence across the
@@ -302,8 +305,8 @@ Rationale:
 3. Without contact verification UX and key-change warnings, E2EE would not
    actually defend against the malicious-server case that motivates it — the
    protection would be weaker than the wording would imply.
-4. The licensing position for the most mature option (libsignal, AGPL-3.0) is
-   unresolved.
+4. The selected library's licensing and distribution obligations have not been
+   cleared in this record.
 5. The migration is irreversible for data. Shipping it before the above are
    settled risks an unrecoverable outcome for users.
 
@@ -348,10 +351,12 @@ Production work requires, in order:
 
 These proceed on their own schedule and are valuable regardless of the outcome:
 
-- **Private attachment access** — replacing public R2 URLs with short-lived
-  authenticated reads.
-- **Device revocation** — revoking sessions, bearers and push registrations.
 - **Metadata minimisation and retention tightening.**
+
+Private attachment reads (`attachments.routes.ts`) and device revocation
+(`devices.routes.ts`) are implemented independent boundaries, not prerequisites
+still waiting for an E2EE project. Their production configuration and
+operational verification remain separate from this cryptographic decision.
 
 ---
 

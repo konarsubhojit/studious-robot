@@ -275,7 +275,8 @@ Chat history lives in the **same Postgres database** as users, devices and
 calls. `src/messageStore.ts` provides a transport-agnostic store with two
 implementations:
 
-- `createPgMessageStore({ db })` — the `messages` table, via the Drizzle handle
+- `createPgMessageStore({ db })` — the `messages` source table and `conversations`
+  projection, via the Drizzle handle
   the rest of the server already shares. Selected whenever `createServer` is
   given a `db`.
 - `createMemoryMessageStore()` — array-backed; used when there is no database
@@ -288,20 +289,49 @@ Both expose `saveMessage`, `listMessages({ conversationId, limit, before })`
 (`src/createServer.ts`) and hung off the shared `state` object next to
 `messageBus`/`telemetry`.
 
-The `messages` table carries five indexes, each serving one access path:
+The `messages` table carries seven secondary indexes, alongside its composite
+primary key `(conversation_id, message_id)`:
 
 | Index | Serves |
 | ----- | ------ |
 | `idx_messages_conversation_created` | A conversation's newest-first page, including the `created_at` cursor. |
-| `idx_messages_sender_created` / `idx_messages_recipient_created` | Search and conversation listing, which match either end of a conversation. |
-| `idx_messages_unread` (partial, `read_at IS NULL`) | Unread counts — it indexes only the rows that can contribute one. |
+| `idx_messages_sender_created` / `idx_messages_recipient_created` | Participant-scoped search and account-history reads. |
+| `idx_messages_unread` (partial, `read_at IS NULL`) | Unread-message reads and updates — it indexes only rows that can contribute to unread counts. |
 | `idx_messages_body_trgm` (GIN, `pg_trgm`) | The case-insensitive substring search `GET /messages/search` performs. |
+| `idx_messages_sender_body_trgm` / `idx_messages_recipient_body_trgm` (GIN, `btree_gin` + `pg_trgm`) | Participant and substring predicates in the same index, rather than probing other users' message bodies first. |
 
 `pg_trgm` is created by migration `0010`, which therefore needs the owner
-connection (`DATABASE_URL_DIRECT`).
+connection (`DATABASE_URL_DIRECT`); migration `0012` adds `btree_gin` and the
+participant-scoped GIN indexes.
+
+Migration `0013_daily_gwen_stacy.sql` added the one-row-per-thread
+`conversations` projection. `idx_conversations_a` and `idx_conversations_b`
+lead with their participant column, followed by
+`(last_created_at DESC, last_message_id DESC)`. In
+`src/messageStore/pgStore.ts`, `listConversations` selects a participant's
+ordered projection page with `MAX_CONVERSATION_LIMIT` (100) **before** joining
+its pointers back to `messages` by the composite primary key. This bounds the
+preview join, not necessarily every row visited by the planner: the
+either-participant predicate's actual scan/sort plan still needs `EXPLAIN`
+on representative data.
+
+Previews are joined rather than copied into the projection so later
+tombstones, reactions and delivery receipts remain visible without rewriting
+the projection row. Every writer must keep `participant_a` / `participant_b`
+in the same sorted order as `deriveConversationId`; that is what makes the
+reader's unread counter addressable by a string comparison. New-message
+insertion and projection maintenance share a transaction: the pointer upsert
+is ordering-guarded, while the unread increment is a separate unconditional
+statement so an older arrival still counts. `markRead` clears the relevant
+counter in its message-update transaction; retention rebuilds affected
+projection rows in its delete transaction.
+
+Historically, the [measurements posted for #391 on its parent #390](https://github.com/konarsubhojit/studious-robot/issues/390#issuecomment-5660342816)
+showed the old query growing with hot-conversation history and spilling its
+sort to disk, motivating the projection; these are not timings for today's query.
 
 > This replaced a separate MongoDB deployment. A second datastore bought
-> nothing a table and five indexes do not, while costing a second connection
+> nothing the shared Postgres store does not, while costing a second connection
 > pool, a second backup story, and a hand-maintained `conversation_index`
 > collection that could silently disagree with the messages it summarised.
 
