@@ -22,7 +22,7 @@ End-to-end instructions for configuring the signaling server and the React Nativ
    - [Android — Firebase setup](#android--firebase-setup)
    - [Android — Vector icon fonts](#android--vector-icon-fonts)
    - [iOS — Firebase setup](#ios--firebase-setup)
-   - [iOS — CallKit entitlement](#ios--callkit-entitlement)
+   - [iOS — CallKit setup](#ios--callkit-setup)
    - [iOS — Vector icon fonts](#ios--vector-icon-fonts)
    - [Running on device / simulator](#running-on-device--simulator)
 4. [CI / CD](#ci--cd)
