@@ -59,6 +59,32 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
   // are logged once by the attachments router, which reads the same variables.
 
   /**
+   * Answer `429` when `userId` has exhausted the budget for this kind of
+   * request, recording why.
+   *
+   * Every avatar endpoint mints or spends a signed credential, so each one is
+   * throttled: writes share the message-send budget (a replacement also issues
+   * a signed `DELETE` to object storage), reads the attachment-download one.
+   *
+   * @returns `true` when the response has been sent and the handler must stop.
+   */
+  function rejectWhenRateLimited(
+    userId: string,
+    res: import('express').Response,
+    event: string,
+    limiter: import('../stores/contracts.ts').RateLimiter = state.messageSendRateLimiter
+  ): boolean {
+    const rateCheck = limiter.check(userId);
+    if (rateCheck.allowed) return false;
+    state.auditLog.record({ event: `${event}.rate_limited`, actor: userId, outcome: 'rejected' });
+    res.status(429).json({
+      error: 'too many requests',
+      retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
+    });
+    return true;
+  }
+
+  /**
    * Publish `key` as `userId`'s avatar.
    *
    * The durable write happens first, and only the avatar columns are touched:
@@ -155,19 +181,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
 
     // Presigning mints a credential, so it is throttled on the same budget as
     // the other write-shaped endpoints.
-    const rateCheck = state.messageSendRateLimiter.check(session.userId);
-    if (!rateCheck.allowed) {
-      state.auditLog.record({
-        event: 'avatar_presign.rate_limited',
-        actor: session.userId,
-        outcome: 'rejected',
-      });
-      res.status(429).json({
-        error: 'too many requests',
-        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
-      });
-      return;
-    }
+    if (rejectWhenRateLimited(session.userId, res, 'avatar_presign')) return;
 
     const validated = validateAvatarRequest(req.body ?? {});
     if ('error' in validated) {
@@ -219,19 +233,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
       return;
     }
 
-    const rateCheck = state.messageSendRateLimiter.check(session.userId);
-    if (!rateCheck.allowed) {
-      state.auditLog.record({
-        event: 'avatar_update.rate_limited',
-        actor: session.userId,
-        outcome: 'rejected',
-      });
-      res.status(429).json({
-        error: 'too many requests',
-        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
-      });
-      return;
-    }
+    if (rejectWhenRateLimited(session.userId, res, 'avatar_update')) return;
 
     const key = normaliseId(req.body?.key);
     // The owner segment is recovered from the key and compared with the
@@ -279,19 +281,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
       return;
     }
 
-    const rateCheck = state.messageSendRateLimiter.check(session.userId);
-    if (!rateCheck.allowed) {
-      state.auditLog.record({
-        event: 'avatar_update.rate_limited',
-        actor: session.userId,
-        outcome: 'rejected',
-      });
-      res.status(429).json({
-        error: 'too many requests',
-        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
-      });
-      return;
-    }
+    if (rejectWhenRateLimited(session.userId, res, 'avatar_update')) return;
 
     let removed: string | null;
     try {
@@ -342,17 +332,9 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
       return;
     }
 
-    const rateCheck = state.attachmentDownloadRateLimiter.check(session.userId);
-    if (!rateCheck.allowed) {
-      state.auditLog.record({
-        event: 'avatar_download.rate_limited',
-        actor: session.userId,
-        outcome: 'rejected',
-      });
-      res.status(429).json({
-        error: 'too many requests',
-        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
-      });
+    if (
+      rejectWhenRateLimited(session.userId, res, 'avatar_download', state.attachmentDownloadRateLimiter)
+    ) {
       return;
     }
 
