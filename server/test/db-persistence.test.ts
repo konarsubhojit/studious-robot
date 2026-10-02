@@ -195,7 +195,13 @@ test('POST /session persists a newly authenticated identity to the DB', async ()
     assert.ok(insert, 'a users insert should be present');
     assert.equal(insert.values.userId, 'user-persist-1');
     assert.equal(insert.values.authUid, 'test-user-persist-1');
+    assert.equal(insert.values.displayName, null);
+    assert.equal(insert.values.avatarKey, null);
+    assert.ok(insert.values.updatedAt instanceof Date);
     assert.ok(insert.conflictSet, 'onConflictDoUpdate set should be present');
+    assert.equal(insert.conflictSet.displayName, null);
+    assert.equal(insert.conflictSet.avatarKey, null);
+    assert.ok(insert.conflictSet.updatedAt instanceof Date);
   } finally {
     await teardown();
   }
@@ -695,17 +701,34 @@ test('loadPersistedState() populates state.users from DB rows', async () => {
       authUid: 'account-hydrated',
       email: 'hydrated@example.com',
       authProvider: 'password',
+      displayName: 'Hydrated User',
+      avatarKey: 'avatars/user-hydrate-1/avatar.webp',
       createdAt: new Date('2024-01-01T00:00:00Z'),
       verifiedAt: new Date('2024-01-01T00:00:01Z'),
+      updatedAt: new Date('2024-01-02T00:00:00Z'),
     },
   ];
   const db = buildMockDb({ selectRows: userRows });
+  const stores = createStores();
   const server = createServer({
     db,
+    stores,
     verifyIdToken: async (idToken) => ({ authUid: idToken }),
   });
 
   await server.loadPersistedState();
+
+  assert.deepEqual(stores.users.get('user-hydrate-1'), {
+    userId: 'user-hydrate-1',
+    authUid: 'account-hydrated',
+    email: 'hydrated@example.com',
+    authProvider: 'password',
+    displayName: 'Hydrated User',
+    avatarKey: 'avatars/user-hydrate-1/avatar.webp',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    verifiedAt: '2024-01-01T00:00:01.000Z',
+    updatedAt: '2024-01-02T00:00:00.000Z',
+  });
 
   // Verify the hydrated identity is protected from a different authenticated account.
   const port = await listenOnRandomPort(server.httpServer);

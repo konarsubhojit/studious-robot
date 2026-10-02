@@ -3,8 +3,11 @@ export type User = {
   authUid: string;
   email?: string | null;
   authProvider?: string | null;
+  displayName: string | null;
+  avatarKey: string | null;
   createdAt: string | null;
   verifiedAt: string | null;
+  updatedAt: string | null;
 };
 export type IdentityClaimGranted = { ok: true; verified: true; claimed?: true; user: User; };
 export type IdentityClaimDenied = {
@@ -43,8 +46,11 @@ function resolveIdentityClaim(usersStore: Map<string, User>, requestedUserId: st
     authUid: identity.authUid,
     email: identity.email ?? null,
     authProvider: identity.authProvider ?? null,
+    displayName: null,
+    avatarKey: null,
     createdAt: now,
     verifiedAt: now,
+    updatedAt: now,
   };
   usersStore.set(requestedUserId, user);
   return { ok: true, verified: true, claimed: true, user };
