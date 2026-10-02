@@ -17,6 +17,7 @@ const API_ROUTES = Object.freeze({
   ACCOUNT_EXPORT: '/account/export',
   ACCOUNT_DELETE: '/account/delete',
   USERS: '/users',
+  PROFILE: '/profile',
   DEVICES: '/devices',
   DEVICES_REGISTER: '/devices/register',
   DEVICES_UNREGISTER: '/devices/unregister',

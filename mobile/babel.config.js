@@ -10,6 +10,7 @@ module.exports = {
           'TURN_USERNAME',
           'TURN_CREDENTIAL',
           'GOOGLE_WEB_CLIENT_ID',
+          'SENTRY_DSN',
         ],
       },
     ],

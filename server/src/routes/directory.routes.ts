@@ -9,6 +9,22 @@ import { getPresenceSnapshot, hasKnownUser, listKnownUsers } from '../lib/state.
 /**
  * Presence lookup and the contact directory / discovery endpoints.
  */
+/**
+ * Whether a directory candidate matches the `?search=` term, on either their
+ * username or their display name.
+ *
+ * @param search - Already-lowercased search term.
+ */
+function matchesSearch(
+  state: import('../stores/contracts.ts').ServerState,
+  candidateId: string,
+  search: string
+): boolean {
+  if (candidateId.toLowerCase().includes(search)) return true;
+  const displayName = state.users.get(candidateId)?.displayName ?? '';
+  return displayName.toLowerCase().includes(search);
+}
+
 function createDirectoryRouter({ state }: { state: import('../stores/contracts.ts').ServerState; }): import('express').Router {
   const router = express.Router();
 
@@ -35,15 +51,19 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
    * each annotated with a lightweight presence snapshot so the client can show
    * who is reachable before placing a call.
    *
+   * Each entry also carries the user's profile fields (`displayName`,
+   * `avatarKey`) so a client can render a row without a second round trip per
+   * user — see `PATCH /profile` for how a display name is validated.
+   *
    * Query params:
-   *   - `search`: case-insensitive substring filter on `userId`.
+   *   - `search`: case-insensitive substring filter on `userId` or `displayName`.
    *   - `limit`:  max number of results (default 50, capped at 100).
    *
    * The authenticated user is excluded from their own directory, as are users
    * in either direction of a block relationship with the requester.
    *
-   * Response 200: { users: Array<{ userId, status, online, lastSeen,
-   * displayName, avatarKey }>, total }
+   * Response 200: { users: Array<{ userId, displayName, avatarKey, status,
+   * online, lastSeen }>, total }
    */
   router.get(API_ROUTES.USERS, async (req, res) => {
     const session = await getSessionFromRequestAsync(req, state);
@@ -62,7 +82,7 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
     const matches = [];
     for (const candidateId of listKnownUsers(state)) {
       if (candidateId === session.userId) continue;
-      if (search && !candidateId.toLowerCase().includes(search)) continue;
+      if (search && !matchesSearch(state, candidateId, search)) continue;
       // Hide users in either direction of a block relationship. The same
       // predicate authorises avatar downloads, so a blocked user disappears
       // from the directory and loses access to the pictures in it together.
@@ -81,11 +101,11 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
       const profile = state.users.get(candidateId);
       return {
         userId: snapshot.userId,
+        displayName: profile?.displayName ?? null,
+        avatarKey: profile?.avatarKey ?? null,
         status: snapshot.status,
         online: snapshot.online,
         lastSeen: snapshot.lastSeen,
-        displayName: profile?.displayName ?? null,
-        avatarKey: profile?.avatarKey ?? null,
       };
     });
 

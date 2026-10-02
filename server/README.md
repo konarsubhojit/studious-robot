@@ -35,6 +35,8 @@ Besides the call/session/contact routes, the chat surface adds:
 
 | `POST /account/delete` | body: none | `202 { status, requestedAt, scheduledFor, completedAt }` | Queues this account for erasure and returns when it becomes due (`ACCOUNT_DELETION_GRACE_MS`, 7 days by default). Idempotent: repeating the request does not extend the grace period. `GET /account/delete` reports the queued request (`{ status: 'none' }` when there is none) and `DELETE /account/delete` cancels one that has not run yet (`404` when nothing is pending). The erasure itself runs in a background sweep — see `src/domain/accountDeletion.ts` for what it cascades across. `401` without a valid session, `429` when the request limit is exhausted. |
 
+| `GET /profile` | body: none | `200 { userId, displayName, avatarKey, updatedAt }` | The caller's own profile. `401` without a valid session. |
+| `PATCH /profile` | body `{ displayName: string \| null }` | `200 { userId, displayName, avatarKey, updatedAt }` | Updates the caller's display name; `null` clears it so the UI falls back to the username. The value is NFC-normalised, stripped of control characters, bidi overrides and zero-width codepoints, capped at 48 codepoints, and **refused when it folds onto another user's username** (case, spacing and punctuation are ignored in that comparison) — otherwise the directory would be spoofable. Every accepted change is audited as `profile.display_name_changed` and every rejection as `profile.display_name_rejected`, and the conversation-list cache is invalidated for the user and every peer they have a conversation with, across instances, so a rename cannot linger on another VM for a TTL. `400` on a rejected name, `401` without a valid session, `429` when `PROFILE_UPDATE_RATE_LIMIT` is exhausted. |
 | `POST /attachments/presign` | body `{ peerId, type, mimeType, sizeBytes }` | `200 { conversationId, key, uploadUrl, reference, expiresAt, headers }` | Mints a short-lived Cloudflare R2 upload URL for a chat attachment (see [Attachments](#attachments)). `401` without a valid session, `400` for a disallowed `type`/`mimeType` or an oversized `sizeBytes`, `429` when the message rate limit is exhausted, `503` when R2 is not configured. |
 
 | `POST /avatar/presign` | body `{ mimeType, sizeBytes }` | `200 { key, uploadUrl, expiresAt, headers }` | Mints a short-lived R2 upload URL for the caller's own avatar (see [Avatars](#avatars)). `400` outside the image allowlist or over 2 MB, `429` on the message rate limit, `503` when R2 is not configured. |
@@ -164,6 +166,8 @@ same provider chain as incoming calls (see [Push notifications](#push-notificati
 | `R2_PRESIGN_TTL_SECONDS` | `300` | Lifetime of a presigned upload URL, capped at `3600`. |
 | `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
 | `MESSAGE_RATE_WINDOW_MS` | `60000` | Message-send rate-limit window in milliseconds. |
+| `PROFILE_UPDATE_RATE_LIMIT` | `5` | Maximum `PATCH /profile` display-name changes per authenticated account per window. |
+| `PROFILE_UPDATE_RATE_WINDOW_MS` | `3600000` (1 hour) | Profile-update rate-limit window in milliseconds. |
 | `ACCOUNT_EXPORT_RATE_LIMIT` | `1` | Maximum account-export requests per authenticated account per window. |
 | `ACCOUNT_EXPORT_RATE_WINDOW_MS` | `86400000` (1 day) | Account-export rate-limit window in milliseconds. |
 | `SESSION_TTL_MS` | `604800000` (7 days) | Session (bearer token) lifetime. Expired sessions are rejected on every read and swept from memory every 10 minutes; shared-store keys always carry an expiry. `0` restores non-expiring sessions — tests only. |
@@ -296,7 +300,8 @@ Chat history lives in the **same Postgres database** as users, devices and
 calls. `src/messageStore.ts` provides a transport-agnostic store with two
 implementations:
 
-- `createPgMessageStore({ db })` — the `messages` table, via the Drizzle handle
+- `createPgMessageStore({ db })` — the `messages` source table and `conversations`
+  projection, via the Drizzle handle
   the rest of the server already shares. Selected whenever `createServer` is
   given a `db`.
 - `createMemoryMessageStore()` — array-backed; used when there is no database
@@ -309,20 +314,49 @@ Both expose `saveMessage`, `listMessages({ conversationId, limit, before })`
 (`src/createServer.ts`) and hung off the shared `state` object next to
 `messageBus`/`telemetry`.
 
-The `messages` table carries five indexes, each serving one access path:
+The `messages` table carries seven secondary indexes, alongside its composite
+primary key `(conversation_id, message_id)`:
 
 | Index | Serves |
 | ----- | ------ |
 | `idx_messages_conversation_created` | A conversation's newest-first page, including the `created_at` cursor. |
-| `idx_messages_sender_created` / `idx_messages_recipient_created` | Search and conversation listing, which match either end of a conversation. |
-| `idx_messages_unread` (partial, `read_at IS NULL`) | Unread counts — it indexes only the rows that can contribute one. |
+| `idx_messages_sender_created` / `idx_messages_recipient_created` | Participant-scoped search and account-history reads. |
+| `idx_messages_unread` (partial, `read_at IS NULL`) | Unread-message reads and updates — it indexes only rows that can contribute to unread counts. |
 | `idx_messages_body_trgm` (GIN, `pg_trgm`) | The case-insensitive substring search `GET /messages/search` performs. |
+| `idx_messages_sender_body_trgm` / `idx_messages_recipient_body_trgm` (GIN, `btree_gin` + `pg_trgm`) | Participant and substring predicates in the same index, rather than probing other users' message bodies first. |
 
 `pg_trgm` is created by migration `0010`, which therefore needs the owner
-connection (`DATABASE_URL_DIRECT`).
+connection (`DATABASE_URL_DIRECT`); migration `0012` adds `btree_gin` and the
+participant-scoped GIN indexes.
+
+Migration `0013_daily_gwen_stacy.sql` added the one-row-per-thread
+`conversations` projection. `idx_conversations_a` and `idx_conversations_b`
+lead with their participant column, followed by
+`(last_created_at DESC, last_message_id DESC)`. In
+`src/messageStore/pgStore.ts`, `listConversations` selects a participant's
+ordered projection page with `MAX_CONVERSATION_LIMIT` (100) **before** joining
+its pointers back to `messages` by the composite primary key. This bounds the
+preview join, not necessarily every row visited by the planner: the
+either-participant predicate's actual scan/sort plan still needs `EXPLAIN`
+on representative data.
+
+Previews are joined rather than copied into the projection so later
+tombstones, reactions and delivery receipts remain visible without rewriting
+the projection row. Every writer must keep `participant_a` / `participant_b`
+in the same sorted order as `deriveConversationId`; that is what makes the
+reader's unread counter addressable by a string comparison. New-message
+insertion and projection maintenance share a transaction: the pointer upsert
+is ordering-guarded, while the unread increment is a separate unconditional
+statement so an older arrival still counts. `markRead` clears the relevant
+counter in its message-update transaction; retention rebuilds affected
+projection rows in its delete transaction.
+
+Historically, the [measurements posted for #391 on its parent #390](https://github.com/konarsubhojit/studious-robot/issues/390#issuecomment-5660342816)
+showed the old query growing with hot-conversation history and spilling its
+sort to disk, motivating the projection; these are not timings for today's query.
 
 > This replaced a separate MongoDB deployment. A second datastore bought
-> nothing a table and five indexes do not, while costing a second connection
+> nothing the shared Postgres store does not, while costing a second connection
 > pool, a second backup story, and a hand-maintained `conversation_index`
 > collection that could silently disagree with the messages it summarised.
 

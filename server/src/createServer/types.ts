@@ -30,6 +30,8 @@ export type CreateServerOptions = {
   accountExportRateWindowMs?: number;
   accountDeletionRateLimit?: number;
   accountDeletionRateWindowMs?: number;
+  profileUpdateRateLimit?: number;
+  profileUpdateRateWindowMs?: number;
   /** Grace period between a deletion request and the erasure; `0` erases at the next sweep. */
   accountDeletionGraceMs?: number;
   /** How often queued erasures are drained; `0` disables the timer. */

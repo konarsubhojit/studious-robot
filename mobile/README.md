@@ -653,8 +653,9 @@ values, and other secrets are redacted or intentionally not logged.
 
 `src/observability.ts` is the single entry point for client observability.
 `initObservability()` — the only startup call in `index.tsx` — installs the
-global crash handler, registers the background-push and CallKeep listeners, and
-reports any registration failure as a startup degradation.
+global crash handler, initialises optional crash reporting, registers the
+background-push and CallKeep listeners, and reports any registration failure as
+a startup degradation.
 
 All events are structured and levelled (`emitEvent`, `emitMetric`,
 `recordDegradation`) and fan out to pluggable sinks: the in-memory/durable app
@@ -667,6 +668,31 @@ Every event carries a per-session **correlation ID** (`wt-…`), which is also
 sent on the signaling handshake. The server echoes it on socket connection and
 logs a `call.correlation callId=… correlationId=…` line, so a failed call can
 be traced from the device log through the server log.
+
+### Crash reporting
+
+Off-device crash reporting (`@sentry/react-native`, chosen in
+[`docs/crash-reporting-decision.md`](../docs/crash-reporting-decision.md)) is
+**optional on every axis**:
+
+- `src/crashReporting.ts` loads the SDK through a guarded lazy `require`, the
+  same pattern as `loadMessaging()` and `loadCallKeep()`, so a bundle or Jest
+  run without the native module still works — `mobile-ci.yml` installs no
+  native modules.
+- It is off unless `SENTRY_DSN` is set at build time; Babel inlines it into the
+  bundle exactly like `SIGNALING_URL` (`android-apk.yml` passes the secret).
+- Android applies Sentry's Gradle integration only when
+  `android/sentry.properties` exists, mirroring how the Google Services plugin
+  is applied only with `google-services.json`, so credential-free builds (CI
+  and local) assemble unchanged. The uploads it adds — R8 mapping, native
+  symbols, source context — are what need those credentials.
+- iOS autolinks RNSentry through `use_native_modules!` and needs no Sentry
+  credentials to install or build.
+
+Once enabled it reports native and JavaScript crashes, and every observability
+event is forwarded as a redacted breadcrumb. The on-device crash log
+(`src/crashReporter.ts`) and the app-log sink are kept either way; a configured
+but unusable reporter is reported as a `crashReporting` startup degradation.
 
 ## Build a debug APK locally
 
@@ -691,6 +717,8 @@ export SIGNALING_URL=https://<your-signaling-host>
 export ROOM_ID=room-1
 export TURN_USERNAME=<legacy_turn_username>
 export TURN_CREDENTIAL=<legacy_turn_credential>
+# Optional: enables crash reporting. Omit it and reporting stays off.
+export SENTRY_DSN=https://<key>@<sentry-host>/<project>
 
 cd android
 ./gradlew assembleRelease

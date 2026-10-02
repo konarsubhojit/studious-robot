@@ -30,6 +30,7 @@ export const THIRD_PARTY_LICENSES: ThirdPartyLicense[] = [
   { name: '@react-navigation/bottom-tabs', license: 'MIT' },
   { name: '@react-navigation/native', license: 'MIT' },
   { name: '@react-navigation/native-stack', license: 'MIT' },
+  { name: '@sentry/react-native', license: 'MIT' },
   { name: 'react', license: 'MIT' },
   { name: 'react-native', license: 'MIT' },
   { name: 'react-native-callkeep', license: 'ISC' },

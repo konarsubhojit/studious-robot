@@ -18,6 +18,9 @@ describe('index startup registration diagnostics', () => {
     jest.doMock('../src/crashReporter', () => ({
       installCrashHandler: jest.fn(),
     }));
+    jest.doMock('../src/crashReporting', () => ({
+      initCrashReporting: jest.fn(() => 'unavailable'),
+    }));
     jest.doMock('../src/pushNotifications', () => ({
       installBackgroundMessageHandler: jest.fn(() => false),
     }));
@@ -36,10 +39,15 @@ describe('index startup registration diagnostics', () => {
     const result = initObservability();
 
     expect(result).toMatchObject({
+      crashReportingStatus: 'unavailable',
       backgroundPushRegistered: false,
       callActionsRegistered: false,
       incomingCallUiRegistered: false,
     });
+    expect(recordStartupIssue).toHaveBeenCalledWith(
+      'crashReporting',
+      'Crash reporting unavailable',
+    );
     expect(recordStartupIssue).toHaveBeenCalledWith(
       'backgroundPush',
       'Background push handler unavailable',

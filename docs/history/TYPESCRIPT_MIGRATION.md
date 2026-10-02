@@ -1,10 +1,9 @@
 # TypeScript migration
 
-The migration is **complete**: every source and test file in `mobile/`,
-`server/` and `shared/` is real TypeScript (`.ts`, or `.tsx` where the file
-contains JSX). There is no JavaScript left apart from the mobile tooling
-configs (`metro.config.js`, `babel.config.js`, `jest.config.js`,
-`.eslintrc.js`, `.prettierrc.js`).
+The application-source and test migration is **complete** in `mobile/`,
+`server/` and `shared/`: those files are TypeScript (`.ts`, or `.tsx` for JSX).
+Tooling configuration remains JavaScript, including mobile Metro/Babel/Jest
+and ESLint configuration and `server/eslint.config.js`.
 
 It happened in two steps:
 
@@ -25,7 +24,8 @@ It happened in two steps:
   "Bundle React Native code and images" phase (`ENTRY_FILE`).
 - `server/` runs its `.ts` sources directly on Node's built-in type stripping
   (Node >= 22.18), so `npm start` is `node src/index.ts` and the tests run with
-  `node --test "test/**/*.test.ts"`. Type stripping cannot execute TypeScript
+  `node --experimental-test-module-mocks --test "test/**/*.test.ts"`.
+  Type stripping cannot execute TypeScript
   that emits code, so the server is plain ESM: no `enum`, no parameter
   properties, no `import x = require(...)`.
 - Because Node runs the sources as ESM, **relative imports carry the real file

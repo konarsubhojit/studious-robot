@@ -177,6 +177,17 @@ function createServer(opts: CreateServerOptions = {}) {
       parseEnv('ACCOUNT_DELETION_RATE_WINDOW_MS', 60 * 60 * 1000),
   });
 
+  // A display name is rendered beside a username everywhere a person appears,
+  // so churning it is how an impersonator probes which spelling slips through.
+  // Changes are rare and deliberate; a handful an hour is generous.
+  const profileUpdateRateLimiter = createRateLimiter({
+    maxRequests:
+      opts.profileUpdateRateLimit ?? parseEnv('PROFILE_UPDATE_RATE_LIMIT', 5),
+    windowMs:
+      opts.profileUpdateRateWindowMs ??
+      parseEnv('PROFILE_UPDATE_RATE_WINDOW_MS', 60 * 60 * 1000),
+  });
+
   const telemetry = createTelemetry();
 
   // Route every timed datastore round trip (`lib/queryTiming.ts`) into this
@@ -247,6 +258,8 @@ function createServer(opts: CreateServerOptions = {}) {
     attachmentDownloadRateLimiter,
     accountExportRateLimiter,
     accountDeletionRateLimiter,
+    /** Rate limiter for display-name changes (`PATCH /profile`). */
+    profileUpdateRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Postgres is configured). */

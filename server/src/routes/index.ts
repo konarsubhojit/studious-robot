@@ -2,6 +2,7 @@ import { createHealthRouter } from './health.routes.ts';
 import { createSessionRouter } from './session.routes.ts';
 import { createDevicesRouter } from './devices.routes.ts';
 import { createDirectoryRouter } from './directory.routes.ts';
+import { createProfileRouter } from './profile.routes.ts';
 import { createMetricsRouter } from './metrics.routes.ts';
 import { createBlocksRouter } from './blocks.routes.ts';
 import { createAuditLogRouter } from './auditLog.routes.ts';
@@ -56,6 +57,7 @@ function mountRoutes(app: import('express').Express, ctx: {
   app.use(createAccountDeletionRouter({ state, graceMs: accountDeletionGraceMs }));
   app.use(createDevicesRouter({ state, db, io }));
   app.use(createDirectoryRouter({ state }));
+  app.use(createProfileRouter({ state, db }));
   app.use(createMetricsRouter({ state }));
   app.use(createBlocksRouter({ state, db }));
   app.use(createAuditLogRouter({ state }));
