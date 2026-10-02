@@ -17,6 +17,16 @@ end
 target 'StudiousRobot' do
   config = use_native_modules!
 
+  # Crash reporting (@sentry/react-native, see docs/crash-reporting-decision.md)
+  # needs no explicit pod of its own: `use_native_modules!` above autolinks
+  # RNSentry from node_modules, and its sentry-cocoa xcframework is fetched
+  # from a public GitHub release at `pod install` time. No Sentry credentials
+  # are involved, so this target installs and builds without them — the DSN is
+  # a build-time env var inlined into the JS bundle (see babel.config.js), and
+  # the symbol/source-map upload scripts are only added once an
+  # `ios/sentry.properties` exists, mirroring how Android applies Sentry's
+  # Gradle integration only when `android/sentry.properties` is present.
+
   use_react_native!(
     :path => config[:reactNativePath],
     # An absolute path to your application root.

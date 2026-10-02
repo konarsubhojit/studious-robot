@@ -1,5 +1,6 @@
 import { getLogsAsText, logDebug, logError, logInfo, logWarn, persistLogLine } from './appLogger';
 import { getStartupIssues, recordStartupIssue } from './startupHealth';
+import type { CrashReportingStatus } from './crashReporting';
 
 /**
  * Single observability entry point: structured, levelled events fan out to
@@ -30,6 +31,7 @@ const LEVEL_LOGGERS: Record<string, (message: unknown, metadata?: unknown) => st
 export type ObservabilityEvent = { level: string; name: string; [key: string]: any; };
 export type ObservabilityInitResult = {
   correlationId: string;
+  crashReportingStatus: CrashReportingStatus;
   backgroundPushRegistered: boolean;
   callActionsRegistered: boolean;
   incomingCallUiRegistered: boolean;
@@ -177,12 +179,24 @@ export function initObservability(): ObservabilityInitResult {
   // startup dependencies (file system, Firebase messaging, CallKeep) into
   // modules that merely log.
   const { installCrashHandler } = require('./crashReporter');
+  const { initCrashReporting } = require('./crashReporting');
   const { installBackgroundMessageHandler } = require('./pushNotifications');
   const { registerCallActionListeners, registerShowIncomingCallUiListener } = require('./callKeep');
 
   // Install the global JS / unhandled-rejection crash handler first so it is
   // in place before anything else can throw.
   installCrashHandler(getLogsAsText);
+
+  // Off-device crash reporting is optional: it is off without a build-time
+  // `SENTRY_DSN`, and absent-safe when the native module is not installed (see
+  // `crashReporter`'s on-device log, which is always kept). Initialise it here
+  // so startup crashes are still reported, and only treat a *configured* but
+  // unusable reporter as a degradation.
+  const crashReportingStatus = initCrashReporting(addSink);
+  if (crashReportingStatus === 'unavailable') {
+    recordDegradation('crashReporting', 'Crash reporting unavailable');
+    emitMetric('startup.registration_failed', 1, { component: 'crashReporting' });
+  }
 
   emitEvent('info', 'app.startup', {});
 
@@ -216,6 +230,7 @@ export function initObservability(): ObservabilityInitResult {
 
   lastInitResult = {
     correlationId: getCorrelationId(),
+    crashReportingStatus,
     backgroundPushRegistered,
     callActionsRegistered,
     incomingCallUiRegistered,
