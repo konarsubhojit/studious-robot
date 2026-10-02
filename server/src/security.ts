@@ -115,6 +115,24 @@ function isBlocked(blocks: Map<string, Set<string>>, blockerId: string, targetId
 }
 
 /**
+ * Whether `candidateId` is visible to `viewerId` in the user directory.
+ *
+ * A block hides its two parties from each other in *both* directions: the
+ * blocker should not keep seeing the person they blocked, and the blocked user
+ * must not be able to tell they were blocked by watching someone vanish only
+ * from their side.
+ *
+ * This is the predicate `GET /users` filters on, and it is shared rather than
+ * restated so that everything keyed to "can this person see that person"
+ * — the directory listing, and avatar downloads — can never drift apart.
+ * Directory visibility is the widest audience a block has to hold against,
+ * which is why anything readable by that audience must ask this question.
+ */
+function isDirectoryVisible(blocks: Map<string, Set<string>>, viewerId: string, candidateId: string): boolean {
+  return !isBlocked(blocks, viewerId, candidateId) && !isBlocked(blocks, candidateId, viewerId);
+}
+
+/**
  * Add a block entry.  Idempotent: re-blocking has no effect.
  */
 function addBlock(blocks: Map<string, Set<string>>, blockerId: string, blockedId: string) {
@@ -238,6 +256,7 @@ function createAuditLog({ db = null }: { db?: import('../db/client.ts').Database
 export {
   createRateLimiter,
   isBlocked,
+  isDirectoryVisible,
   addBlock,
   removeBlock,
   listBlocks,

@@ -81,6 +81,45 @@ const MAX_ATTACHMENT_BYTES: Readonly<Record<string, number>> = Object.freeze({
  */
 const ATTACHMENT_PATH_PREFIX = 'chatblobs';
 
+/**
+ * Path segment every avatar is stored under, deliberately *not* the chat-blob
+ * prefix.
+ *
+ * Chat media is authorised by recomputing the conversation two participants
+ * share; an avatar has no conversation and is readable by everyone who can see
+ * its owner in the directory. Keeping the two namespaces apart is what lets a
+ * single key tell the server which of those two rules applies, so a key lifted
+ * from one namespace can never be authorised by the other's rule.
+ */
+const AVATAR_PATH_PREFIX = 'avatars';
+
+/**
+ * Accepted avatar MIME types.
+ *
+ * Narrower than the image attachment allowlist on purpose. Attachments are
+ * opaque to the server (their bytes are end-to-end encrypted), so an allowlist
+ * there only describes what the sender claims; an avatar is stored in the
+ * clear and handed to every viewer, so what this list admits is what viewers'
+ * image decoders will actually be asked to parse. It therefore stays at the
+ * three formats every target platform decodes natively — no `image/gif`
+ * (animated avatars in a contact list), no `image/heic` (not decodable
+ * everywhere, and routinely carrying capture metadata).
+ */
+const AVATAR_MIME_ALLOWLIST = (Object.freeze([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]) as ReadonlyArray<string>);
+
+/**
+ * Maximum avatar upload size, in bytes.
+ *
+ * An avatar is displayed at a few dozen points square and fetched far more
+ * often than any attachment, so the cap is a small fraction of the image
+ * attachment cap rather than a copy of it.
+ */
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+
 /** Longest accepted reaction emoji, in UTF-16 code units (ZWJ sequences fit). */
 const MAX_REACTION_LENGTH = 16;
 
@@ -133,6 +172,13 @@ function maxAttachmentBytesFor(type: string): number {
 }
 
 /**
+ * Whether `mimeType` may be uploaded as an avatar.
+ */
+function isAllowedAvatarMimeType(mimeType: unknown): boolean {
+  return typeof mimeType === 'string' && AVATAR_MIME_ALLOWLIST.includes(mimeType.toLowerCase());
+}
+
+/**
  * A one-line, human-readable description of a message.
  *
  * Used for chat-list previews, push notification bodies and accessibility
@@ -170,15 +216,19 @@ export {
   ATTACHMENT_MESSAGE_TYPES,
   ATTACHMENT_MIME_ALLOWLIST,
   ATTACHMENT_PATH_PREFIX,
+  AVATAR_MIME_ALLOWLIST,
+  AVATAR_PATH_PREFIX,
   DEFAULT_MESSAGE_TYPE,
   KNOWN_MESSAGE_TYPES,
   MAX_ATTACHMENT_BYTES,
+  MAX_AVATAR_BYTES,
   MAX_REACTION_LENGTH,
   MAX_VOICE_DURATION_MS,
   MESSAGE_TYPES,
   WAVEFORM_SAMPLE_COUNT,
   describeMessagePreview,
   isAllowedAttachmentMimeType,
+  isAllowedAvatarMimeType,
   isAttachmentMessageType,
   isSupportedMessageType,
   maxAttachmentBytesFor,

@@ -8,6 +8,7 @@ import { createAuditLogRouter } from './auditLog.routes.ts';
 import { createCallsRouter } from './calls.routes.ts';
 import { createMessagesRouter } from './messages.routes.ts';
 import { createAttachmentsRouter } from './attachments.routes.ts';
+import { createAvatarRouter } from './avatar.routes.ts';
 import { createTurnCredentialsRouter } from './turnCredentials.routes.ts';
 import { createAccountExportRouter } from './accountExport.routes.ts';
 import { createAccountDeletionRouter } from './accountDeletion.routes.ts';
@@ -61,6 +62,7 @@ function mountRoutes(app: import('express').Express, ctx: {
   app.use(createCallsRouter({ state, io, ringingTimeoutMs }));
   app.use(createMessagesRouter({ state, io }));
   app.use(createAttachmentsRouter({ state }));
+  app.use(createAvatarRouter({ state, db }));
   app.use(createTurnCredentialsRouter({ state, fetchImpl: turnFetch, env: turnEnv }));
 }
 

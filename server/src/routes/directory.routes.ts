@@ -1,7 +1,7 @@
 import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
 import { USER_DIRECTORY_DEFAULT_LIMIT, USER_DIRECTORY_MAX_LIMIT } from '../config.ts';
-import { isBlocked } from '../security.ts';
+import { isDirectoryVisible } from '../security.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { getPresenceSnapshot, hasKnownUser, listKnownUsers } from '../lib/state.ts';
@@ -42,7 +42,8 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
    * The authenticated user is excluded from their own directory, as are users
    * in either direction of a block relationship with the requester.
    *
-   * Response 200: { users: Array<{ userId, status, online, lastSeen }>, total }
+   * Response 200: { users: Array<{ userId, status, online, lastSeen,
+   * displayName, avatarKey }>, total }
    */
   router.get(API_ROUTES.USERS, async (req, res) => {
     const session = await getSessionFromRequestAsync(req, state);
@@ -62,9 +63,10 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
     for (const candidateId of listKnownUsers(state)) {
       if (candidateId === session.userId) continue;
       if (search && !candidateId.toLowerCase().includes(search)) continue;
-      // Hide users in either direction of a block relationship.
-      if (isBlocked(state.blocks, session.userId, candidateId)) continue;
-      if (isBlocked(state.blocks, candidateId, session.userId)) continue;
+      // Hide users in either direction of a block relationship. The same
+      // predicate authorises avatar downloads, so a blocked user disappears
+      // from the directory and loses access to the pictures in it together.
+      if (!isDirectoryVisible(state.blocks, session.userId, candidateId)) continue;
       matches.push(candidateId);
     }
 
@@ -72,11 +74,18 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
 
     const users = matches.slice(0, limit).map((candidateId) => {
       const snapshot = getPresenceSnapshot(state, candidateId);
+      // `avatarKey` is the stable identity of the picture, not a link to it:
+      // bytes come from `GET /avatar/download`, which re-checks the predicate
+      // above. Returning it lets a client cache the bytes it already holds for
+      // that key instead of re-presigning a link on every render.
+      const profile = state.users.get(candidateId);
       return {
         userId: snapshot.userId,
         status: snapshot.status,
         online: snapshot.online,
         lastSeen: snapshot.lastSeen,
+        displayName: profile?.displayName ?? null,
+        avatarKey: profile?.avatarKey ?? null,
       };
     });
 
