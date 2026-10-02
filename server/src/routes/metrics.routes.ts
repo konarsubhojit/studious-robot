@@ -60,6 +60,7 @@ function createMetricsRouter({ state }: { state: import('../stores/contracts.ts'
    *                   (which fan a push out to handsets that no longer exist)
    *                   are visible to a scraper.  Aggregate only: no per-user
    *                   detail and never a push token.
+   *   callQuality   – MOS-style quality buckets and p50/p95 per call and fleet.
    */
   router.get(API_ROUTES.METRICS, async (req, res) => {
     if (!hasMetricsToken(req)) {

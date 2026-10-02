@@ -513,15 +513,21 @@ function createServer(opts: CreateServerOptions = {}) {
   const messageRetentionMs =
     opts.messageRetentionMs ??
     parseNonNegativeNumber('MESSAGE_RETENTION_MS', process.env.MESSAGE_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS);
+  const configuredCallQualityRetentionMs =
+    opts.callQualityRetentionMs ??
+    parseNonNegativeNumber(
+      'CALL_QUALITY_RETENTION_MS',
+      process.env.CALL_QUALITY_RETENTION_MS,
+      DEFAULT_CALL_QUALITY_RETENTION_MS
+    );
+  const callQualityRetentionMs =
+    Number.isFinite(configuredCallQualityRetentionMs) && configuredCallQualityRetentionMs > 0
+      ? configuredCallQualityRetentionMs
+      : DEFAULT_CALL_QUALITY_RETENTION_MS;
   const retentionSweepTimer = setInterval(() => {
     runRetentionSweep(db, {
       callRetentionMs: dbCallRetentionMs,
-      callQualityRetentionMs: opts.callQualityRetentionMs ??
-        parseNonNegativeNumber(
-          'CALL_QUALITY_RETENTION_MS',
-          process.env.CALL_QUALITY_RETENTION_MS,
-          DEFAULT_CALL_QUALITY_RETENTION_MS
-        ),
+      callQualityRetentionMs,
       auditRetentionMs,
       messageRetentionMs,
     }).catch((error) => {

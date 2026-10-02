@@ -13,18 +13,13 @@ import type { Database } from '../../db/client.ts';
 /**
  * Retention sweep for the append-only Postgres tables.
  *
- * `calls`, `call_events`, `audit_log` and `messages` are written on every call,
- * every security-relevant action and every chat message, and were never deleted
- * from, so they grew without bound.  That is a storage problem, but on this
- * deployment it is first a *boot* problem: `hydrateCallsAndEventsFromDb` reads
- * `calls` and `call_events` in full at startup, so an unbounded table becomes
- * an unbounded startup read on both signaling VMs, and the process is not
- * serving until it finishes.
+ * The sweep bounds `calls`, `call_quality_samples`, `audit_log` and (when
+ * configured) `messages`. Unbounded call history also becomes an unbounded boot
+ * read because `hydrateCallsAndEventsFromDb` loads calls and their events.
  *
- * `call_events` is not swept directly — its FK to `calls` is
- * `ON DELETE CASCADE`, so pruning the parent row removes the timeline with it,
- * and doing it in one statement keeps a call and its events from ever
- * disagreeing about whether they exist.
+ * `call_events` are not swept directly — their FK to `calls` is `ON DELETE
+ * CASCADE`. Quality samples have their own age-based sweep and also cascade when
+ * their parent call is removed.
  *
  * Only *terminal* calls are eligible, whatever their age: a row still in
  * `ringing` or `connected` is live state, and deleting it would strand the
