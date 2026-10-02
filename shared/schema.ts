@@ -153,6 +153,7 @@ function array<T>(item: Schema<T>) {
  *
  * @param options - `passthrough` keeps unknown
  *   keys, used for records whose full shape is owned by one side only.
+ *   `exclusive` requires exactly one defined field from each pair.
  */
 type SchemaType<S extends Schema<unknown>> = S extends Schema<infer T> ? T : never;
 type SchemaShape = Record<string, Schema<unknown>>;
@@ -185,7 +186,7 @@ function object<TShape extends SchemaShape, TPassthrough extends boolean = false
       }
     }
     for (const [left, right] of options.exclusive ?? []) {
-      if ((value[left] !== undefined) === (value[right] !== undefined)) {
+      if ((value[String(left)] !== undefined) === (value[String(right)] !== undefined)) {
         return fail(path, `exactly one of ${String(left)} or ${String(right)} is required`);
       }
     }

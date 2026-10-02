@@ -14,7 +14,7 @@ import { API_ROUTES } from '../../shared/index.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 import { createServer } from '../src/index.ts';
 
-const VERSION = 1;
+const VERSION = 2;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

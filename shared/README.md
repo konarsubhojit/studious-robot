@@ -29,10 +29,11 @@ sides of the wire.
 
 ## Signaling contract v2
 
-All application signaling payloads carry `version: 2`. The server rejects
-requests from older clients with `unsupported_version`; the shared schemas also
-reject older or mismatched payloads instead of interpreting them using the new
-targeting rules.
+Call, RTC, message, and conversation payloads use protocol version `2`.
+Client-to-server requests require `version: 2`; server-to-client payloads may
+omit the version as advisory metadata, but reject a present mismatch. The server
+rejects requests from older clients with `unsupported_version` instead of
+interpreting them using the new targeting rules.
 
 The four chat requests select exactly one destination: `message.send` and
 `message.typing` use `recipientId` for a direct chat or `conversationId` for a

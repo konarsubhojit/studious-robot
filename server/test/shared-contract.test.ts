@@ -182,7 +182,7 @@ test('conversation signaling payloads require one target and the current contrac
   }).success, false);
   assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_SEND, {
     ...directMessage,
-    version: 2,
+    version: 1,
   }).success, false);
 
   for (const event of [CLIENT_EVENTS.MESSAGE_DELETE, CLIENT_EVENTS.MESSAGE_REACT]) {
@@ -205,6 +205,11 @@ test('conversation signaling payloads require one target and the current contrac
   assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_TYPING, {
     version: SIGNALING_VERSION,
     recipientId: 'bob',
+    isTyping: true,
+  }).success, true);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_TYPING, {
+    version: SIGNALING_VERSION,
+    recipientId: 'bob',
     conversationId: 'study-team',
     isTyping: true,
   }).success, false);
@@ -218,6 +223,10 @@ test('conversation signaling payloads require one target and the current contrac
     conversationId: 'study-team',
     name: 'Exam group',
   }).success, true);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.CONVERSATION_UPDATE, {
+    version: SIGNALING_VERSION,
+    conversationId: 'study-team',
+  }).success, false);
   assert.equal(parseEventPayload(CLIENT_EVENTS.CONVERSATION_LEAVE, {
     version: SIGNALING_VERSION,
     conversationId: 'study-team',

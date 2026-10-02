@@ -95,9 +95,9 @@ frozen here; group handler/client support remains follow-up work.
 
 | Event          | Payload                              | Ack success                            | Notes |
 | -------------- | ------------------------------------ | -------------------------------------- | ----- |
-| `message.send` | `{ version, recipientId XOR conversationId, body, type?, attachment?, replyTo?, messageId? }` | `{ ok, version, event, message }` | `recipientId` targets a direct chat; `conversationId` targets a group. `body` must be a string of at most **4000** characters, and non-empty unless the message carries an attachment. `type` defaults to `text` and may be `text`, `image`, `file` or `voice` (`system` is server-owned). The current server rejects missing/self direct targets, malformed content/attachments, and blocked peers. |
-| `message.delete` | `{ version, peerId XOR conversationId, messageId }` | `{ ok, version, event, messageId, conversationId }` | "Delete for everyone" for one of your **own** messages. The row is tombstoned rather than removed, so a reply that quotes it still resolves. |
-| `message.react` | `{ version, peerId XOR conversationId, messageId, emoji, action }` | `{ ok, version, event, messageId, conversationId, reactions }` | `action` is `add` or `remove`; `emoji` must be an emoji of at most 16 code units. Idempotent, so a replayed add cannot toggle the reaction off. |
+| `message.send` | `{ version, recipientId XOR conversationId, body, type?, attachment?, replyTo?, messageId? }` | `{ ok, version, event, message }` | `recipientId` targets a direct chat; `conversationId` targets a group. `body` must be a string of at most **4000** characters, and non-empty unless the message carries an attachment. `type` defaults to `text` and may be `text`, `image`, `file` or `voice` (`system` is server-owned). The current direct-chat handler rejects missing/self `recipientId`, malformed content/attachments, and blocked peers. |
+| `message.delete` | `{ version, peerId XOR conversationId, messageId }` | `{ ok, version, event, messageId, conversationId }` | "Delete for everyone" for one of your **own** messages. The row is tombstoned rather than removed, so a reply that quotes it still resolves. `not_found` for an unknown (or already deleted) message and for someone else's. |
+| `message.react` | `{ version, peerId XOR conversationId, messageId, emoji, action }` | `{ ok, version, event, messageId, conversationId, reactions }` | `action` is `add` or `remove`; `emoji` must be an emoji of at most 16 code units. Idempotent, so a replayed add cannot toggle the reaction off. `not_found` for an unknown or tombstoned message, `forbidden` when either direct-chat party has blocked the other. |
 | `message.typing` | `{ version, recipientId XOR conversationId, isTyping }` | _(fire-and-forget)_ | Announces typing in a direct chat or group. |
 
 The client-side group lifecycle contract is:
@@ -105,7 +105,7 @@ The client-side group lifecycle contract is:
 | Event | Payload |
 | ----- | ------- |
 | `conversation.create` | `{ version, name, inviteeIds }` |
-| `conversation.update` | `{ version, conversationId, name? }` |
+| `conversation.update` | `{ version, conversationId, name }` |
 | `conversation.leave` | `{ version, conversationId }` |
 
 The server broadcasts `conversation.updated` with

@@ -102,7 +102,7 @@ const ERROR_CODES = Object.freeze({
   ANSWERED_ELSEWHERE: 'answered_elsewhere',
 });
 
-/** Protocol version carried by every application signaling payload. */
+/** Protocol version carried by every `call.*`, `rtc.*`, `message.*`, and `conversation.*` payload. */
 const SIGNALING_VERSION = 2;
 
 export {

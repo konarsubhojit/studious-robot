@@ -272,7 +272,7 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
   [CLIENT_EVENTS.CONVERSATION_UPDATE]: s.object({
     version: versionField,
     conversationId: idField,
-    name: s.string({ min: 1, max: 128, trim: true }).optional(),
+    name: s.string({ min: 1, max: 128, trim: true }),
   }),
   [CLIENT_EVENTS.CONVERSATION_LEAVE]: s.object({
     version: versionField,
@@ -464,4 +464,3 @@ export {
   getEventSchema,
   parseEventPayload,
 };
-export type { ConversationRecord };
