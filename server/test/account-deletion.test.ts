@@ -217,6 +217,60 @@ test('erasure pseudonymises the audit trail instead of dropping it', async (t) =
   assert.match(blockEntries[0].actor, /^deleted-/);
 });
 
+test('erasure removes the account\u2019s avatar object', async (t) => {
+  // An avatar hangs off the profile, not off a message, so the attachment
+  // sweep never sees it: without its own step the one picture of the erased
+  // person this deployment stores would outlive them, in a bucket with no
+  // lifecycle rule to collect it.
+  const requests: { url: string; method: string; }[] = [];
+
+  process.env.R2_BUCKET = 'chat';
+  process.env.R2_ACCESS_KEY_ID = 'key';
+  process.env.R2_SECRET_ACCESS_KEY = 'secret';
+  process.env.R2_ENDPOINT = 'https://storage.example';
+  t.after(() => {
+    delete process.env.R2_BUCKET;
+    delete process.env.R2_ACCESS_KEY_ID;
+    delete process.env.R2_SECRET_ACCESS_KEY;
+    delete process.env.R2_ENDPOINT;
+  });
+
+  const { url, runAccountDeletionSweep, teardown } = await startServer({
+    accountDeletionGraceMs: 0,
+    attachmentFetch: (async (input: any, init: any) => {
+      requests.push({ url: String(input), method: String(init?.method) });
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch,
+  });
+  t.after(teardown);
+
+  const sessionId = await createSession(url, 'delete-grace');
+  const presigned = await postJson(
+    url,
+    API_ROUTES.AVATAR_PRESIGN,
+    { mimeType: 'image/png', sizeBytes: 1024 },
+    sessionId
+  );
+  assert.equal(presigned.status, 200);
+  const published = await fetch(`${url}${API_ROUTES.AVATAR}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionId}` },
+    body: JSON.stringify({ key: presigned.body.key }),
+  });
+  assert.equal(published.status, 200);
+
+  assert.equal((await postJson(url, API_ROUTES.ACCOUNT_DELETE, {}, sessionId)).status, 202);
+  assert.equal(await runAccountDeletionSweep(), 1);
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, 'DELETE');
+  assert.ok(
+    requests[0].url.startsWith(`https://storage.example/chat/${presigned.body.key}?`),
+    `unexpected delete target: ${requests[0].url}`
+  );
+  assert.ok(requests[0].url.includes('X-Amz-Signature='), 'the delete must be signed');
+});
+
 test('erasure removes the attachment objects the erased messages referenced', async (t) => {
   const messageStore = createMemoryMessageStore();
   const requests: { url: string; method: string; }[] = [];

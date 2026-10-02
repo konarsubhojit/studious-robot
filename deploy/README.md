@@ -616,6 +616,15 @@ Leaving all of them unset keeps chat text-only: `POST /attachments/presign`
 answers `503` and attachment messages are refused. A half-configured bucket is
 logged at startup naming the missing variable.
 
+**Avatars live in the same bucket, under `avatars/<owner>/<uuid>.<ext>`.** They
+need no extra configuration and no extra bucket — but they are not a reason to
+relax the rules above. An avatar key is handed to every viewer who can see its
+owner in the directory, so a publicly served bucket would make profile pictures
+(and everything else in it) fetchable by strangers. Bytes come from
+`GET /avatar/download`, which authorises with the same block-aware directory
+predicate `GET /users` uses, then mints a one-hour presigned link. With R2
+unset, avatar endpoints answer `503` and clients show initials.
+
 `R2_PUBLIC_BASE_URL` is **obsolete** and must be removed: nothing about an
 attachment is publicly addressable any more. A message now stores the object
 *key* (`chatblobs/<scope>/<uuid>.<ext>`) as an opaque reference, and clients
@@ -930,6 +939,7 @@ What the erasure does, per account:
 | `users` | Row deleted, releasing the username — a provider account is bound to one username permanently, so anonymising the row would burn it forever. |
 | `messages` | The messages the user *sent* are tombstoned (body, attachment and reactions cleared, row kept). The ones they received are the peer's history and are left alone. |
 | R2 attachments | The objects those messages referenced are deleted with a signed `DELETE`; there is no bucket lifecycle rule that would collect them otherwise. |
+| R2 avatar | The account's avatar object is deleted with a signed `DELETE` too. It hangs off the profile rather than off a message, so the attachment sweep above would never reach it — and nothing else would, for the same missing-lifecycle-rule reason. |
 | `calls` / `call_events` | Rows naming the user are deleted; events cascade with their call. |
 | `devices` | Rows deleted, taking their push tokens — live delivery channels to a handset — with them. |
 | `blocks` | Removed in both directions. |

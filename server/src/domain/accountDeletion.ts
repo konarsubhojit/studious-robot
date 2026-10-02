@@ -46,6 +46,7 @@ import {
 } from '../../db/schema.ts';
 import { randomUUID } from 'crypto';
 import { deleteAttachmentObject, loadR2Config } from '../attachments.ts';
+import { deleteAvatarObject } from '../avatars.ts';
 import {
   callHistoryCachePrefix,
   conversationsCachePrefix,
@@ -72,6 +73,7 @@ type EraseOptions = {
 type EraseResult = {
   messagesTombstoned: number;
   attachmentsDeleted: number;
+  avatarsDeleted: number;
   callsDeleted: number;
   devicesRemoved: number;
   blocksRemoved: number;
@@ -276,6 +278,32 @@ async function eraseAttachments(
 }
 
 /**
+ * Remove the account's avatar object.
+ *
+ * An avatar is not referenced by any message, so the attachment sweep above
+ * never sees it: without this step the one picture of the person that this
+ * deployment stores would outlive their erasure, in a bucket that has no
+ * lifecycle rule to collect it.
+ *
+ * Best-effort, like the attachment deletions: storage being unavailable must
+ * not strand the rest of the cascade, and the next sweep retries.
+ *
+ * @returns 1 when an object was deleted, 0 otherwise.
+ */
+async function eraseAvatar(
+  avatarKey: string | null,
+  { r2Config, fetchImpl }: { r2Config: R2Config; fetchImpl?: typeof fetch; }
+): Promise<number> {
+  if (!r2Config || !avatarKey) return 0;
+  try {
+    return (await deleteAvatarObject({ config: r2Config, key: avatarKey, fetchImpl })) ? 1 : 0;
+  } catch (error) {
+    console.error(`[account-deletion] avatar delete failed: ${describeError(error)}`);
+    return 0;
+  }
+}
+
+/**
  * Drop the call history the user took part in, in memory and in Postgres.
  *
  * A call row is nothing but two user ids and their timings, so there is no
@@ -414,6 +442,8 @@ async function eraseAccount(
   { now = Date.now(), r2Config = loadR2Config(), fetchImpl, io = null }: EraseOptions = {}
 ): Promise<EraseResult> {
   const pseudonym = `deleted-${randomUUID()}`;
+  // Read before `eraseIdentity` drops the row that holds it.
+  const avatarKey = state.users.get(userId)?.avatarKey ?? null;
 
   const sessionsRevoked = await eraseSessions(state, userId);
   try {
@@ -425,6 +455,7 @@ async function eraseAccount(
 
   const { tombstoned, attachmentUrls, conversationIds } = await eraseSentMessages(state, userId);
   const attachmentsDeleted = await eraseAttachments(attachmentUrls, { r2Config, fetchImpl });
+  const avatarsDeleted = await eraseAvatar(avatarKey, { r2Config, fetchImpl });
   if (state.db) {
     // A projection row names both participants even after message bodies are
     // tombstoned, so account erasure must remove every row that names the user.
@@ -454,6 +485,7 @@ async function eraseAccount(
   const result: EraseResult = {
     messagesTombstoned: tombstoned,
     attachmentsDeleted,
+    avatarsDeleted,
     callsDeleted,
     devicesRemoved,
     blocksRemoved,
@@ -510,7 +542,8 @@ async function runAccountDeletionSweep(
       erased += 1;
       console.log(
         `[account-deletion] erased an account: messages=${result.messagesTombstoned}` +
-          ` attachments=${result.attachmentsDeleted} calls=${result.callsDeleted}` +
+          ` attachments=${result.attachmentsDeleted} avatars=${result.avatarsDeleted}` +
+          ` calls=${result.callsDeleted}` +
           ` devices=${result.devicesRemoved} blocks=${result.blocksRemoved}`
       );
     } catch (error) {

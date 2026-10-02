@@ -39,6 +39,11 @@ Besides the call/session/contact routes, the chat surface adds:
 | `PATCH /profile` | body `{ displayName: string \| null }` | `200 { userId, displayName, avatarKey, updatedAt }` | Updates the caller's display name; `null` clears it so the UI falls back to the username. The value is NFC-normalised, stripped of control characters, bidi overrides and zero-width codepoints, capped at 48 codepoints, and **refused when it folds onto another user's username** (case, spacing and punctuation are ignored in that comparison) — otherwise the directory would be spoofable. Every accepted change is audited as `profile.display_name_changed` and every rejection as `profile.display_name_rejected`, and the conversation-list cache is invalidated for the user and every peer they have a conversation with, across instances, so a rename cannot linger on another VM for a TTL. `400` on a rejected name, `401` without a valid session, `429` when `PROFILE_UPDATE_RATE_LIMIT` is exhausted. |
 | `POST /attachments/presign` | body `{ peerId, type, mimeType, sizeBytes }` | `200 { conversationId, key, uploadUrl, reference, expiresAt, headers }` | Mints a short-lived Cloudflare R2 upload URL for a chat attachment (see [Attachments](#attachments)). `401` without a valid session, `400` for a disallowed `type`/`mimeType` or an oversized `sizeBytes`, `429` when the message rate limit is exhausted, `503` when R2 is not configured. |
 
+| `POST /avatar/presign` | body `{ mimeType, sizeBytes }` | `200 { key, uploadUrl, expiresAt, headers }` | Mints a short-lived R2 upload URL for the caller's own avatar (see [Avatars](#avatars)). `400` outside the image allowlist or over 2 MB, `429` on the message rate limit, `503` when R2 is not configured. |
+| `PUT /avatar` | body `{ key }` | `200 { avatarKey }` | Publishes an uploaded key as the account's avatar and deletes the object it replaces. `400` unless the key is an avatar key minted for this account. |
+| `DELETE /avatar` | body: none | `200 { avatarKey: null }` | Clears the avatar and deletes its object. |
+| `GET /avatar/download` | `userId` (defaults to the caller) | `200 { userId, avatarKey, downloadUrl, expiresAt }` | Mints a presigned `GET` for that user's avatar. Authorised by **directory visibility** — the block-aware predicate `GET /users` filters on — not by conversation scope. `403` when the owner is not visible to the caller, `404` when they have no avatar, `429` on the attachment-download rate limit, `503` when R2 is not configured. |
+
 With `include=calls` the page becomes a unified conversation timeline: calls between the same two users are merged in and every entry carries a `type` discriminator — a message contributes its own type (`text`, `image`, `file`, `voice`, `system`), or `call` for `{ type, callId, conversationId, direction, status, endReason, durationSeconds, createdAt }`. The `before` cursor stays exact across the merged stream (`messageStore.nextTimestamp()` guarantees strictly-increasing message timestamps, and ties are broken by entry id). The parameter is opt-in, so omitting it returns exactly the payload it always did, and a blocked (or blocking) peer's calls are filtered out just like their conversation is in `GET /conversations`.
 
 `GET /conversations` correspondingly reports `lastActivity` — whichever of the last message and the last call is newer — alongside `lastMessage`, and counts a peer's unacknowledged missed calls in `unreadCount`. `POST /messages/read` clears both halves, returning `{ conversationId, updated, missedCallsRead }`.
@@ -184,6 +189,22 @@ referencing the returned `reference`.
 - The object key is **server-generated**, so a caller cannot overwrite another conversation's media.
 - `cache-control`, `content-length`, and `content-type` are part of the signature: every object stores `public, max-age=31536000, immutable`, and an upload that exceeds the size cap or changes its MIME type is rejected by R2 itself, not only by the client. The same allowlist and caps (10 MB images, 16 MB voice notes, 25 MB files — see `shared/messages.ts`) are re-checked on `message.send`.
 - When R2 is not configured the endpoint answers `503` and attachment messages are refused; the rest of chat is unaffected.
+
+## Avatars
+
+Avatars share the private R2 bucket with chat media and nothing else about it.
+Chat downloads are authorised by recomputing the object's expected
+*conversation* scope from the caller's identity; an avatar has no conversation
+and is shown to everyone who can see its owner in the directory, so it gets its
+own key namespace and its own rule (`src/avatars.ts`).
+
+- Keys are `avatars/<owner>/<uuid>.<ext>`, **not** `chatblobs/`. Keeping the namespaces apart is what makes the two authorisation rules non-interchangeable: each resolves only keys under its own prefix, so an avatar key can never be authorised by a conversation scope, nor a chat key by directory visibility. The owner segment is percent-encoded, so a username containing `/` or `..` can neither forge extra segments nor collide with another user's.
+- The bucket stays **private**. Avatars are not a reason to attach a custom domain or enable `r2.dev`: a key travels to every viewer in the directory listing, which makes "the UUID is not a security boundary" more true here, not less.
+- `GET /avatar/download` never takes a key from the caller — it reads the owner's stored `avatarKey` — and authorises with `isDirectoryVisible`, the same block-aware predicate `GET /users` filters on, so a blocked user cannot fetch the avatar of somebody who has vanished from their directory.
+- Uploads are presigned `PUT`s with `cache-control`, `content-length` and `content-type` signed in. The allowlist is narrower than the one for image attachments — `image/jpeg`, `image/png`, `image/webp`, 2 MB — because an avatar is stored in the clear and handed to every viewer's image decoder, so a server-side allowlist is a real control rather than a claim about opaque bytes.
+- Replacing or removing an avatar deletes the previous object with a signed `DELETE`, and account erasure deletes the current one: the bucket has no lifecycle rule that would collect either.
+- Download links live an hour (attachments get 15 minutes) because avatars are re-rendered constantly; clients cache the **bytes** under the stable `avatarKey`, never the URL, which expires. `GET /users` publishes `avatarKey` as a cache hint; the key returned by `GET /avatar/download` is the authoritative one, read from Postgres so an avatar changed on the other instance is never served as the key it replaced.
+- When R2 is not configured every avatar endpoint answers `503` and clients fall back to initials; nothing else changes, and the server still starts.
 
 ## Push notifications
 

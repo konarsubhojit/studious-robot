@@ -52,7 +52,14 @@ const MAX_PRESIGN_TTL_SECONDS = 3600;
  * keeping the exposure window of a leaked link in minutes, not hours.
  */
 const DOWNLOAD_PRESIGN_TTL_SECONDS = 900;
-const ATTACHMENT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+/**
+ * Caching metadata signed onto every uploaded object.
+ *
+ * Shared with avatar uploads (`avatars.ts`): both namespaces mint a fresh
+ * UUID key per upload and never rewrite an object in place, so an object is
+ * immutable for its whole life and a client may keep its bytes indefinitely.
+ */
+const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 /** File extension per accepted MIME type, purely cosmetic for the object key. */
 const EXTENSION_BY_MIME_TYPE = Object.freeze({
@@ -325,7 +332,7 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
     method: 'PUT',
     key,
     signedHeaderValues: {
-      'cache-control': ATTACHMENT_CACHE_CONTROL,
+      'cache-control': IMMUTABLE_CACHE_CONTROL,
       'content-length': String(sizeBytes),
       'content-type': mimeType,
     },
@@ -339,7 +346,7 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
     expiresAt: signed.expiresAt,
     // The client must replay these verbatim, or R2 rejects the signature.
     headers: {
-      'Cache-Control': ATTACHMENT_CACHE_CONTROL,
+      'Cache-Control': IMMUTABLE_CACHE_CONTROL,
       'Content-Type': mimeType,
       'Content-Length': String(sizeBytes),
     },
@@ -496,6 +503,7 @@ async function deleteAttachmentObject({ config, url, fetchImpl = fetch, now = ne
 
 export {
   DEFAULT_PRESIGN_TTL_SECONDS,
+  IMMUTABLE_CACHE_CONTROL,
   DOWNLOAD_PRESIGN_TTL_SECONDS,
   MAX_PRESIGN_TTL_SECONDS,
   attachmentKeyFromReference,
@@ -506,7 +514,9 @@ export {
   describeR2Misconfiguration,
   isManagedAttachmentReference,
   loadR2Config,
+  presignObjectRequest,
   presignAttachmentDownload,
   presignAttachmentUpload,
   validateAttachmentRequest,
 };
+export type { R2Config };
