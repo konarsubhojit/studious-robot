@@ -166,7 +166,7 @@ test('sweep: a call still inside the media-connect window is left alone', async 
     callee = await connect(url, { sessionId: calleeSession });
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
-    await emitWithAck(caller, 'rtc.offer', { version: 1, callId, sdp: { type: 'offer', sdp: 'x' } });
+    await emitWithAck(caller, 'rtc.offer', { version: 2, callId, sdp: { type: 'offer', sdp: 'x' } });
     assert.equal(getCall(callId)?.status, 'connecting_media');
 
     assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_MEDIA_CONNECT_TIMEOUT_MS - 1_000), 0);
@@ -388,7 +388,7 @@ test('call.state.report: a client with no active call clears its phantom calls',
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
     const stateChanged = waitFor(caller, 'call.state_changed');
 
-    const ack = await emitWithAck(caller, 'call.state.report', { version: 1, activeCallIds: [] });
+    const ack = await emitWithAck(caller, 'call.state.report', { version: 2, activeCallIds: [] });
     assert.equal(ack.ok, true);
     assert.deepEqual(ack.clearedCallIds, [callId]);
     assert.equal(ack.activeCalls.length, 0);
@@ -417,7 +417,7 @@ test('call.state.report: a call the client still holds is left untouched', async
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
 
     const ack = await emitWithAck(caller, 'call.state.report', {
-      version: 1,
+      version: 2,
       activeCallIds: [callId],
     });
     assert.equal(ack.ok, true);
@@ -441,12 +441,12 @@ test('call.connected: media reaching the connected ICE state advances the call',
     callee = await connect(url, { sessionId: calleeSession });
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
-    await emitWithAck(caller, 'rtc.offer', { version: 1, callId, sdp: { type: 'offer', sdp: 'x' } });
+    await emitWithAck(caller, 'rtc.offer', { version: 2, callId, sdp: { type: 'offer', sdp: 'x' } });
     assert.equal(getCall(callId)?.status, 'connecting_media');
 
     const stateChanged = waitForStatus(callee, CONNECTED_CALL_STATUS);
     const ack = await emitWithAck(caller, 'call.connected', {
-      version: 1,
+      version: 2,
       callId,
       iceState: 'connected',
     });
@@ -456,7 +456,7 @@ test('call.connected: media reaching the connected ICE state advances the call',
 
     // The peer reports too; the second report is absorbed, not rejected.
     const second = await emitWithAck(callee, 'call.connected', {
-      version: 1,
+      version: 2,
       callId,
       iceState: 'completed',
     });
@@ -476,8 +476,8 @@ test('sweep: a connected call is never ended by the media-connect timeout', asyn
     caller = await connect(url, { sessionId: callerSession });
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
-    await emitWithAck(caller, 'rtc.offer', { version: 1, callId, sdp: { type: 'offer', sdp: 'x' } });
-    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+    await emitWithAck(caller, 'rtc.offer', { version: 2, callId, sdp: { type: 'offer', sdp: 'x' } });
+    await emitWithAck(caller, 'call.connected', { version: 2, callId, iceState: 'connected' });
     assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
 
     // Well past the media-connect window: a healthy call must stay up.
@@ -503,7 +503,7 @@ test('call.connected: an unrecovered ICE failure ends the call without waiting f
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
     const ack = await emitWithAck(caller, 'call.connected', {
-      version: 1,
+      version: 2,
       callId,
       iceState: 'failed',
     });
@@ -541,8 +541,8 @@ test('call.connected: each report is resolved from its own payload, not a shared
     // Interleaved: the failing report is resolved between the healthy one being
     // resolved and its outcome being recorded, as far as the event loop allows.
     const [healthyAck, failingAck] = await Promise.all([
-      emitWithAck(caller, 'call.connected', { version: 1, callId: healthyId, iceState: 'connected' }),
-      emitWithAck(carol, 'call.connected', { version: 1, callId: failingId, iceState: 'disconnected' }),
+      emitWithAck(caller, 'call.connected', { version: 2, callId: healthyId, iceState: 'connected' }),
+      emitWithAck(carol, 'call.connected', { version: 2, callId: failingId, iceState: 'disconnected' }),
     ]);
     assert.equal(healthyAck.ok, true);
     assert.equal(failingAck.ok, true);
@@ -569,7 +569,7 @@ test('call.connected: an unvalidated iceState never picks the destination status
     // transition from the parsed payload, so this is refused outright rather
     // than being read as a failure and ending the call.
     const ack = await emitWithAck(caller, 'call.connected', {
-      version: 1,
+      version: 2,
       callId,
       iceState: ['failed'],
     });
@@ -589,11 +589,11 @@ test('heartbeat: a connected call is aged out only once its liveness reports sto
     caller = await connect(url, { sessionId: callerSession });
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
-    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+    await emitWithAck(caller, 'call.connected', { version: 2, callId, iceState: 'connected' });
 
     // A heartbeat that is still fresh keeps the call alive.
     await emitWithAck(caller, 'call.media-state', {
-      version: 1,
+      version: 2,
       callId,
       mediaState: { isScreenSharing: false, heartbeat: true },
     });
@@ -618,9 +618,9 @@ test('heartbeat: a connected call with a fresh heartbeat survives the early-drop
     caller = await connect(url, { sessionId: callerSession });
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
-    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+    await emitWithAck(caller, 'call.connected', { version: 2, callId, iceState: 'connected' });
     await emitWithAck(caller, 'call.media-state', {
-      version: 1,
+      version: 2,
       callId,
       mediaState: { isScreenSharing: false, heartbeat: true },
     });
@@ -641,7 +641,7 @@ test('heartbeat: only an explicit liveness report refreshes a connected call', a
     caller = await connect(url, { sessionId: callerSession });
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
-    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+    await emitWithAck(caller, 'call.connected', { version: 2, callId, iceState: 'connected' });
     const stampedAt = getCall(callId)?.lastHeartbeatAt;
     assert.ok(stampedAt, 'call.connected must stamp the first liveness report');
 
@@ -650,14 +650,14 @@ test('heartbeat: only an explicit liveness report refreshes a connected call', a
     // liveness, or an abandoned call is kept alive by a stray UI toggle.
     await new Promise((resolve) => setTimeout(resolve, 5));
     await emitWithAck(caller, 'call.media-state', {
-      version: 1,
+      version: 2,
       callId,
       mediaState: { isScreenSharing: true },
     });
     assert.equal(getCall(callId)?.lastHeartbeatAt, stampedAt);
 
     await emitWithAck(caller, 'call.media-state', {
-      version: 1,
+      version: 2,
       callId,
       mediaState: { isScreenSharing: true, heartbeat: true },
     });
@@ -807,7 +807,7 @@ test('placement: a second device of the caller cannot dial while the first holds
 
     await startConnectingMediaCall(url, firstDevice, calleeSession);
 
-    const ack = await emitWithAck(second, 'call.initiate', { version: 1, calleeId: 'user-carol' });
+    const ack = await emitWithAck(second, 'call.initiate', { version: 2, calleeId: 'user-carol' });
     assert.equal(ack.ok, false);
     assert.equal(ack.error.code, 'call_in_progress');
   } finally {
@@ -827,7 +827,7 @@ test('call.initiate: a busy verdict is acknowledged, not only broadcast', async 
     // Bob is occupied by someone else, so Alice's call is rejected as busy.
     await postJson(url, '/calls', { calleeId: 'user-bob' }, carolSession);
 
-    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     assert.equal(ack.ok, true);
     // The verdict must be readable from the ack itself: the caller acts on it
     // there, and a `call.state_changed` that arrives first must not be the only
@@ -853,7 +853,7 @@ test('accept: a second device cannot answer a call the first already took', asyn
     const accepted = await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     assert.equal(accepted.status, 200);
 
-    const ack = await emitWithAck(secondDevice, 'call.accept', { version: 1, callId });
+    const ack = await emitWithAck(secondDevice, 'call.accept', { version: 2, callId });
     assert.equal(ack.ok, false);
     assert.equal(ack.error.code, 'answered_elsewhere');
 
@@ -879,9 +879,9 @@ test('accept: the answering device may re-send its own accept', async () => {
     const created = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
     const callId = created.body.callId;
 
-    assert.equal((await emitWithAck(callee, 'call.accept', { version: 1, callId })).ok, true);
+    assert.equal((await emitWithAck(callee, 'call.accept', { version: 2, callId })).ok, true);
     // A retry after a flaky ack must still succeed: same device, same call.
-    assert.equal((await emitWithAck(callee, 'call.accept', { version: 1, callId })).ok, true);
+    assert.equal((await emitWithAck(callee, 'call.accept', { version: 2, callId })).ok, true);
   } finally {
     await teardown(callee);
   }
@@ -899,7 +899,7 @@ test('call.state.report: an idle second device does not end the call held by the
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
 
     const ack = await emitWithAck(idleDevice, 'call.state.report', {
-      version: 1,
+      version: 2,
       activeCallIds: [],
     });
     assert.equal(ack.ok, true);
@@ -926,12 +926,12 @@ test('call.end: an idle second device does not end the call held by the first', 
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
     await emitWithAck(ownerDevice, 'call.connected', {
-      version: 1,
+      version: 2,
       callId,
       iceState: 'connected',
     });
 
-    const rejected = await emitWithAck(idleDevice, 'call.end', { version: 1, callId });
+    const rejected = await emitWithAck(idleDevice, 'call.end', { version: 2, callId });
     assert.equal(rejected.ok, false);
     assert.equal(rejected.error.code, 'forbidden');
     assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
@@ -945,7 +945,7 @@ test('call.end: an idle second device does not end the call held by the first', 
       ),
     );
 
-    const ended = await emitWithAck(ownerDevice, 'call.end', { version: 1, callId });
+    const ended = await emitWithAck(ownerDevice, 'call.end', { version: 2, callId });
     assert.equal(ended.ok, true);
     assert.equal(getCall(callId)?.endReason, 'user_hangup');
     assert.ok(
@@ -974,7 +974,7 @@ test('disconnect: a reconnecting owning device keeps an active call alive', asyn
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
     await emitWithAck(ownerDevice, 'call.connected', {
-      version: 1,
+      version: 2,
       callId,
       iceState: 'connected',
     });
@@ -985,7 +985,7 @@ test('disconnect: a reconnecting owning device keeps an active call alive', asyn
     await sleep(30);
 
     assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
-    const ended = await emitWithAck(reconnectedDevice, 'call.end', { version: 1, callId });
+    const ended = await emitWithAck(reconnectedDevice, 'call.end', { version: 2, callId });
     assert.equal(ended.ok, true);
   } finally {
     await teardown(ownerDevice, reconnectedDevice);
@@ -1002,7 +1002,7 @@ test('call.state.report: the owning device can still clear its own phantom call'
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
 
-    const ack = await emitWithAck(caller, 'call.state.report', { version: 1, activeCallIds: [] });
+    const ack = await emitWithAck(caller, 'call.state.report', { version: 2, activeCallIds: [] });
     assert.deepEqual(ack.clearedCallIds, [callId]);
     assert.equal(getCall(callId)?.endReason, 'client_state_reconciled');
   } finally {

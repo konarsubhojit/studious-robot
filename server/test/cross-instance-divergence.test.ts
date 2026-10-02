@@ -254,7 +254,7 @@ test('an ICE candidate sent while ringing is buffered and replayed on accept', a
 
       const delivered = new Promise<any>(resolve => callee.once('rtc.candidate', resolve));
       const ack = await emitWithAck(caller, 'rtc.candidate', {
-        version: 1,
+        version: 2,
         callId,
         candidate: { candidate: 'candidate:early', sdpMid: '0', sdpMLineIndex: 0 },
       });
@@ -288,7 +288,7 @@ test('candidates buffered for a call that ends are discarded, not replayed', asy
       const callId = created.body.callId;
 
       const buffered = await emitWithAck(caller, 'rtc.candidate', {
-        version: 1,
+        version: 2,
         callId,
         candidate: { candidate: 'candidate:early', sdpMid: '0', sdpMLineIndex: 0 },
       });
@@ -306,7 +306,7 @@ test('candidates buffered for a call that ends are discarded, not replayed', asy
       assert.equal(metrics.counters.rtc_signals_stranded_remote, 0);
       // The call is over, so nothing may be relayed for it any more.
       const afterEnd = await emitWithAck(caller, 'rtc.candidate', {
-        version: 1,
+        version: 2,
         callId,
         candidate: { candidate: 'candidate:late', sdpMid: '0', sdpMLineIndex: 0 },
       });
@@ -336,7 +336,7 @@ test('a buffer still held when a peer instance ends the call is counted as stran
       const callId = created.body.callId;
 
       const buffered = await emitWithAck(caller, 'rtc.candidate', {
-        version: 1,
+        version: 2,
         callId,
         candidate: { candidate: 'candidate:early', sdpMid: '0', sdpMLineIndex: 0 },
       });
@@ -381,7 +381,7 @@ test('a call accepted on one instance and connected on the other yields exactly 
     const callee = await connect(b.url, calleeSession);
     try {
       const ack = await emitWithAck(callee, 'call.connected', {
-        version: 1,
+        version: 2,
         callId,
         iceState: 'connected',
       });

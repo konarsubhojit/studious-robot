@@ -149,6 +149,27 @@ const messageRecord = s.object(
   { passthrough: true }
 );
 
+/**
+ * A server-authoritative snapshot of a group conversation.
+ */
+export type ConversationRecord = {
+  conversationId: string;
+  name: string;
+  creatorId: string;
+  memberIds: string[];
+  membershipVersion: number;
+};
+const conversationRecord = s.object(
+  {
+    conversationId: idField,
+    name: s.string({ min: 1, max: 128, trim: true }),
+    creatorId: idField,
+    memberIds: s.array(idField),
+    membershipVersion: s.number({ min: 1, integer: true }),
+  },
+  { passthrough: true }
+);
+
 /** Client → server payloads. */
 const CLIENT_EVENT_SCHEMAS = Object.freeze({
   [CLIENT_EVENTS.CALL_INITIATE]: s.object({
@@ -206,7 +227,8 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
 
   [CLIENT_EVENTS.MESSAGE_SEND]: s.object({
     version: versionField,
-    recipientId: idField,
+    conversationId: idField.optional(),
+    recipientId: idField.optional(),
     // An attachment message may carry an empty body (the caption is optional),
     // so emptiness is checked by the handler against the message `type` rather
     // than here. Outbound `type` *is* an enum: a client may only ever send a
@@ -220,25 +242,41 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     // of once per attempt: the store upserts on `{ conversationId, messageId }`.
     // Optional so an older client that does not generate one still works.
     messageId: s.id().optional(),
-  }),
+  }, { exclusive: [['conversationId', 'recipientId']] }),
   [CLIENT_EVENTS.MESSAGE_DELETE]: s.object({
     version: versionField,
-    // The conversation is derived from the pair, so the peer identifies it
-    // without the client having to know the server's conversation id.
-    peerId: idField,
+    conversationId: idField.optional(),
+    // For a direct conversation the peer identifies the pair-derived id.
+    peerId: idField.optional(),
     messageId: idField,
-  }),
+  }, { exclusive: [['conversationId', 'peerId']] }),
   [CLIENT_EVENTS.MESSAGE_REACT]: s.object({
     version: versionField,
-    peerId: idField,
+    conversationId: idField.optional(),
+    peerId: idField.optional(),
     messageId: idField,
     emoji: s.string({ min: 1, max: MAX_REACTION_LENGTH, trim: true }),
     action: s.enum(['add', 'remove']),
-  }),
+  }, { exclusive: [['conversationId', 'peerId']] }),
   [CLIENT_EVENTS.MESSAGE_TYPING]: s.object({
     version: versionField,
-    recipientId: idField,
+    conversationId: idField.optional(),
+    recipientId: idField.optional(),
     isTyping: s.boolean(),
+  }, { exclusive: [['conversationId', 'recipientId']] }),
+  [CLIENT_EVENTS.CONVERSATION_CREATE]: s.object({
+    version: versionField,
+    name: s.string({ min: 1, max: 128, trim: true }),
+    inviteeIds: s.array(idField),
+  }),
+  [CLIENT_EVENTS.CONVERSATION_UPDATE]: s.object({
+    version: versionField,
+    conversationId: idField,
+    name: s.string({ min: 1, max: 128, trim: true }).optional(),
+  }),
+  [CLIENT_EVENTS.CONVERSATION_LEAVE]: s.object({
+    version: versionField,
+    conversationId: idField,
   }),
 });
 
@@ -340,6 +378,11 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     senderId: idField,
     isTyping: s.boolean(),
   }),
+  [SERVER_EVENTS.CONVERSATION_UPDATED]: s.object({
+    version: inboundVersionField,
+    conversation: conversationRecord,
+    updatedBy: idField,
+  }),
 
   [SERVER_EVENTS.SESSION_INVALID]: s.object({ sessionId: s.string().optional().nullable() }),
   [SERVER_EVENTS.SERVER_DRAINING]: s.object({
@@ -421,3 +464,4 @@ export {
   getEventSchema,
   parseEventPayload,
 };
+export type { ConversationRecord };

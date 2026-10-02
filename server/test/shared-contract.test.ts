@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
-import { API_ROUTES, CLIENT_EVENTS, SERVER_EVENTS, HEALTH_RESPONSE, SESSION_RESPONSE, parseEventPayload, s } from '../../shared/index.ts';
+import { API_ROUTES, CLIENT_EVENTS, SERVER_EVENTS, HEALTH_RESPONSE, SESSION_RESPONSE, SIGNALING_VERSION, parseEventPayload, s } from '../../shared/index.ts';
 import type { MessageRecord as SharedMessageRecord } from '../../shared/signaling/schemas.ts';
 import type { MessageRecord as ServerMessageRecord } from '../src/stores/contracts.ts';
 import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
@@ -134,7 +134,7 @@ test('schema helper preserves parsed object/record types at the API boundary', (
 
 test('signaling payload schemas cover both directions and pass unknown events through', () => {
   const outbound = parseEventPayload(CLIENT_EVENTS.CALL_INITIATE, {
-    version: 1,
+    version: SIGNALING_VERSION,
     calleeId: 'bob',
   });
   assert.equal(outbound.success, true);
@@ -142,7 +142,7 @@ test('signaling payload schemas cover both directions and pass unknown events th
   const inbound = parseEventPayload(
     SERVER_EVENTS.CALL_INCOMING,
     {
-      version: 1,
+      version: SIGNALING_VERSION,
       callId: 'call-1',
       call: { callId: 'call-1', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
     },
@@ -159,6 +159,82 @@ test('signaling payload schemas cover both directions and pass unknown events th
   assert.equal(unknownEvent.success, true);
 });
 
+test('conversation signaling payloads require one target and the current contract version', () => {
+  const directMessage = {
+    version: SIGNALING_VERSION,
+    recipientId: 'bob',
+    body: 'hello',
+  };
+  const groupMessage = {
+    version: SIGNALING_VERSION,
+    conversationId: 'study-team',
+    body: 'hello',
+  };
+  assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_SEND, directMessage).success, true);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_SEND, groupMessage).success, true);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_SEND, {
+    ...groupMessage,
+    recipientId: 'bob',
+  }).success, false);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_SEND, {
+    version: SIGNALING_VERSION,
+    body: 'hello',
+  }).success, false);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_SEND, {
+    ...directMessage,
+    version: 2,
+  }).success, false);
+
+  for (const event of [CLIENT_EVENTS.MESSAGE_DELETE, CLIENT_EVENTS.MESSAGE_REACT]) {
+    const direct = event === CLIENT_EVENTS.MESSAGE_DELETE
+      ? { version: SIGNALING_VERSION, peerId: 'bob', messageId: 'm-1' }
+      : { version: SIGNALING_VERSION, peerId: 'bob', messageId: 'm-1', emoji: '👍', action: 'add' };
+    const group = event === CLIENT_EVENTS.MESSAGE_DELETE
+      ? { version: SIGNALING_VERSION, conversationId: 'study-team', messageId: 'm-1' }
+      : { version: SIGNALING_VERSION, conversationId: 'study-team', messageId: 'm-1', emoji: '👍', action: 'add' };
+    assert.equal(parseEventPayload(event, direct).success, true);
+    assert.equal(parseEventPayload(event, group).success, true);
+    assert.equal(parseEventPayload(event, { ...direct, conversationId: 'study-team' }).success, false);
+  }
+
+  assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_TYPING, {
+    version: SIGNALING_VERSION,
+    conversationId: 'study-team',
+    isTyping: true,
+  }).success, true);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.MESSAGE_TYPING, {
+    version: SIGNALING_VERSION,
+    recipientId: 'bob',
+    conversationId: 'study-team',
+    isTyping: true,
+  }).success, false);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.CONVERSATION_CREATE, {
+    version: SIGNALING_VERSION,
+    name: 'Study team',
+    inviteeIds: ['bob'],
+  }).success, true);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.CONVERSATION_UPDATE, {
+    version: SIGNALING_VERSION,
+    conversationId: 'study-team',
+    name: 'Exam group',
+  }).success, true);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.CONVERSATION_LEAVE, {
+    version: SIGNALING_VERSION,
+    conversationId: 'study-team',
+  }).success, true);
+  assert.equal(parseEventPayload(SERVER_EVENTS.CONVERSATION_UPDATED, {
+    version: SIGNALING_VERSION,
+    updatedBy: 'alice',
+    conversation: {
+      conversationId: 'study-team',
+      name: 'Study team',
+      creatorId: 'alice',
+      memberIds: ['alice', 'bob'],
+      membershipVersion: 1,
+    },
+  }, 'server').success, true);
+});
+
 // ─── server-side rejection of malformed payloads ─────────────────────────────
 
 test('malformed signaling payloads are rejected with bad_request, not crashes', async (t) => {
@@ -169,15 +245,15 @@ test('malformed signaling payloads are rejected with bad_request, not crashes', 
   t.after(() => teardown(socket));
 
   const cases: [string, Record<string, unknown>][] = [
-    [CLIENT_EVENTS.CALL_INITIATE, { version: 1 }],
-    [CLIENT_EVENTS.CALL_INITIATE, { version: 1, calleeId: 42 }],
-    [CLIENT_EVENTS.CALL_INCOMING_ACK, { version: 1 }],
-    [CLIENT_EVENTS.CALL_ACCEPT, { version: 1, callId: '' }],
-    [CLIENT_EVENTS.CALL_END, { version: 1, callId: null }],
-    [CLIENT_EVENTS.RTC_OFFER, { version: 1, callId: 'call-1', sdp: 'not-an-object' }],
-    [CLIENT_EVENTS.RTC_CANDIDATE, { version: 1, callId: 'call-1' }],
-    [CLIENT_EVENTS.CALL_STATE_REPORT, { version: 1, activeCallIds: [7] }],
-    [CLIENT_EVENTS.MESSAGE_SEND, { version: 1, recipientId: 'schema-bob', body: 42 }],
+    [CLIENT_EVENTS.CALL_INITIATE, { version: SIGNALING_VERSION }],
+    [CLIENT_EVENTS.CALL_INITIATE, { version: SIGNALING_VERSION, calleeId: 42 }],
+    [CLIENT_EVENTS.CALL_INCOMING_ACK, { version: SIGNALING_VERSION }],
+    [CLIENT_EVENTS.CALL_ACCEPT, { version: SIGNALING_VERSION, callId: '' }],
+    [CLIENT_EVENTS.CALL_END, { version: SIGNALING_VERSION, callId: null }],
+    [CLIENT_EVENTS.RTC_OFFER, { version: SIGNALING_VERSION, callId: 'call-1', sdp: 'not-an-object' }],
+    [CLIENT_EVENTS.RTC_CANDIDATE, { version: SIGNALING_VERSION, callId: 'call-1' }],
+    [CLIENT_EVENTS.CALL_STATE_REPORT, { version: SIGNALING_VERSION, activeCallIds: [7] }],
+    [CLIENT_EVENTS.MESSAGE_SEND, { version: SIGNALING_VERSION, recipientId: 'schema-bob', body: 42 }],
   ];
 
   for (const [event, payload] of cases) {
@@ -190,7 +266,7 @@ test('malformed signaling payloads are rejected with bad_request, not crashes', 
   // The connection survives every rejection and still serves valid traffic.
   assert.equal(socket.connected, true);
   const ok = await emitWithAck(socket, CLIENT_EVENTS.CALL_INITIATE, {
-    version: 1,
+    version: SIGNALING_VERSION,
     calleeId: 'schema-bob',
   });
   assert.equal(ok.ok, true);
@@ -203,8 +279,8 @@ test('fire-and-forget message.typing drops malformed payloads without disconnect
   const socket = await connect(url, { sessionId: session });
   t.after(() => teardown(socket));
 
-  socket.emit(CLIENT_EVENTS.MESSAGE_TYPING, { version: 1, recipientId: 'typing-bob' });
-  socket.emit(CLIENT_EVENTS.MESSAGE_TYPING, { version: 1, recipientId: 42, isTyping: true });
+  socket.emit(CLIENT_EVENTS.MESSAGE_TYPING, { version: SIGNALING_VERSION, recipientId: 'typing-bob' });
+  socket.emit(CLIENT_EVENTS.MESSAGE_TYPING, { version: SIGNALING_VERSION, recipientId: 42, isTyping: true });
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   assert.equal(socket.connected, true);

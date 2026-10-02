@@ -612,7 +612,7 @@ describe('useMessaging', () => {
     expect(socketRef.current.emit).toHaveBeenCalledWith(
       'message.send',
       {
-        version: 1,
+        version: 2,
         recipientId: 'bob',
         body: 'hi',
         messageId: expect.any(String),
@@ -686,7 +686,7 @@ describe('useMessaging', () => {
     });
     expect(socket.emit).toHaveBeenCalledTimes(2);
     expect(socket.emit).toHaveBeenLastCalledWith('message.typing', {
-      version: 1,
+      version: 2,
       recipientId: 'bob',
       isTyping: false,
     });

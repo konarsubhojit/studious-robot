@@ -50,7 +50,7 @@ With `include=calls` the page becomes a unified conversation timeline: calls bet
 
 ### Socket.IO signaling events
 
-Authenticated call/RTC signaling uses versioned websocket events (`version: 1`) and Socket.IO acknowledgements.
+Authenticated signaling uses versioned websocket events (`version: 2`) and Socket.IO acknowledgements. Requests with an older version receive `unsupported_version`.
 Every `call.*`/`rtc.*` client event requires a socket authenticated with `auth.sessionId`.
 
 #### Client → Server (call contract)
@@ -88,15 +88,31 @@ Ack failures return `{ ok: false, version, event, error: { code, message } }` wi
 
 Text chat reuses the same versioned envelope and ack conventions as the call
 contract. Messages are persisted through `src/messageStore.ts` (Postgres when a
-database handle is configured, in-memory otherwise).
+database handle is configured, in-memory otherwise). Group payload shapes are
+frozen here; group handler/client support remains follow-up work.
 
 ##### Client → Server
 
 | Event          | Payload                              | Ack success                            | Notes |
 | -------------- | ------------------------------------ | -------------------------------------- | ----- |
-| `message.send` | `{ version, recipientId, body, type?, attachment?, replyTo?, messageId? }` | `{ ok, version, event, message }`      | `body` must be a string of at most **4000** characters, and non-empty unless the message carries an attachment. `type` defaults to `text` and may be `text`, `image`, `file` or `voice` (`system` is server-owned). Rejected with `unauthorized` (no session), `unsupported_version`, `bad_request` (missing/self `recipientId`, empty/oversized/non-string `body`, unknown `type`, missing attachment, disallowed MIME type, oversized attachment, or an `attachment.url` this server did not presign), and `forbidden` when either party has blocked the other. |
-| `message.delete` | `{ version, peerId, messageId }`   | `{ ok, version, event, messageId, conversationId }` | "Delete for everyone" for one of your **own** messages. The row is tombstoned rather than removed, so a reply that quotes it still resolves. `not_found` for an unknown (or already deleted) message and for someone else's. |
-| `message.react` | `{ version, peerId, messageId, emoji, action }` | `{ ok, version, event, messageId, conversationId, reactions }` | `action` is `add` or `remove`; `emoji` must be an emoji of at most 16 code units. Idempotent, so a replayed add cannot toggle the reaction off. `not_found` for an unknown or tombstoned message, `forbidden` when either party has blocked the other. |
+| `message.send` | `{ version, recipientId XOR conversationId, body, type?, attachment?, replyTo?, messageId? }` | `{ ok, version, event, message }` | `recipientId` targets a direct chat; `conversationId` targets a group. `body` must be a string of at most **4000** characters, and non-empty unless the message carries an attachment. `type` defaults to `text` and may be `text`, `image`, `file` or `voice` (`system` is server-owned). The current server rejects missing/self direct targets, malformed content/attachments, and blocked peers. |
+| `message.delete` | `{ version, peerId XOR conversationId, messageId }` | `{ ok, version, event, messageId, conversationId }` | "Delete for everyone" for one of your **own** messages. The row is tombstoned rather than removed, so a reply that quotes it still resolves. |
+| `message.react` | `{ version, peerId XOR conversationId, messageId, emoji, action }` | `{ ok, version, event, messageId, conversationId, reactions }` | `action` is `add` or `remove`; `emoji` must be an emoji of at most 16 code units. Idempotent, so a replayed add cannot toggle the reaction off. |
+| `message.typing` | `{ version, recipientId XOR conversationId, isTyping }` | _(fire-and-forget)_ | Announces typing in a direct chat or group. |
+
+The client-side group lifecycle contract is:
+
+| Event | Payload |
+| ----- | ------- |
+| `conversation.create` | `{ version, name, inviteeIds }` |
+| `conversation.update` | `{ version, conversationId, name? }` |
+| `conversation.leave` | `{ version, conversationId }` |
+
+The server broadcasts `conversation.updated` with
+`{ version, conversation, updatedBy }`. The snapshot contains
+`conversationId`, `name`, `creatorId`, active `memberIds`, and
+`membershipVersion`. Invitees are not active members until they accept; client
+provided IDs never establish authorization. Group calls remain out of scope.
 
 ##### Server → Client
 

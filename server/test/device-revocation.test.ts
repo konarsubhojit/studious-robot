@@ -219,7 +219,7 @@ test('socket authorization re-checks shared state before handling packets', asyn
     await stores.sessionState?.remove(session);
     const invalid = waitFor(socket, SERVER_EVENTS.SESSION_INVALID);
     const disconnect = waitFor(socket, 'disconnect');
-    socket.emit(CLIENT_EVENTS.CALL_STATE_REPORT, { version: 1, activeCallIds: [] }, () => {});
+    socket.emit(CLIENT_EVENTS.CALL_STATE_REPORT, { version: 2, activeCallIds: [] }, () => {});
 
     assert.equal((await invalid).reason, 'revoked');
     await disconnect;

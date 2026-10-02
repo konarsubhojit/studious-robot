@@ -168,7 +168,10 @@ type InferObject<TShape extends SchemaShape, TPassthrough extends boolean> = {
 
 function object<TShape extends SchemaShape, TPassthrough extends boolean = false>(
   shape: TShape,
-  options: { passthrough?: TPassthrough; } = {}
+  options: {
+    passthrough?: TPassthrough;
+    exclusive?: readonly (readonly [keyof TShape, keyof TShape])[];
+  } = {}
 ) {
   const passthrough = options.passthrough ?? false;
   return createSchema((value, path) => {
@@ -179,6 +182,11 @@ function object<TShape extends SchemaShape, TPassthrough extends boolean = false
       if (!result.success) return result;
       if (result.data !== undefined || key in value) {
         parsed[key] = result.data;
+      }
+    }
+    for (const [left, right] of options.exclusive ?? []) {
+      if ((value[left] !== undefined) === (value[right] !== undefined)) {
+        return fail(path, `exactly one of ${String(left)} or ${String(right)} is required`);
       }
     }
     return ok(parsed as InferObject<TShape, TPassthrough>);

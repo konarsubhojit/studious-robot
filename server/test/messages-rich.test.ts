@@ -843,7 +843,7 @@ test('a message with an unknown type stays renderable by an older client', () =>
   // receives the event rather than dropping it…
   const parsed = parseEventPayload(
     SERVER_EVENTS.MESSAGE_RECEIVED,
-    { version: 1, conversationId: 'a:b', message: fromTheFuture },
+    { version: 2, conversationId: 'a:b', message: fromTheFuture },
     'server'
   );
   assert.equal(parsed.success, true);

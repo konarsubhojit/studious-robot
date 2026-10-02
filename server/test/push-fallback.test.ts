@@ -397,7 +397,7 @@ test('push fallback: call.incoming ack suppresses ack-timeout push', async (t) =
   callee.on('call.incoming', ({ call }) => {
     callee.emit(
       'call.incoming.ack',
-      { version: 1, callId: call.callId, deviceId: 'device-ack-d' },
+      { version: 2, callId: call.callId, deviceId: 'device-ack-d' },
       () => {}
     );
   });

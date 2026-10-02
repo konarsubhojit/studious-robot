@@ -78,37 +78,37 @@ test('call.initiate notifies the callee and caller with versioned call events', 
     const calleeStatePromise = waitFor(callee, 'call.state_changed');
 
     const ack = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
       mediaType: 'audio',
     });
 
     assert.equal(ack.ok, true);
-    assert.equal(ack.version, 1);
+    assert.equal(ack.version, 2);
     assert.equal(ack.event, 'call.initiate');
     assert.equal(ack.call.status, 'ringing');
     assert.equal(ack.call.mediaType, 'audio');
 
     const incoming = await incomingPromise;
-    assert.equal(incoming.version, 1);
+    assert.equal(incoming.version, 2);
     assert.equal(incoming.callId, ack.call.callId);
     assert.equal(incoming.call.callerId, 'user-alice');
     assert.equal(incoming.call.calleeId, 'user-bob');
     assert.equal(incoming.call.mediaType, 'audio');
 
     const ringing = await ringingPromise;
-    assert.equal(ringing.version, 1);
+    assert.equal(ringing.version, 2);
     assert.equal(ringing.callId, ack.call.callId);
     assert.equal(ringing.call.status, 'ringing');
 
     const callerState = await callerStatePromise;
-    assert.equal(callerState.version, 1);
+    assert.equal(callerState.version, 2);
     assert.equal(callerState.previousStatus, null);
     assert.equal(callerState.status, 'ringing');
     assert.equal(callerState.actor, 'user-alice');
 
     const calleeState = await calleeStatePromise;
-    assert.equal(calleeState.version, 1);
+    assert.equal(calleeState.version, 2);
     assert.equal(calleeState.callId, ack.call.callId);
     assert.equal(calleeState.status, 'ringing');
   } finally {
@@ -130,7 +130,7 @@ test('call.ringing tells the caller whether the callee rang or was only pushed',
   try {
     const ringingPromise = waitFor(caller, 'call.ringing');
     const ack = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     assert.equal(ack.ok, true);
@@ -143,7 +143,7 @@ test('call.ringing tells the caller whether the callee rang or was only pushed',
     const wokeRingingPromise = waitFor(caller, 'call.ringing');
     callee = await connect(url, { sessionId: calleeSession });
     const ackResult = await emitWithAck(callee, 'call.incoming.ack', {
-      version: 1,
+      version: 2,
       callId: ack.call.callId,
       deviceId: 'device-user-bob',
     });
@@ -156,7 +156,7 @@ test('call.ringing tells the caller whether the callee rang or was only pushed',
     // Nobody else may claim the callee's phone is ringing, even knowing the id.
     intruder = await connect(url, { sessionId: intruderSession });
     const forged = emitWithAck(intruder, 'call.incoming.ack', {
-      version: 1,
+      version: 2,
       callId: ack.call.callId,
       deviceId: 'device-user-carol',
     });
@@ -186,7 +186,7 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
     const callerRingingStatePromise = waitFor(caller, 'call.state_changed');
     const calleeRingingStatePromise = waitFor(callee, 'call.state_changed');
     const initiateAck = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     const callId = initiateAck.call.callId;
@@ -201,7 +201,7 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
     const acceptCallerStatePromise = waitFor(caller, 'call.state_changed');
     const acceptCalleeStatePromise = waitFor(callee, 'call.state_changed');
     const acceptAck = await emitWithAck(callee, 'call.accept', {
-      version: 1,
+      version: 2,
       callId,
     });
 
@@ -209,7 +209,7 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
     assert.equal(acceptAck.call.status, 'accepted');
 
     const acceptEvent = await acceptEventPromise;
-    assert.equal(acceptEvent.version, 1);
+    assert.equal(acceptEvent.version, 2);
     assert.equal(acceptEvent.callId, callId);
     assert.equal(acceptEvent.call.status, 'accepted');
 
@@ -229,7 +229,7 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
     const mediaCallerStatePromise = waitFor(caller, 'call.state_changed');
     const mediaCalleeStatePromise = waitFor(callee, 'call.state_changed');
     const offerAck = await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'mock-offer' },
     });
@@ -238,7 +238,7 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
     assert.equal(offerAck.callId, callId);
 
     const offer = await offerPromise;
-    assert.equal(offer.version, 1);
+    assert.equal(offer.version, 2);
     assert.equal(offer.callId, callId);
     assert.equal(offer.fromUserId, 'user-alice');
     assert.deepEqual(offer.sdp, { type: 'offer', sdp: 'mock-offer' });
@@ -255,28 +255,28 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
 
     const answerPromise = waitFor(caller, 'rtc.answer');
     const answerAck = await emitWithAck(callee, 'rtc.answer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'answer', sdp: 'mock-answer' },
     });
     assert.equal(answerAck.ok, true);
 
     const answer = await answerPromise;
-    assert.equal(answer.version, 1);
+    assert.equal(answer.version, 2);
     assert.equal(answer.callId, callId);
     assert.equal(answer.fromUserId, 'user-bob');
     assert.deepEqual(answer.sdp, { type: 'answer', sdp: 'mock-answer' });
 
     const candidatePromise = waitFor(callee, 'rtc.candidate');
     const candidateAck = await emitWithAck(caller, 'rtc.candidate', {
-      version: 1,
+      version: 2,
       callId,
       candidate: { candidate: 'mock-candidate' },
     });
     assert.equal(candidateAck.ok, true);
 
     const candidate = await candidatePromise;
-    assert.equal(candidate.version, 1);
+    assert.equal(candidate.version, 2);
     assert.equal(candidate.callId, callId);
     assert.equal(candidate.fromUserId, 'user-alice');
     assert.deepEqual(candidate.candidate, { candidate: 'mock-candidate' });
@@ -284,14 +284,14 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
     // Screen-share state relay reuses the same generic RTC-relay plumbing.
     const mediaStatePromise = waitFor(callee, 'call.media-state');
     const mediaStateAck = await emitWithAck(caller, 'call.media-state', {
-      version: 1,
+      version: 2,
       callId,
       mediaState: { isScreenSharing: true },
     });
     assert.equal(mediaStateAck.ok, true);
 
     const mediaState = await mediaStatePromise;
-    assert.equal(mediaState.version, 1);
+    assert.equal(mediaState.version, 2);
     assert.equal(mediaState.callId, callId);
     assert.equal(mediaState.fromUserId, 'user-alice');
     assert.deepEqual(mediaState.mediaState, { isScreenSharing: true });
@@ -314,14 +314,14 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
 
   try {
     const unauthorized = await emitWithAck(guest, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     assert.equal(unauthorized.ok, false);
     assert.equal(unauthorized.error.code, 'unauthorized');
 
     const invalidVersion = await emitWithAck(caller, 'call.initiate', {
-      version: 2,
+      version: 1,
       calleeId: 'user-bob',
     });
     assert.equal(invalidVersion.ok, false);
@@ -332,7 +332,7 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
     const callerRingingStatePromise = waitFor(caller, 'call.state_changed');
     const calleeRingingStatePromise = waitFor(callee, 'call.state_changed');
     const initiated = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     const callId = initiated.call.callId;
@@ -344,7 +344,7 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
     ]);
 
     const staleOffer = await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'too-early' },
     });
@@ -352,7 +352,7 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
     assert.equal(staleOffer.error.code, 'stale_call_state');
 
     const forbiddenOffer = await emitWithAck(intruder, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'forbidden' },
     });
@@ -363,7 +363,7 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
     const acceptCallerStatePromise = waitFor(caller, 'call.state_changed');
     const acceptCalleeStatePromise = waitFor(callee, 'call.state_changed');
     await emitWithAck(callee, 'call.accept', {
-      version: 1,
+      version: 2,
       callId,
     });
     await Promise.all([acceptEventPromise, acceptCallerStatePromise, acceptCalleeStatePromise]);
@@ -372,13 +372,13 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
     const endCallerStatePromise = waitFor(caller, 'call.state_changed');
     const endCalleeStatePromise = waitFor(callee, 'call.state_changed');
     await emitWithAck(caller, 'call.end', {
-      version: 1,
+      version: 2,
       callId,
     });
     await Promise.all([endEventPromise, endCallerStatePromise, endCalleeStatePromise]);
 
     const endedCandidate = await emitWithAck(callee, 'rtc.candidate', {
-      version: 1,
+      version: 2,
       callId,
       candidate: { candidate: 'after-end' },
     });
@@ -402,12 +402,12 @@ test('an offer relayed to a peer with no sockets is counted, not silently acked'
   try {
     const incomingPromise = waitFor(callee, 'call.incoming');
     const initiateAck = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     const callId = initiateAck.call.callId;
     await incomingPromise;
-    await emitWithAck(callee, 'call.accept', { version: 1, callId });
+    await emitWithAck(callee, 'call.accept', { version: 2, callId });
 
     // The callee vanishes — the exact shape of the incident this counter was
     // added for, where the relay fired into an empty room and acked `ok`.
@@ -415,7 +415,7 @@ test('an offer relayed to a peer with no sockets is counted, not silently acked'
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const offerAck = await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'mock-offer' },
     });

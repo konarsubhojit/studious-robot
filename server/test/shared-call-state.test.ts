@@ -176,7 +176,7 @@ test('shared call state refreshes a stale local ringing cache before RTC and can
     assert.equal(storesA.calls.get(callId)?.status, 'ringing');
 
     const candidateAck = await emitWithAck(caller, 'rtc.candidate', {
-      version: 1,
+      version: 2,
       callId,
       candidate: { candidate: 'candidate:stale-cache-regression' },
     });
@@ -184,7 +184,7 @@ test('shared call state refreshes a stale local ringing cache before RTC and can
     assert.equal(storesA.calls.get(callId)?.status, 'connecting_media');
 
     const cancelAck = await emitWithAck(caller, 'call.cancel', {
-      version: 1,
+      version: 2,
       callId,
     });
     assert.equal(cancelAck.ok, true);

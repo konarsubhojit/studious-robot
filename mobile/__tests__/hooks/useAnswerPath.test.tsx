@@ -185,7 +185,7 @@ describe('useAnswerPath', () => {
     });
 
     expect(signaling.request).toHaveBeenCalledWith('call.decline', {
-      version: 1,
+      version: 2,
       callId: 'call-1',
     });
     expect(incomingCallNotification.dismissIncomingCallNotification).toHaveBeenCalledWith('call-1');
