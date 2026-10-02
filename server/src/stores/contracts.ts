@@ -169,6 +169,7 @@ export type ServerState = Stores & {
   callInitRateLimiter: RateLimiter;
   sessionRateLimiter: RateLimiter;
   rtcRateLimiter: RateLimiter;
+  callStatsRateLimiter: RateLimiter;
   turnCredentialsRateLimiter: RateLimiter;
   messageSendRateLimiter: RateLimiter;
   messageSearchRateLimiter: RateLimiter;
@@ -199,6 +200,8 @@ export type ServerState = Stores & {
    * once it becomes ready and dropped when it ends.
    */
   pendingRtcSignals?: Map<string, PendingRtcSignal[]>;
+  /** Device keys with recent socket disconnects, used to count reconnections. */
+  socketDisconnects: Map<string, number>;
 };
 
 /**

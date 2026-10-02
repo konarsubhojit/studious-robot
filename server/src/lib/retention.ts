@@ -2,10 +2,11 @@ import { and, inArray, lt, sql } from 'drizzle-orm';
 import {
   auditLog as auditLogTable,
   calls as callsTable,
+  callQualitySamples as callQualitySamplesTable,
   conversations as conversationsTable,
   messages as messagesTable,
 } from '../../db/schema.ts';
-import { TERMINAL_CALL_STATES, DB_RETENTION_DELETE_BATCH } from '../config.ts';
+import { TERMINAL_CALL_STATES, DB_RETENTION_DELETE_BATCH, DEFAULT_CALL_QUALITY_RETENTION_MS } from '../config.ts';
 import { describeError } from './errors.ts';
 import type { Database } from '../../db/client.ts';
 
@@ -46,6 +47,7 @@ const TERMINAL_STATUS_LIST = [...TERMINAL_CALL_STATES];
 /** Outcome of one sweep, for logging and tests. */
 type RetentionSweepResult = {
   calls: number;
+  callQualitySamples: number;
   auditLog: number;
   messages: number;
 };
@@ -53,6 +55,7 @@ type RetentionSweepResult = {
 type RetentionOptions = {
   now?: number;
   callRetentionMs: number;
+  callQualityRetentionMs?: number;
   auditRetentionMs: number;
   messageRetentionMs: number;
   batchSize?: number;
@@ -100,6 +103,24 @@ async function pruneExpiredAuditLog(db: Database, cutoff: Date, batchSize: numbe
     .where(inArray(auditLogTable.auditId, doomed))
     .returning({ auditId: auditLogTable.auditId });
 
+  return deleted.length;
+}
+
+async function pruneExpiredCallQualitySamples(
+  db: Database,
+  cutoff: Date,
+  batchSize: number
+): Promise<number> {
+  const doomed = db
+    .select({ sampleId: callQualitySamplesTable.sampleId })
+    .from(callQualitySamplesTable)
+    .where(lt(callQualitySamplesTable.sampledAt, cutoff))
+    .limit(batchSize);
+
+  const deleted = await db
+    .delete(callQualitySamplesTable)
+    .where(inArray(callQualitySamplesTable.sampleId, doomed))
+    .returning({ sampleId: callQualitySamplesTable.sampleId });
   return deleted.length;
 }
 
@@ -207,13 +228,26 @@ async function runRetentionSweep(
   {
     now = Date.now(),
     callRetentionMs,
+    callQualityRetentionMs = DEFAULT_CALL_QUALITY_RETENTION_MS,
     auditRetentionMs,
     messageRetentionMs,
     batchSize = DB_RETENTION_DELETE_BATCH,
   }: RetentionOptions
 ): Promise<RetentionSweepResult> {
-  const result: RetentionSweepResult = { calls: 0, auditLog: 0, messages: 0 };
+  const result: RetentionSweepResult = { calls: 0, callQualitySamples: 0, auditLog: 0, messages: 0 };
   if (!db) return result;
+
+  if (callQualityRetentionMs > 0) {
+    try {
+      result.callQualitySamples = await pruneExpiredCallQualitySamples(
+        db,
+        new Date(now - callQualityRetentionMs),
+        batchSize
+      );
+    } catch (error) {
+      console.error(`[retention] call-quality sweep failed: ${describeError(error)}`);
+    }
+  }
 
   if (callRetentionMs > 0) {
     try {
@@ -243,9 +277,10 @@ async function runRetentionSweep(
     }
   }
 
-  if (result.calls > 0 || result.auditLog > 0 || result.messages > 0) {
+  if (result.calls > 0 || result.callQualitySamples > 0 || result.auditLog > 0 || result.messages > 0) {
     console.log(
-      `[retention] pruned calls=${result.calls} auditLog=${result.auditLog}` +
+      `[retention] pruned calls=${result.calls} callQualitySamples=${result.callQualitySamples}` +
+        ` auditLog=${result.auditLog}` +
         ` messages=${result.messages} (call events cascade with their call)`
     );
   }

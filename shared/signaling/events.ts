@@ -21,6 +21,7 @@ const CLIENT_EVENTS = Object.freeze({
   // every healthy call with `media_connect_timeout`.
   CALL_CONNECTED: 'call.connected',
   CALL_STATE_REPORT: 'call.state.report',
+  CALL_STATS: 'call.stats',
   // WebRTC relay + in-call media flags.
   RTC_OFFER: 'rtc.offer',
   RTC_ANSWER: 'rtc.answer',

@@ -9,6 +9,7 @@ import { verboseLog } from '../lib/verbose.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
 import { bufferRtcSignal, countBufferedRtcSignals, flushBufferedRtcSignals, isBufferableSignal } from './rtcBuffer.ts';
 import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
+import { persistCallQualitySample } from '../callQuality.ts';
 
 /**
  * Generic Socket.IO handlers for authenticated call-state transitions and RTC
@@ -566,10 +567,68 @@ async function handleCallConnected(socket: import('socket.io').Socket, ack: Func
   });
 }
 
+async function handleCallStats(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  payload: object,
+  state: import('../stores/contracts.ts').ServerState
+) {
+  const eventName = CLIENT_EVENTS.CALL_STATS;
+  if (!requireSocketSession(socket, ack, eventName)) return;
+  if (!validateSignalingVersion(socket, payload, ack, eventName)) return;
+
+  const userId = socket.data.identity.userId;
+  if (!state.callStatsRateLimiter.check(userId).allowed) {
+    state.auditLog.record({
+      event: 'call.stats.rate_limited',
+      actor: userId,
+      outcome: 'rejected',
+    });
+    acknowledgeError(socket, ack, eventName, ERROR_CODES.RATE_LIMITED, 'too many call statistics reports', state);
+    return;
+  }
+
+  const parsed = parseInboundPayload(socket, ack, eventName, payload, state);
+  if (!parsed) return;
+
+  const call = await hydrateCallFromShared(state, parsed.callId);
+  if (!call) {
+    acknowledgeError(socket, ack, eventName, 'call_not_found', 'call not found', state);
+    return;
+  }
+  if (call.callerId !== userId && call.calleeId !== userId) {
+    acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'not a participant in this call', state);
+    return;
+  }
+  if (!RTC_ACTIVE_CALL_STATES.has(call.status)) {
+    acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'call is not active', state);
+    return;
+  }
+
+  try {
+    await persistCallQualitySample(state.db, {
+      callId: call.callId,
+      rttMs: parsed.rttMs,
+      jitterMs: parsed.jitterMs,
+      packetLossPercent: parsed.packetLossPercent,
+      bitrateBps: parsed.bitrateBps,
+      codec: parsed.codec,
+    });
+  } catch (error) {
+    console.error(`[signaling] call.stats persistence failed: ${describeError(error)}`);
+    acknowledgeError(socket, ack, eventName, ERROR_CODES.INTERNAL_ERROR, 'could not record call statistics', state);
+    return;
+  }
+
+  state.telemetry.recordCallStats();
+  acknowledgeSuccess(socket, ack, eventName, { callId: call.callId });
+}
+
 export {
   handleSocketCallTransition,
   handleRtcRelay,
   handleCallConnected,
+  handleCallStats,
   countRoomRecipients,
   resetRecipientLookupRateLimit,
   RECIPIENT_LOOKUP_TIMEOUT_MS,

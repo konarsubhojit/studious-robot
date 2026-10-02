@@ -16,6 +16,8 @@ export type CreateServerOptions = {
   callRateWindowMs?: number;
   rtcRateLimit?: number;
   rtcRateWindowMs?: number;
+  callStatsRateLimit?: number;
+  callStatsRateWindowMs?: number;
   turnRateLimit?: number;
   turnRateWindowMs?: number;
   messageRateLimit?: number;
@@ -42,6 +44,8 @@ export type CreateServerOptions = {
   staleDeviceMaxAgeMs?: number;
   /** Age past which a terminal `calls` row (and its cascaded events) is deleted; `0` disables. */
   dbCallRetentionMs?: number;
+  /** Age past which a call-quality sample is deleted; defaults to 30 days. */
+  callQualityRetentionMs?: number;
   /** Age past which an `audit_log` row is deleted; `0` disables. */
   auditRetentionMs?: number;
   /** Age past which a `messages` row is deleted; `0` (the default) disables. */

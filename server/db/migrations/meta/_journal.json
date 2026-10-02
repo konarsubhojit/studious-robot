@@ -120,6 +120,13 @@
       "when": 1790955955746,
       "tag": "0016_add_user_profile_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790960319731,
+      "tag": "0017_call_quality_samples",
+      "breakpoints": true
     }
   ]
 }
