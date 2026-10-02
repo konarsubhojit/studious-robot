@@ -11,6 +11,8 @@ module.exports = {
           'TURN_CREDENTIAL',
           'GOOGLE_WEB_CLIENT_ID',
           'SENTRY_DSN',
+          'SENTRY_RELEASE',
+          'SENTRY_DIST',
         ],
       },
     ],

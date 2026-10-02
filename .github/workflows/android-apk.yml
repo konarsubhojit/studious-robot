@@ -35,6 +35,10 @@ jobs:
     # build step more tightly still, so the remaining steps report the failure.
     timeout-minutes: 60
 
+    env:
+      SENTRY_RELEASE: com.wetalk@${{ github.sha }}
+      SENTRY_DIST: ${{ github.run_id }}.${{ github.run_attempt }}
+
     defaults:
       run:
         working-directory: mobile
@@ -278,6 +282,40 @@ jobs:
             echo "| --- | ---- |"
             echo "| arm64-v8a | ${SIZE_MIB} MiB |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Upload the final Metro + Hermes composed map, not either intermediate
+      # map. The JS bundle task is per variant, independent of the selected ABI.
+      # CLI 3 uses a complete artifact bundle; cancelled chunk transfers cannot
+      # replace individual release files. Wait for processing before publishing.
+      - name: Upload Hermes source maps to Sentry
+        if: github.event_name != 'pull_request'
+        timeout-minutes: 5
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: ${{ vars.SENTRY_URL || 'https://sentry.io/' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SENTRY_DSN:-}" ]]; then
+            echo "Crash reporting is disabled; skipping source-map upload."
+            exit 0
+          fi
+          : "${SENTRY_AUTH_TOKEN:?Set the SENTRY_AUTH_TOKEN repository secret}"
+          : "${SENTRY_ORG:?Set the SENTRY_ORG repository variable}"
+          : "${SENTRY_PROJECT:?Set the SENTRY_PROJECT repository variable}"
+
+          BUNDLE="android/app/build/generated/assets/react/release/index.android.bundle"
+          SOURCEMAP="android/app/build/generated/sourcemaps/react/release/index.android.bundle.map"
+          test -s "$BUNDLE"
+          test -s "$SOURCEMAP"
+          ./node_modules/.bin/sentry-cli react-native gradle \
+            --bundle "$BUNDLE" \
+            --sourcemap "$SOURCEMAP" \
+            --release "$SENTRY_RELEASE" \
+            --dist "$SENTRY_DIST" \
+            --wait
 
       - name: Upload release APK
         if: github.event_name != 'pull_request'

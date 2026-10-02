@@ -92,6 +92,14 @@ react {
     autolinkLibrariesWithApp()
 }
 
+// Babel inlines these values, so Gradle must not restore a bundle built with
+// another run's Sentry identity (or reporting configuration) from its cache.
+tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
+    ["SENTRY_DSN", "SENTRY_RELEASE", "SENTRY_DIST"].each { key ->
+        inputs.property(key, System.getenv(key) ?: "")
+    }
+}
+
 /**
  * Run R8 on release builds.  The dependency graph pulled in by the calling and
  * messaging stack (WebRTC, Firebase, Play Services, AndroidX, Kotlin stdlib)
