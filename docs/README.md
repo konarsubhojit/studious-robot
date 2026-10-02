@@ -6,6 +6,7 @@
 | [Android system audio decision](./android-system-audio-decision.md) | How screen sharing carries system audio on Android, what it costs, and what still needs a device to verify. |
 | [Azure setup](./AZURE_SETUP.md) | Configure Azure Notification Hubs and Cosmos DB. |
 | [Complexity baseline](./complexity-baseline.md) | Baselines cognitive complexity at 15 and maps the debt to decomposition phases. |
+| [Crash-reporting vendor decision](./crash-reporting-decision.md) | Selects Sentry for React Native crash reporting and records its rationale, CI configuration, and optional-module requirement. |
 | [End-to-end encryption design](./e2ee-design.md) | Threat model, subsystem impact and the go/no-go decision for end-to-end encrypted messages and attachments. |
 | [Group messaging MVP](./group-messaging-mvp.md) | Bounded private-study-group product, membership, authorization, and deferred-implementation decision. |
 | [Firebase setup](./FIREBASE_SETUP.md) | Configure Firebase Authentication and push delivery. |
