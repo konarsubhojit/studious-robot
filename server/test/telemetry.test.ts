@@ -527,7 +527,7 @@ test('GET /metrics breaks signaling errors down by code', async () => {
     // Unknown call id → call_not_found, twice.
     for (let i = 0; i < 2; i += 1) {
       const ack = await emitWithAck(caller, 'rtc.offer', {
-        version: 1,
+        version: 2,
         callId: '00000000-0000-4000-8000-000000000000',
         sdp: { type: 'offer', sdp: 'mock-offer' },
       });
@@ -537,7 +537,7 @@ test('GET /metrics breaks signaling errors down by code', async () => {
     // A ringing (not yet accepted) call → stale_call_state.
     const callRes = await postJson(url, '/calls', { calleeId: 'bob' }, callerSession);
     const staleAck = await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId: callRes.body.callId,
       sdp: { type: 'offer', sdp: 'mock-offer' },
     });
@@ -548,7 +548,7 @@ test('GET /metrics breaks signaling errors down by code', async () => {
     // `canRelayMediaState` bug) is never confused with a stale `rtc.offer`
     // (a race in the accept path).
     const staleMediaStateAck = await emitWithAck(caller, 'call.media-state', {
-      version: 1,
+      version: 2,
       callId: callRes.body.callId,
       mediaState: { isScreenSharing: false, isVideoEnabled: false },
     });
@@ -579,7 +579,7 @@ test('acknowledgeError logs the code, event, socket and user', async () => {
 
   try {
     const ack = await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId: '00000000-0000-4000-8000-000000000000',
       sdp: { type: 'offer', sdp: 'mock-offer' },
     });

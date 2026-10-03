@@ -253,7 +253,7 @@ describe('useSignalingSocket', () => {
 
     expect(signaling.emit).toHaveBeenCalledWith(
       'call.incoming.ack',
-      { version: 1, callId: 'call-2', deviceId: 'device-1' },
+      { version: 2, callId: 'call-2', deviceId: 'device-1' },
       expect.any(Function),
     );
     expect(params.incomingCallRef.current).toEqual({ callId: 'call-2', callerId: 'bob' });

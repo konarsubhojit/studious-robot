@@ -32,6 +32,10 @@ const CLIENT_EVENTS = Object.freeze({
   MESSAGE_DELETE: 'message.delete',
   MESSAGE_REACT: 'message.react',
   MESSAGE_TYPING: 'message.typing',
+  // Group conversation lifecycle.
+  CONVERSATION_CREATE: 'conversation.create',
+  CONVERSATION_UPDATE: 'conversation.update',
+  CONVERSATION_LEAVE: 'conversation.leave',
 });
 
 /** Events the server sends to the client. */
@@ -52,6 +56,8 @@ const SERVER_EVENTS = Object.freeze({
   MESSAGE_REACTION: 'message.reaction',
   MESSAGE_READ: 'message.read',
   MESSAGE_TYPING: 'message.typing',
+  // Group conversation lifecycle.
+  CONVERSATION_UPDATED: 'conversation.updated',
   // Connection-level notices.
   SESSION_INVALID: 'session.invalid',
   SERVER_DRAINING: 'server.draining',
@@ -97,8 +103,8 @@ const ERROR_CODES = Object.freeze({
   ANSWERED_ELSEWHERE: 'answered_elsewhere',
 });
 
-/** Protocol version carried by every `call.*`, `rtc.*` and `message.*` payload. */
-const SIGNALING_VERSION = 1;
+/** Protocol version carried by every `call.*`, `rtc.*`, `message.*`, and `conversation.*` payload. */
+const SIGNALING_VERSION = 2;
 
 export {
   CLIENT_EVENTS,

@@ -92,7 +92,7 @@ test('an incoming-call acknowledgement prevents the timeout fallback push', asyn
 
   const created = await postJson(url, '/calls', { calleeId: 'callee-ack' }, callerSession);
   assert.equal(created.status, 201);
-  await emitWithAck(callee, 'call.incoming.ack', { version: 1, callId: created.body.callId });
+  await emitWithAck(callee, 'call.incoming.ack', { version: 2, callId: created.body.callId });
 
   await wait(100);
   assert.equal(push.calls.length, 0);
@@ -129,7 +129,7 @@ test('a call transition reaches sockets and the cross-instance message bus', asy
   });
   const created = await postJson(url, '/calls', { calleeId: 'callee-transition' }, callerSession);
   assert.equal(created.status, 201);
-  await emitWithAck(callee, 'call.accept', { version: 1, callId: created.body.callId });
+  await emitWithAck(callee, 'call.accept', { version: 2, callId: created.body.callId });
 
   const transition = await stateChanged;
   assert.equal(transition.status, 'accepted');

@@ -2860,7 +2860,7 @@ describe('useCallFlow chat', () => {
         capturedPayload = payload;
         cb?.({
           ok: true,
-          version: 1,
+          version: 2,
           event: 'message.send',
           message: {
             messageId: 'server-msg-1',
@@ -2884,7 +2884,7 @@ describe('useCallFlow chat', () => {
     });
 
     expect(capturedPayload).toEqual({
-      version: 1,
+      version: 2,
       recipientId: 'bob',
       body: 'hi there',
       // Client-generated so the server's upsert makes a replay idempotent.
@@ -3535,7 +3535,7 @@ describe('useCallFlow chat', () => {
 
     expect(resultRef.current.isScreenSharing).toBe(true);
     expect(mediaStateEmits).toContainEqual({
-      version: 1,
+      version: 2,
       callId: 'call-share-1',
       // Both flags travel in one frame so the peer can never apply half an
       // update: the camera state is what lets their stage tell a picture from
@@ -3560,7 +3560,7 @@ describe('useCallFlow chat', () => {
     });
     expect(mediaStateEmits).toEqual([
       {
-        version: 1,
+        version: 2,
         callId: 'call-share-1',
         mediaState: { isScreenSharing: true, isVideoEnabled: false },
       },
@@ -3818,7 +3818,7 @@ describe('useCallFlow chat', () => {
 
     expect(mediaStateEmits).toEqual([
       {
-        version: 1,
+        version: 2,
         callId: 'call-snapshot-1',
         mediaState: { isScreenSharing: false, isVideoEnabled: true },
       },
@@ -4030,7 +4030,7 @@ describe('useCallFlow chat', () => {
     const connectedEmits = emits.filter((entry: any) => entry.event === 'call.connected');
     expect(connectedEmits).toHaveLength(1);
     expect(connectedEmits[0].payload).toEqual({
-      version: 1,
+      version: 2,
       callId: 'call-connected-1',
       iceState: 'connected',
     });
@@ -4074,7 +4074,7 @@ describe('useCallFlow chat', () => {
       );
       expect(beats.length).toBeGreaterThan(beatsBefore);
       expect(beats[0].payload).toEqual({
-        version: 1,
+        version: 2,
         callId: 'call-connected-2',
         mediaState: { isScreenSharing: false, heartbeat: true },
       });
@@ -4298,7 +4298,7 @@ describe('useCallFlow chat', () => {
       });
       expect(emits).toContainEqual({
         event: 'call.end',
-        payload: { version: 1, callId: 'call-hb-end-1', reason: 'user_hangup' },
+        payload: { version: 2, callId: 'call-hb-end-1', reason: 'user_hangup' },
       });
       act(() => {
         tree.update(<TestHook resultRef={resultRef} />);

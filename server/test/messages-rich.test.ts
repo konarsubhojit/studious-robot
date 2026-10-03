@@ -92,7 +92,7 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
   return new Promise((resolve) => socket.emit(event, payload, resolve));
 }
 
-const VERSION = 1;
+const VERSION = 2;
 
 /** A well-formed image attachment referencing this deployment's blob prefix. */
 function imageAttachment(overrides = {}) {
@@ -843,7 +843,7 @@ test('a message with an unknown type stays renderable by an older client', () =>
   // receives the event rather than dropping it…
   const parsed = parseEventPayload(
     SERVER_EVENTS.MESSAGE_RECEIVED,
-    { version: 1, conversationId: 'a:b', message: fromTheFuture },
+    { version: 2, conversationId: 'a:b', message: fromTheFuture },
     'server'
   );
   assert.equal(parsed.success, true);

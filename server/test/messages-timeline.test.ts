@@ -14,7 +14,7 @@ import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helper
 import { createServer } from '../src/index.ts';
 import { mergeTimeline } from '../src/domain/callTimeline.ts';
 
-const VERSION = 1;
+const VERSION = 2;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

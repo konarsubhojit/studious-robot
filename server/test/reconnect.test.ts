@@ -105,7 +105,7 @@ test('reconnect: ringing call is preserved when the caller socket disconnects', 
 
   try {
     const ack = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     assert.equal(ack.ok, true);
@@ -138,7 +138,7 @@ test('reconnect: caller receives call.state_changed after reconnecting during ri
   let caller2;
   try {
     const ack = await emitWithAck(caller1, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     const callId = ack.call.callId;
@@ -175,7 +175,7 @@ test('reconnect: ringing timeout fires and marks call missed even when caller is
 
   try {
     const ack = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     const callId = ack.call.callId;
@@ -210,17 +210,17 @@ test('reconnect: active call remains in RTC-active state after callee socket dro
   try {
     // Initiate and accept the call.
     const incomingPromise = waitFor(callee1, 'call.incoming');
-    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     const callId = ack.call.callId;
     await incomingPromise;
 
-    const acceptAck = await emitWithAck(callee1, 'call.accept', { version: 1, callId });
+    const acceptAck = await emitWithAck(callee1, 'call.accept', { version: 2, callId });
     assert.equal(acceptAck.call.status, 'accepted');
 
     // Exchange offer to move into connecting_media.
     const offerRelayed = waitFor(callee1, 'rtc.offer');
     await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'initial-offer' },
     });
@@ -257,15 +257,15 @@ test('reconnect: callee can send a new rtc.offer to restart ICE after reconnecti
   try {
     // Bring call to connecting_media state.
     const incomingPromise = waitFor(callee1, 'call.incoming');
-    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     const callId = ack.call.callId;
     await incomingPromise;
 
-    await emitWithAck(callee1, 'call.accept', { version: 1, callId });
+    await emitWithAck(callee1, 'call.accept', { version: 2, callId });
 
     const offerRelayed = waitFor(callee1, 'rtc.offer');
     await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'initial-offer' },
     });
@@ -280,7 +280,7 @@ test('reconnect: callee can send a new rtc.offer to restart ICE after reconnecti
     // Callee sends a new rtc.offer to restart ICE – caller must receive it.
     const iceRestartRelayed = waitFor(caller, 'rtc.offer');
     const iceRestartAck = await emitWithAck(callee2, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'ice-restart-offer' },
     });
@@ -311,7 +311,7 @@ test('reconnect: all active sockets for a user receive call.incoming notificatio
     const incoming1 = waitFor(callee1, 'call.incoming');
     const incoming2 = waitFor(callee2, 'call.incoming');
 
-    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     assert.equal(ack.ok, true);
 
     // Both callee sockets must receive the incoming-call notification.
@@ -340,15 +340,15 @@ test('network handoff: call completes cleanly after callee switches networks mid
   try {
     // Step 1: Establish the call in connecting_media state.
     const incomingPromise = waitFor(calleeFirst, 'call.incoming');
-    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     const callId = ack.call.callId;
     await incomingPromise;
 
-    await emitWithAck(calleeFirst, 'call.accept', { version: 1, callId });
+    await emitWithAck(calleeFirst, 'call.accept', { version: 2, callId });
 
     const firstOfferRelayed = waitFor(calleeFirst, 'rtc.offer');
     await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'offer-before-handoff' },
     });
@@ -370,7 +370,7 @@ test('network handoff: call completes cleanly after callee switches networks mid
     // Step 4: Callee restarts ICE by sending a fresh offer.
     const restartOfferRelayed = waitFor(caller, 'rtc.offer');
     const restartAck = await emitWithAck(calleeNew, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'ice-restart-after-handoff' },
     });
@@ -380,7 +380,7 @@ test('network handoff: call completes cleanly after callee switches networks mid
     // Step 5: Caller answers the restart offer.
     const restartAnswerRelayed = waitFor(calleeNew, 'rtc.answer');
     const answerAck = await emitWithAck(caller, 'rtc.answer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'answer', sdp: 'answer-after-handoff' },
     });
@@ -388,7 +388,7 @@ test('network handoff: call completes cleanly after callee switches networks mid
     await restartAnswerRelayed;
 
     // Step 6: Either party can end the call cleanly after the handoff.
-    const endAck = await emitWithAck(caller, 'call.end', { version: 1, callId });
+    const endAck = await emitWithAck(caller, 'call.end', { version: 2, callId });
     assert.equal(endAck.ok, true);
 
     const finalCall = getCall(callId);
@@ -411,7 +411,7 @@ test('offline callee: call enters ringing state and HTTP polling can poll its st
   const caller = await connect(url, { sessionId: callerSession });
 
   try {
-    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     assert.equal(ack.ok, true);
     assert.equal(ack.call.status, 'ringing');
 
@@ -461,10 +461,10 @@ test('disconnect grace: PARTICIPANT_DISCONNECT_GRACE_MS=0 is honoured, not read 
       callee = await connect(url, { sessionId: calleeSession });
 
       const incoming = waitFor(callee, 'call.incoming');
-      const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+      const ack = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
       const callId = ack.call.callId;
       await incoming;
-      await emitWithAck(callee, 'call.accept', { version: 1, callId });
+      await emitWithAck(callee, 'call.accept', { version: 2, callId });
 
       caller.disconnect();
       callee.disconnect();
@@ -499,10 +499,10 @@ test('disconnect grace: a call outlives a disconnect far longer than the old 15s
     callee = await connect(url, { sessionId: calleeSession });
 
     const incoming = waitFor(callee, 'call.incoming');
-    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     const callId = ack.call.callId;
     await incoming;
-    await emitWithAck(callee, 'call.accept', { version: 1, callId });
+    await emitWithAck(callee, 'call.accept', { version: 2, callId });
 
     caller.disconnect();
     callee.disconnect();

@@ -153,6 +153,7 @@ function array<T>(item: Schema<T>) {
  *
  * @param options - `passthrough` keeps unknown
  *   keys, used for records whose full shape is owned by one side only.
+ *   `exclusive` requires exactly one defined field from each pair.
  */
 type SchemaType<S extends Schema<unknown>> = S extends Schema<infer T> ? T : never;
 type SchemaShape = Record<string, Schema<unknown>>;
@@ -168,7 +169,10 @@ type InferObject<TShape extends SchemaShape, TPassthrough extends boolean> = {
 
 function object<TShape extends SchemaShape, TPassthrough extends boolean = false>(
   shape: TShape,
-  options: { passthrough?: TPassthrough; } = {}
+  options: {
+    passthrough?: TPassthrough;
+    exclusive?: readonly (readonly [keyof TShape, keyof TShape])[];
+  } = {}
 ) {
   const passthrough = options.passthrough ?? false;
   return createSchema((value, path) => {
@@ -179,6 +183,11 @@ function object<TShape extends SchemaShape, TPassthrough extends boolean = false
       if (!result.success) return result;
       if (result.data !== undefined || key in value) {
         parsed[key] = result.data;
+      }
+    }
+    for (const [left, right] of options.exclusive ?? []) {
+      if ((value[String(left)] !== undefined) === (value[String(right)] !== undefined)) {
+        return fail(path, `exactly one of ${String(left)} or ${String(right)} is required`);
       }
     }
     return ok(parsed as InferObject<TShape, TPassthrough>);

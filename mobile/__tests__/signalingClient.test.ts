@@ -38,7 +38,7 @@ describe('createSignalingClient inbound validation', () => {
 
     client.on(SERVER_EVENTS.CALL_INCOMING, handler);
     socket.handlers[SERVER_EVENTS.CALL_INCOMING]({
-      version: 1,
+      version: 2,
       call: { callId: 'call-1', callerId: 'bob', calleeId: 'alice', status: 'ringing' },
     });
 
@@ -52,7 +52,7 @@ describe('createSignalingClient inbound validation', () => {
     const handler = jest.fn();
 
     client.on(SERVER_EVENTS.CALL_INCOMING, handler);
-    socket.handlers[SERVER_EVENTS.CALL_INCOMING]({ version: 1 });
+    socket.handlers[SERVER_EVENTS.CALL_INCOMING]({ version: 2 });
     socket.handlers[SERVER_EVENTS.CALL_INCOMING](undefined);
 
     expect(handler).not.toHaveBeenCalled();
@@ -113,14 +113,14 @@ describe('createSignalingClient outbound validation', () => {
     const sdp = { type: 'offer', sdp: 'v=0' };
 
     const sent = client.emit(CLIENT_EVENTS.RTC_OFFER, {
-      version: 1,
+      version: 2,
       callId: 'call-1',
       sdp,
     });
 
     expect(sent).toBe(true);
     expect(socket.emit).toHaveBeenCalledWith(CLIENT_EVENTS.RTC_OFFER, {
-      version: 1,
+      version: 2,
       callId: 'call-1',
       sdp,
     });
@@ -131,7 +131,7 @@ describe('createSignalingClient outbound validation', () => {
     const socket = makeSocket();
     const client = createSignalingClient((socket as any));
 
-    const sent = client.emit(CLIENT_EVENTS.MESSAGE_SEND, { version: 1, recipientId: 'bob' });
+    const sent = client.emit(CLIENT_EVENTS.MESSAGE_SEND, { version: 2, recipientId: 'bob' });
 
     expect(sent).toBe(false);
     expect(socket.emit).not.toHaveBeenCalled();
@@ -145,7 +145,7 @@ describe('createSignalingClient outbound validation', () => {
     const socket = makeSocket();
     const client = createSignalingClient((socket as any));
 
-    await expect(client.request(CLIENT_EVENTS.CALL_INITIATE, { version: 1 })).rejects.toThrow(
+    await expect(client.request(CLIENT_EVENTS.CALL_INITIATE, { version: 2 })).rejects.toThrow(
       /calleeId/,
     );
     expect(socket.emit).not.toHaveBeenCalled();
@@ -156,7 +156,7 @@ describe('createSignalingClient outbound validation', () => {
     const client = createSignalingClient((socket as any));
 
     const result = await client.request(CLIENT_EVENTS.CALL_INITIATE, {
-      version: 1,
+      version: 2,
       calleeId: 'bob',
     });
 
@@ -170,7 +170,7 @@ describe('createSignalingClient offline queue', () => {
     const client = createSignalingClient((socket as any));
 
     const sent = client.emit(CLIENT_EVENTS.MESSAGE_TYPING, {
-      version: 1,
+      version: 2,
       recipientId: 'bob',
       isTyping: true,
     });
@@ -182,7 +182,7 @@ describe('createSignalingClient offline queue', () => {
     socket.connected = true;
     expect(client.flushQueue()).toBe(1);
     expect(socket.emit).toHaveBeenCalledWith(CLIENT_EVENTS.MESSAGE_TYPING, {
-      version: 1,
+      version: 2,
       recipientId: 'bob',
       isTyping: true,
     });
@@ -195,7 +195,7 @@ describe('createSignalingClient offline queue', () => {
 
     for (let index = 0; index < MAX_QUEUED_EVENTS + 3; index += 1) {
       client.emit(CLIENT_EVENTS.MESSAGE_TYPING, {
-        version: 1,
+        version: 2,
         recipientId: `peer-${index}`,
         isTyping: true,
       });
@@ -213,11 +213,11 @@ describe('createSignalingClient offline queue', () => {
     const client = createSignalingClient((socket as any));
     const ack = jest.fn();
 
-    client.emit(CLIENT_EVENTS.CALL_END, { version: 1, callId: 'call-1' }, ack);
+    client.emit(CLIENT_EVENTS.CALL_END, { version: 2, callId: 'call-1' }, ack);
 
     expect(socket.emit).toHaveBeenCalledWith(
       CLIENT_EVENTS.CALL_END,
-      { version: 1, callId: 'call-1' },
+      { version: 2, callId: 'call-1' },
       ack,
     );
     expect(client.getQueuedEventCount()).toBe(0);

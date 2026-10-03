@@ -160,7 +160,7 @@ describe('usePeerConnection', () => {
       protocol: 'udp',
     });
     expect(signaling.emit).toHaveBeenCalledWith('rtc.candidate', {
-      version: 1,
+      version: 2,
       callId: 'call-1',
       candidate: { candidate: 'candidate-detail' },
     });
@@ -184,7 +184,7 @@ describe('usePeerConnection', () => {
     expect(signaling.emit).toHaveBeenCalledWith(
       'rtc.offer',
       {
-        version: 1,
+        version: 2,
         callId: 'call-1',
         sdp: { type: 'offer', sdp: 'local-offer-sdp' },
       },

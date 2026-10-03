@@ -74,7 +74,7 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
   return new Promise((resolve) => socket.emit(event, payload, resolve));
 }
 
-const VERSION = 1;
+const VERSION = 2;
 
 const R2_ENV = {
   R2_ACCOUNT_ID: 'test-account',

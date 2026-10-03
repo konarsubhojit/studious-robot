@@ -27,6 +27,27 @@ Schemas are the source of truth for the types too: each one carries a JSDoc
 typedef, so editors (and `tsc --checkJs`) see the same payload shapes on both
 sides of the wire.
 
+## Signaling contract v2
+
+Call, RTC, message, and conversation payloads use protocol version `2`.
+Client-to-server requests require `version: 2`; server-to-client payloads may
+omit the version as advisory metadata, but reject a present mismatch. The server
+rejects requests from older clients with `unsupported_version` instead of
+interpreting them using the new targeting rules.
+
+The four chat requests select exactly one destination: `message.send` and
+`message.typing` use `recipientId` for a direct chat or `conversationId` for a
+group; `message.delete` and `message.react` use `peerId` or `conversationId`.
+Providing both or neither is invalid. Group lifecycle requests are
+`conversation.create` (`name`, `inviteeIds`), `conversation.update`
+(`conversationId`, optional `name`), and `conversation.leave`
+(`conversationId`). The server broadcasts `conversation.updated` with a
+server-authoritative conversation snapshot and `updatedBy`.
+
+Call and RTC events remain peer-to-peer; group calls are not part of this
+contract. These schemas freeze the wire shapes only; group event handlers and
+client support are separate follow-up work.
+
 ## Usage
 
 Server (CommonJS):

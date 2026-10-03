@@ -244,7 +244,7 @@ test('call.initiate via socket: blocked caller receives blocked error', async ()
   ]);
   try {
     const ack = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     assert.equal(ack.ok, false);
@@ -269,7 +269,7 @@ test('call.initiate via socket: callee does NOT receive incoming call when calle
       calleeReceivedIncoming = true;
     });
 
-    await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
 
     // Give the server a moment to deliver any spurious event.
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -336,13 +336,13 @@ test('call.initiate via socket: rate limit is enforced', async () => {
     connect(url, { sessionId: bobSession }),
   ]);
   try {
-    const first = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const first = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     assert.equal(first.ok, true);
 
-    const second = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const second = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     assert.equal(second.ok, true);
 
-    const third = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const third = await emitWithAck(caller, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     assert.equal(third.ok, false);
     assert.equal(third.error.code, 'rate_limited');
   } finally {
@@ -368,7 +368,7 @@ test('rtc.offer via socket: rate limit is enforced', async () => {
     const callerStateP = waitFor(caller, 'call.state_changed');
     const calleeStateP = waitFor(callee, 'call.state_changed');
     const initiated = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: 2,
       calleeId: 'user-bob',
     });
     const callId = initiated.call.callId;
@@ -378,12 +378,12 @@ test('rtc.offer via socket: rate limit is enforced', async () => {
     const acceptCallerP = waitFor(caller, 'call.accept');
     const acceptCallerStateP = waitFor(caller, 'call.state_changed');
     const acceptCalleeStateP = waitFor(callee, 'call.state_changed');
-    await emitWithAck(callee, 'call.accept', { version: 1, callId });
+    await emitWithAck(callee, 'call.accept', { version: 2, callId });
     await Promise.all([acceptCallerP, acceptCallerStateP, acceptCalleeStateP]);
 
     // First RTC offer is within quota.
     const firstOffer = await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'mock' },
     });
@@ -391,7 +391,7 @@ test('rtc.offer via socket: rate limit is enforced', async () => {
 
     // Second RTC offer exceeds quota.
     const secondOffer = await emitWithAck(caller, 'rtc.offer', {
-      version: 1,
+      version: 2,
       callId,
       sdp: { type: 'offer', sdp: 'mock2' },
     });
@@ -459,7 +459,7 @@ test('socket connect: a stale sessionId downgrades to guest and emits session.in
 
     // The socket authenticated as a guest, so an authenticated action like
     // call.initiate is rejected instead of silently using the stale identity.
-    const ack = await emitWithAck(client, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(client, 'call.initiate', { version: 2, calleeId: 'user-bob' });
     assert.equal(ack.ok, false);
     assert.equal(ack.error.code, 'unauthorized');
   } finally {
