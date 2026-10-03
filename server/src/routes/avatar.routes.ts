@@ -16,7 +16,7 @@ import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { describeError } from '../lib/errors.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { hasKnownUser } from '../lib/state.ts';
-import { isDirectoryVisible } from '../security.ts';
+import { isDirectoryVisibleAsync } from '../security.ts';
 
 /**
  * Avatar upload, publication and download.
@@ -68,13 +68,13 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
    *
    * @returns `true` when the response has been sent and the handler must stop.
    */
-  function rejectWhenRateLimited(
+  async function rejectWhenRateLimited(
     userId: string,
     res: import('express').Response,
     event: string,
     limiter: import('../stores/contracts.ts').RateLimiter = state.messageSendRateLimiter
-  ): boolean {
-    const rateCheck = limiter.check(userId);
+  ): Promise<boolean> {
+    const rateCheck = await limiter.check(userId);
     if (rateCheck.allowed) return false;
     state.auditLog.record({ event: `${event}.rate_limited`, actor: userId, outcome: 'rejected' });
     res.status(429).json({
@@ -181,7 +181,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
 
     // Presigning mints a credential, so it is throttled on the same budget as
     // the other write-shaped endpoints.
-    if (rejectWhenRateLimited(session.userId, res, 'avatar_presign')) return;
+    if (await rejectWhenRateLimited(session.userId, res, 'avatar_presign')) return;
 
     const validated = validateAvatarRequest(req.body ?? {});
     if ('error' in validated) {
@@ -233,7 +233,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
       return;
     }
 
-    if (rejectWhenRateLimited(session.userId, res, 'avatar_update')) return;
+    if (await rejectWhenRateLimited(session.userId, res, 'avatar_update')) return;
 
     const key = normaliseId(req.body?.key);
     // The owner segment is recovered from the key and compared with the
@@ -281,7 +281,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
       return;
     }
 
-    if (rejectWhenRateLimited(session.userId, res, 'avatar_update')) return;
+    if (await rejectWhenRateLimited(session.userId, res, 'avatar_update')) return;
 
     let removed: string | null;
     try {
@@ -333,7 +333,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
     }
 
     if (
-      rejectWhenRateLimited(session.userId, res, 'avatar_download', state.attachmentDownloadRateLimiter)
+      await rejectWhenRateLimited(session.userId, res, 'avatar_download', state.attachmentDownloadRateLimiter)
     ) {
       return;
     }
@@ -343,7 +343,7 @@ function createAvatarRouter({ state, db = null, env = process.env }: {
     // other owner must be someone this caller can see in the directory.
     const visible =
       ownerId === session.userId ||
-      (hasKnownUser(state, ownerId) && isDirectoryVisible(state.blocks, session.userId, ownerId));
+      (hasKnownUser(state, ownerId) && await isDirectoryVisibleAsync(state, session.userId, ownerId));
     if (!visible) {
       state.auditLog.record({
         event: 'avatar_download.forbidden',

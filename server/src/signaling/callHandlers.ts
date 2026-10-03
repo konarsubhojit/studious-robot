@@ -405,7 +405,7 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
 
   // Rate limit: cap RTC signaling events per user per window.
   const userId = socket.data.identity.userId;
-  const rtcCheck = options.state.rtcRateLimiter.check(userId);
+  const rtcCheck = await options.state.rtcRateLimiter.check(userId);
   if (!rtcCheck.allowed) {
     options.state.auditLog.record({
       event: 'rtc.rate_limited',
@@ -578,7 +578,7 @@ async function handleCallStats(
   if (!validateSignalingVersion(socket, payload, ack, eventName)) return;
 
   const userId = socket.data.identity.userId;
-  if (!state.callStatsRateLimiter.check(userId).allowed) {
+  if (!(await state.callStatsRateLimiter.check(userId)).allowed) {
     state.auditLog.record({
       event: 'call.stats.rate_limited',
       actor: userId,

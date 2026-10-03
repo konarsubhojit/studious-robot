@@ -3,6 +3,348 @@ import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
+import { createMemoryStores, createRedisPgStores } from '../src/stores/index.ts';
+import { createRedisSecurity, createPgSharedBlocks, RATE_LIMIT_LUA } from '../src/stores/security.ts';
+import { createSharedRateLimiter, isBlockedAsync, isDirectoryVisibleAsync } from '../src/security.ts';
+import { createTestSharedBlocks as fakeSharedBlocks, asSocketIoAdapter } from './helpers.ts';
+import { CLIENT_EVENTS } from '../../shared/index.ts';
+import { SIGNALING_VERSION } from '../src/config.ts';
+import { deriveConversationId } from '../src/messageStore.ts';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import * as schema from '../db/schema.ts';
+import { loadPersistedStateFromDb } from '../src/lib/persistence.ts';
+
+function fakeSecurityClient() {
+  const buckets = new Map<string, { count: number; expires: number }>();
+  let now = 0;
+  const client = {
+    isReady: true,
+    failure: false,
+    calls: 0,
+    advance(ms: number) { now += ms; },
+    eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown> {
+      client.calls += 1;
+      assert.equal(script, RATE_LIMIT_LUA);
+      if (client.failure) throw new Error('Redis command failed');
+      const key = options.keys[0];
+      const [max, windowMs] = options.arguments.map(Number);
+      let bucket = buckets.get(key);
+      if (!bucket || bucket.expires <= now) {
+        bucket = { count: 0, expires: now + windowMs };
+        buckets.set(key, bucket);
+      }
+      const allowed = bucket.count < max;
+      if (allowed) bucket.count += 1;
+      return Promise.resolve([Number(allowed), Math.max(0, max - bucket.count), bucket.expires - now]);
+    },
+  };
+  return client;
+}
+
+test('Redis security: combined budget, expiry, namespace and identity isolation, atomic concurrency', async () => {
+  const client = fakeSecurityClient();
+  const make = (namespace = 'send') => createSharedRateLimiter({
+    namespace, maxRequests: 3, windowMs: 1000, security: createRedisSecurity(client),
+  });
+  const first = make();
+  const second = make();
+  const results = await Promise.all(Array.from({ length: 256 }, async (_value, index) =>
+    (index % 2 ? first : second).check('alice')));
+  assert.equal(results.filter(result => result.allowed).length, 3);
+  assert.equal((await make('search').check('alice')).allowed, true);
+  assert.equal((await first.check('bob')).allowed, true);
+  assert.equal((await make('send:alice').check('bob')).remaining, 2);
+  assert.equal((await make('send').check('alice:bob')).remaining, 2);
+  assert.equal((await first.check('\ud800')).remaining, 2);
+  assert.equal((await first.check('\ud801')).remaining, 2);
+  client.advance(999);
+  assert.equal((await second.check('alice')).allowed, false);
+  client.advance(1);
+  assert.equal((await second.check('alice')).remaining, 2);
+});
+
+test('Redis store security reuses busPub without creating another command connection', async () => {
+  const commands = [fakeSecurityClient(), fakeSecurityClient(), fakeSecurityClient(), fakeSecurityClient()];
+  let opened = 0;
+  const stores = await createRedisPgStores({
+    createClient: () => ({
+      ...commands[opened++], connect: async () => {}, quit: async () => {}, on: () => {},
+    }),
+    createAdapter: () => asSocketIoAdapter(() => ({})),
+  });
+  try {
+    assert.equal(opened, 4);
+    const limiter = createSharedRateLimiter({ namespace: 'store', maxRequests: 1, windowMs: 1000, security: stores.security });
+    assert.equal((await limiter.check('alice')).allowed, true);
+    assert.equal((await limiter.check('alice')).allowed, false);
+    assert.deepEqual(commands.map(client => client.calls), [2, 0, 0, 0]);
+    assert.equal(opened, 4);
+  } finally {
+    await stores.close();
+  }
+});
+
+test('all twelve server budgets await the injected shared security transport', async (t) => {
+  for (const [key, value] of Object.entries({
+    R2_ACCOUNT_ID: 'test-account', R2_BUCKET: 'test-private',
+    R2_ACCESS_KEY_ID: 'test-key', R2_SECRET_ACCESS_KEY: 'test-secret',
+  })) {
+    const previous = process.env[key];
+    process.env[key] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    });
+  }
+  let deny = false;
+  const observed = new Set<string>();
+  const stores = {
+    ...createMemoryStores(), stateAffinity: 'shared' as const, blockState: fakeSharedBlocks(),
+    security: {
+      async check(namespace: string) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (deny) observed.add(namespace);
+        return { allowed: !deny, remaining: 0, resetAt: Date.now() + 1000 };
+      },
+      getStatus: () => ({ transport: 'redis' as const, degraded: false }),
+    },
+  };
+  const server = await startServer({ stores });
+  let socket: import('socket.io-client').Socket | undefined;
+  try {
+    const session = await createSession(server.url, 'alice');
+    await createSession(server.url, 'bob');
+    socket = await connect(server.url, { sessionId: session });
+    deny = true;
+    const requests: [string, string, object?][] = [
+      ['POST', '/session', { userId: 'carol', deviceId: 'carol-device' }],
+      ['POST', '/calls', { calleeId: 'bob' }],
+      ['GET', '/turn-credentials'],
+      ['POST', '/attachments/presign', { peerId: 'bob', type: 'image', mimeType: 'image/jpeg', sizeBytes: 100 }],
+      ['GET', '/messages/search?q=hello'],
+      ['GET', '/messages/sync?since=2000-01-01T00:00:00.000Z'],
+      ['GET', '/attachments/download?peerId=bob&key=unused'],
+      ['GET', '/account/export'],
+      ['POST', '/account/delete', {}],
+      ['PATCH', '/profile', { displayName: 'Alice' }],
+      ['POST', '/avatar/presign', { mimeType: 'image/jpeg', sizeBytes: 100 }],
+      ['GET', '/avatar/download?userId=bob'],
+    ];
+    for (const [method, path, body] of requests) {
+      const response = await fetch(server.url + path, {
+        method, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + session },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      assert.equal(response.status, 429, path);
+      await response.arrayBuffer();
+    }
+    for (const event of [CLIENT_EVENTS.RTC_OFFER, CLIENT_EVENTS.CALL_STATS, CLIENT_EVENTS.MESSAGE_SEND]) {
+      const result = await emitWithAck(socket, event, { version: SIGNALING_VERSION });
+      assert.equal(result.error.code, 'rate_limited', event);
+    }
+    assert.deepEqual([...observed].sort(), [
+      'account-deletion', 'account-export', 'attachment-download', 'call-init', 'call-stats',
+      'message-search', 'message-send', 'message-sync', 'profile-update', 'rtc', 'session', 'turn-credentials',
+    ]);
+  } finally {
+    await server.teardown(socket);
+  }
+});
+
+test('two independent servers share the profile budget and expose fallback/recovery health', async () => {
+  const client = fakeSecurityClient();
+  const makeStores = () => ({
+    ...createMemoryStores(), stateAffinity: 'shared' as const,
+    security: createRedisSecurity(client), blockState: fakeSharedBlocks(),
+  });
+  const first = await startServer({ stores: makeStores(), profileUpdateRateLimit: 2 });
+  const second = await startServer({ stores: makeStores(), profileUpdateRateLimit: 2 });
+  try {
+    const firstSession = await createSession(first.url, 'alice');
+    const secondSession = await createSession(second.url, 'alice');
+    const update = async (url: string, session: string) => {
+      const response = await fetch(`${url}/profile`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + session },
+        body: JSON.stringify({ displayName: 'Alice' }),
+      });
+      return response.status;
+    };
+    assert.equal(await update(first.url, firstSession), 200);
+    assert.equal(await update(second.url, secondSession), 200);
+    assert.equal(await update(first.url, firstSession), 429);
+    client.failure = true;
+    assert.equal(await update(first.url, firstSession), 200);
+    assert.equal(await update(first.url, firstSession), 200);
+    assert.equal(await update(first.url, firstSession), 429);
+    assert.deepEqual((await getJson(first.url, '/health')).body.rateLimit, { transport: 'local', degraded: true });
+    client.failure = false;
+    assert.equal(await update(first.url, firstSession), 429);
+    assert.deepEqual((await getJson(first.url, '/health')).body.rateLimit, { transport: 'redis', degraded: false });
+  } finally {
+    await first.teardown();
+    await second.teardown();
+  }
+});
+
+test('Redis security: disconnected client never queues, hanging commands are bounded, recovery works', async () => {
+  const client = fakeSecurityClient();
+  client.isReady = false;
+  const security = createRedisSecurity(client, 15);
+  const limiter = createSharedRateLimiter({ namespace: 'offline', maxRequests: 1, windowMs: 1000, security });
+  assert.equal((await limiter.check('alice')).allowed, true);
+  assert.equal((await limiter.check('alice')).allowed, false);
+  assert.equal(client.calls, 0);
+  client.isReady = true;
+  const original = client.eval;
+  let finish: (value: unknown) => void = () => {};
+  client.eval = () => new Promise(resolve => { finish = resolve; });
+  const started = Date.now();
+  assert.equal((await limiter.check('bob')).allowed, true);
+  assert.ok(Date.now() - started < 500);
+  assert.deepEqual(security.getStatus(), { transport: 'local', degraded: true });
+  assert.equal((await limiter.check('bob')).allowed, false);
+  await new Promise(resolve => setTimeout(resolve, 1020));
+  client.eval = original;
+  assert.equal((await limiter.check('carol')).allowed, true);
+  assert.deepEqual(security.getStatus(), { transport: 'redis', degraded: false });
+  finish([1, 0, 1000]);
+  await new Promise(resolve => setImmediate(resolve));
+});
+
+test('Redis security caps hanging commands and expires queued work with one warning', async (t) => {
+  let issued = 0;
+  let warnings = 0;
+  const original = console.warn;
+  console.warn = () => { warnings += 1; };
+  t.after(() => { console.warn = original; });
+  const security = createRedisSecurity({
+    isReady: true,
+    eval: () => {
+      issued += 1;
+      return new Promise<unknown>(() => {});
+    },
+  }, 20);
+  const limiter = createSharedRateLimiter({ namespace: 'hanging', maxRequests: 1, windowMs: 1000, security });
+  const results = await Promise.all(Array.from({ length: 128 }, async (_value, index) => limiter.check(String(index))));
+  assert.equal(results.filter(result => result.allowed).length, 128);
+  assert.equal(issued, 64);
+  assert.equal(warnings, 1);
+  assert.deepEqual(security.getStatus(), { transport: 'local', degraded: true });
+});
+
+test('Postgres shared blocks use authoritative SQL, skip startup snapshots, and propagate failures', async () => {
+  const queries: { text: string; params: unknown[] }[] = [];
+  let rows: unknown[][] = [['alice', 'bob', '2026-10-03T00:00:00.000Z']];
+  let failure = false;
+  const db = drizzle({
+    async query(config: { text: string }, params: unknown[]) {
+      if (failure) throw new Error('database unavailable');
+      queries.push({ text: config.text, params });
+      return { rows, fields: [], rowCount: rows.length };
+    },
+  } as never, { schema });
+  const blockState = createPgSharedBlocks(db);
+  assert.equal(await blockState.isBlocked('alice', 'bob'), true);
+  assert.deepEqual(queries[0].params.slice(0, 2), ['alice', 'bob']);
+  assert.deepEqual(await blockState.list('bob', true), ['alice']);
+  assert.match(queries[1].text, / or /);
+  await blockState.add('alice', 'bob');
+  assert.match(queries[2].text, /on conflict do nothing/);
+  assert.equal(await blockState.remove('alice', 'bob'), true);
+  assert.match(queries[3].text, /delete from "blocks".* and .*returning/);
+  assert.equal(await blockState.erase('alice'), 1);
+  assert.match(queries[4].text, /delete from "blocks".* or .*returning/);
+  rows = [];
+  const state = { ...createMemoryStores(), stateAffinity: 'shared' as const, blockState };
+  state.blocks.set('alice', new Set(['bob']));
+  assert.equal(await isBlockedAsync(state, 'alice', 'bob'), false);
+  queries.length = 0;
+  await loadPersistedStateFromDb(db, state);
+  assert.ok(queries.every(query => !query.text.includes('"blocks"')));
+  failure = true;
+  assert.equal(await isDirectoryVisibleAsync(state, 'alice', 'bob'), false);
+  await assert.rejects(blockState.list('alice'));
+  await assert.rejects(blockState.add('alice', 'bob'));
+  await assert.rejects(blockState.remove('alice', 'bob'));
+  await assert.rejects(blockState.erase('alice'));
+});
+
+test('shared blocks: cross-instance mutations, enforcement, fail closed and account cleanup', async (t) => {
+  for (const [key, value] of Object.entries({
+    R2_ACCOUNT_ID: 'test-account', R2_BUCKET: 'test-private',
+    R2_ACCESS_KEY_ID: 'test-key', R2_SECRET_ACCESS_KEY: 'test-secret',
+  })) {
+    const previous = process.env[key];
+    process.env[key] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    });
+  }
+  const shared = fakeSharedBlocks();
+  const storesA = { ...createMemoryStores(), stateAffinity: 'shared' as const, blockState: shared };
+  const storesB = { ...createMemoryStores(), stateAffinity: 'shared' as const, blockState: shared };
+  const first = await startServer({ stores: storesA, accountDeletionGraceMs: 0 });
+  const second = await startServer({ stores: storesB });
+  let socket: import('socket.io-client').Socket | undefined;
+  try {
+    const aliceA = await createSession(first.url, 'alice');
+    const aliceB = await createSession(second.url, 'alice');
+    const bob = await createSession(second.url, 'bob');
+    socket = await connect(second.url, { sessionId: bob });
+    const send = () => emitWithAck(socket!, CLIENT_EVENTS.MESSAGE_SEND, {
+      version: SIGNALING_VERSION, recipientId: 'alice', body: 'shared history',
+    });
+    assert.equal((await send()).ok, true);
+    assert.equal((await postJson(first.url, '/blocks', { blockeeId: 'bob' }, aliceA)).status, 200);
+    assert.equal(await isBlockedAsync(storesB, 'alice', 'bob'), true);
+    assert.equal((await getJson(second.url, '/users', bob)).body.users.length, 0);
+    assert.equal((await postJson(second.url, '/calls', { calleeId: 'alice' }, bob)).status, 403);
+    assert.equal((await send()).error.code, 'forbidden');
+    const group = await emitWithAck(socket, CLIENT_EVENTS.CONVERSATION_CREATE, {
+      version: SIGNALING_VERSION, name: 'Blocked group', inviteeIds: ['alice'],
+    });
+    assert.equal(group.error.code, 'forbidden');
+    assert.deepEqual((await getJson(second.url, '/messages/search?q=history', bob)).body.results, []);
+    assert.deepEqual((await getJson(second.url, '/messages/sync?since=2000-01-01T00:00:00.000Z', bob)).body.changes, []);
+    assert.deepEqual((await getJson(second.url, '/conversations', bob)).body.conversations, []);
+    const avatar = () => getJson(second.url, '/avatar/download?userId=alice', bob);
+    const presign = () => postJson(second.url, '/attachments/presign', {
+      peerId: 'alice', type: 'image', mimeType: 'image/jpeg', sizeBytes: 100,
+    }, bob);
+    const key = `chatblobs/${deriveConversationId('alice', 'bob')}/00000000-0000-4000-8000-000000000000.jpg`;
+    const download = () => getJson(second.url, '/attachments/download?peerId=alice&key=' + encodeURIComponent(key), bob);
+    assert.equal((await avatar()).status, 403);
+    assert.equal((await presign()).status, 403);
+    assert.equal((await download()).status, 403);
+    assert.deepEqual((await getJson(second.url, '/blocks', aliceB)).body.blockedUsers, ['bob']);
+    assert.equal((await deleteJson(second.url, '/blocks/bob', aliceB)).status, 200);
+    // Even a stale local startup snapshot cannot resurrect the unblock.
+    storesA.blocks.set('alice', new Set(['bob']));
+    assert.equal(await isDirectoryVisibleAsync(storesA, 'alice', 'bob'), true);
+    assert.equal((await send()).ok, true);
+    assert.equal((await presign()).status, 200);
+    shared.failure = true;
+    assert.equal(await isBlockedAsync(storesB, 'alice', 'bob'), true);
+    assert.equal((await getJson(second.url, '/users', bob)).body.users.length, 0);
+    assert.equal((await send()).error.code, 'forbidden');
+    assert.equal((await avatar()).status, 403);
+    assert.equal((await download()).status, 403);
+    assert.equal((await getJson(second.url, '/blocks', aliceB)).status, 503);
+    assert.equal((await postJson(first.url, '/blocks', { blockeeId: 'bob' }, aliceA)).status, 503);
+    assert.equal((await deleteJson(second.url, '/blocks/bob', aliceB)).status, 503);
+    shared.failure = false;
+    await shared.add('alice', 'bob');
+    await shared.add('bob', 'alice');
+    assert.equal((await postJson(first.url, '/account/delete', {}, aliceA)).status, 202);
+    assert.equal(await first.runAccountDeletionSweep(Date.now() + 1000), 1);
+    assert.deepEqual(await shared.list('bob', true), []);
+  } finally {
+    await first.teardown();
+    await second.teardown(socket);
+  }
+});
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

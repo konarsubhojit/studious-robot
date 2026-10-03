@@ -22,8 +22,23 @@ are in [android-system-audio-decision.md](./android-system-audio-decision.md#5-w
 ## Operational boundaries
 
 - Keep production `CORS_ORIGIN` intentionally restricted.
-- Rate limiters built by `server/src/security.ts` use process-local buckets;
-  shared session/presence storage does not make these fleet-wide limits.
+- With `REDIS_URL`, all twelve security rate budgets use atomic Lua counters
+  with TTLs on the existing bus command client, with explicit limiter namespaces
+  and encoded identities. Avatar operations reuse the send/download budgets;
+  directory reads currently have no rate budget. Disconnected, failed or slow
+  commands fall back to per-instance limits (250 ms deadline, no offline queue);
+  timed-out transports probe again after one second, with at most 64 issued
+  security commands; requests waiting for a slot share the same deadline.
+  `/health.rateLimit` reports local degradation and recovery after a successful
+  shared check. Warnings are limited to once per minute per transport.
+- Shared block enforcement reads PostgreSQL directly, not startup Maps or a
+  Redis block cache: this avoids stale allows and resurrecting unblocks during
+  hydration. Shared add/remove/list and account erasure use the same authority.
+  Privacy checks fail closed on store failure (hidden directory/results or
+  existing forbidden responses); mutations/listing return 503, never stale
+  success. Shared mode without a block backend also fails closed. Redis outages
+  do not bypass blocks because no Redis block reads are involved. The extra
+  database reads trade cache efficiency for fleet-wide privacy correctness.
 - Prometheus scraping and alert deployment require operational verification,
   not inference from the existence of `/metrics`.
 

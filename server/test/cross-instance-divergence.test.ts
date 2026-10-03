@@ -20,7 +20,7 @@ import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { createMemoryStores } from '../src/stores/index.ts';
 import { createMemoryMessageBus } from '../src/messageBus.ts';
-import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, readJson, createTestSharedBlocks } from './helpers.ts';
 
 type CallRecord = import('../src/stores/contracts.ts').CallRecord;
 
@@ -39,6 +39,7 @@ function createSharedBackends() {
 
   return {
     calls,
+    blockState: createTestSharedBlocks(),
     callState: {
       get: async (callId: string) => calls.get(callId) ?? null,
       save: async (call: CallRecord) => {
@@ -90,6 +91,7 @@ async function startInstance(
     stateAffinity: 'shared' as const,
     instanceId,
     callState: shared.callState,
+    blockState: shared.blockState,
     sessionState: shared.sessionState,
     messageBus,
   });

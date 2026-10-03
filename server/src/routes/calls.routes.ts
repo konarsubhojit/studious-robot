@@ -1,6 +1,6 @@
 import express from 'express';
 import { timingSafeEqual } from 'crypto';
-import { isBlocked } from '../security.ts';
+import { isBlockedAsync } from '../security.ts';
 import { callHistoryCacheKey, readCached, writeCached } from '../cache.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
@@ -65,7 +65,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     }
 
     // Blocklist: reject when the callee has blocked the caller.
-    if (isBlocked(state.blocks, calleeId, session.userId)) {
+    if (await isBlockedAsync(state, calleeId, session.userId)) {
       state.auditLog.record({
         event: 'call.blocked',
         actor: session.userId,
@@ -81,7 +81,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     }
 
     // Rate limit: cap call initiations per user per window.
-    const rateCheck = state.callInitRateLimiter.check(session.userId);
+    const rateCheck = await state.callInitRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       state.auditLog.record({
         event: 'call.rate_limited',

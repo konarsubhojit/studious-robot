@@ -182,7 +182,7 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
       return;
     }
 
-    const rateCheck = state.turnCredentialsRateLimiter.check(session.userId);
+    const rateCheck = await state.turnCredentialsRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       state.auditLog.record({
         event: 'turn_credentials.rate_limited',

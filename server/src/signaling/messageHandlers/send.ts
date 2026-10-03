@@ -1,7 +1,7 @@
 import { SIGNALING_VERSION } from '../../config.ts';
 import { createMessageRecord, deriveConversationId } from '../../messageStore.ts';
 import { normaliseId } from '../../lib/normalize.ts';
-import { isBlocked } from '../../security.ts';
+import { isBlockedAsync } from '../../security.ts';
 import { emitToUserSockets } from '../../domain/notifications.ts';
 import { invalidateCache, conversationsCachePrefix, messagesCachePrefix } from '../../cache.ts';
 import { acknowledgeError, acknowledgeSuccess, parseInboundPayload } from '../ack.ts';
@@ -287,12 +287,12 @@ function validateMessagePayload(
   };
 }
 
-function ensureNotBlocked(
+async function ensureNotBlocked(
   state: import('../../stores/contracts.ts').ServerState,
   senderId: string,
   recipientId: string
-): { ok: true; } | { ok: false; code: string; message: string; } {
-  if (isBlocked(state.blocks, recipientId, senderId) || isBlocked(state.blocks, senderId, recipientId)) {
+): Promise<{ ok: true; } | { ok: false; code: string; message: string; }> {
+  if (await isBlockedAsync(state, recipientId, senderId) || await isBlockedAsync(state, senderId, recipientId)) {
     state.auditLog.record({
       event: 'message.blocked',
       actor: senderId,
@@ -403,7 +403,7 @@ async function handleMessageSend(
     return;
   }
 
-  const blockCheck = ensureNotBlocked(state, senderId, validated.recipientId);
+  const blockCheck = await ensureNotBlocked(state, senderId, validated.recipientId);
   if (!blockCheck.ok) {
     acknowledgeError(
       socket,

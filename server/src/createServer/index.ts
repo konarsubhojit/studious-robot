@@ -3,7 +3,8 @@ import express from 'express';
 import { Server } from 'socket.io';
 import { SERVER_EVENTS, SIGNALING_VERSION } from '../../../shared/index.ts';
 import { createTelemetry } from '../telemetry.ts';
-import { createRateLimiter, createAuditLog } from '../security.ts';
+import { createSharedRateLimiter, createAuditLog } from '../security.ts';
+import { createPgSharedBlocks } from '../stores/security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
 import { createConversationStore } from '../conversationStore.ts';
@@ -118,51 +119,61 @@ function createServer(opts: CreateServerOptions = {}) {
     parseNonNegativeNumber('MESSAGE_RETENTION_MS', process.env.MESSAGE_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS);
 
   // ── Rate limiters ────────────────────────────────────────────────────────
-  const callInitRateLimiter = createRateLimiter({
+  const stores = createStores({ stores: opts.stores });
+  const callInitRateLimiter = createSharedRateLimiter({
+    namespace: 'call-init', security: stores.security,
     maxRequests: opts.callRateLimit ?? parseEnv('CALL_RATE_LIMIT', 10),
     windowMs: opts.callRateWindowMs ?? parseEnv('CALL_RATE_WINDOW_MS', 60_000),
   });
-  const rtcRateLimiter = createRateLimiter({
+  const rtcRateLimiter = createSharedRateLimiter({
+    namespace: 'rtc', security: stores.security,
     maxRequests: opts.rtcRateLimit ?? parseEnv('RTC_RATE_LIMIT', 100),
     windowMs: opts.rtcRateWindowMs ?? parseEnv('RTC_RATE_WINDOW_MS', 10_000),
   });
-  const callStatsRateLimiter = createRateLimiter({
+  const callStatsRateLimiter = createSharedRateLimiter({
+    namespace: 'call-stats', security: stores.security,
     maxRequests: opts.callStatsRateLimit ?? parseEnv('CALL_STATS_RATE_LIMIT', 10),
     windowMs: opts.callStatsRateWindowMs ?? parseEnv('CALL_STATS_RATE_WINDOW_MS', 10_000),
   });
-  const turnCredentialsRateLimiter = createRateLimiter({
+  const turnCredentialsRateLimiter = createSharedRateLimiter({
+    namespace: 'turn-credentials', security: stores.security,
     maxRequests: opts.turnRateLimit ?? parseEnv('TURN_CREDENTIALS_RATE_LIMIT', 10),
     windowMs:
       opts.turnRateWindowMs ?? parseEnv('TURN_CREDENTIALS_RATE_WINDOW_MS', 60_000),
   });
-  const sessionRateLimiter = createRateLimiter({
+  const sessionRateLimiter = createSharedRateLimiter({
+    namespace: 'session', security: stores.security,
     maxRequests: opts.sessionRateLimit ?? parseEnv('SESSION_RATE_LIMIT', DEFAULT_SESSION_RATE_LIMIT),
     windowMs:
       opts.sessionRateWindowMs ??
       parseEnv('SESSION_RATE_WINDOW_MS', DEFAULT_SESSION_RATE_WINDOW_MS),
   });
-  const messageSendRateLimiter = createRateLimiter({
+  const messageSendRateLimiter = createSharedRateLimiter({
+    namespace: 'message-send', security: stores.security,
     maxRequests: opts.messageRateLimit ?? parseEnv('MESSAGE_RATE_LIMIT', 30),
     windowMs: opts.messageRateWindowMs ?? parseEnv('MESSAGE_RATE_WINDOW_MS', 60_000),
   });
   // Search fans out across every conversation a user takes part in, so it is
   // the most expensive read the API serves; it gets its own budget rather than
   // sharing the (much cheaper) send allowance.
-  const messageSearchRateLimiter = createRateLimiter({
+  const messageSearchRateLimiter = createSharedRateLimiter({
+    namespace: 'message-search', security: stores.security,
     maxRequests:
       opts.messageSearchRateLimit ?? parseEnv('MESSAGE_SEARCH_RATE_LIMIT', 30),
     windowMs:
       opts.messageSearchRateWindowMs ??
       parseEnv('MESSAGE_SEARCH_RATE_WINDOW_MS', 60_000),
   });
-  const messageSyncRateLimiter = createRateLimiter({
+  const messageSyncRateLimiter = createSharedRateLimiter({
+    namespace: 'message-sync', security: stores.security,
     maxRequests: opts.messageSyncRateLimit ?? parseEnv('MESSAGE_SYNC_RATE_LIMIT', 30),
     windowMs: opts.messageSyncRateWindowMs ?? parseEnv('MESSAGE_SYNC_RATE_WINDOW_MS', 60_000),
   });
   // Minted once per view/open/download attempt (an image bubble, a full-screen
   // viewer, a saved file), so it needs a much larger budget than a write, but
   // still bounds a script that walks every key in a conversation.
-  const attachmentDownloadRateLimiter = createRateLimiter({
+  const attachmentDownloadRateLimiter = createSharedRateLimiter({
+    namespace: 'attachment-download', security: stores.security,
     maxRequests:
       opts.attachmentDownloadRateLimit ?? parseEnv('ATTACHMENT_DOWNLOAD_RATE_LIMIT', 120),
     windowMs:
@@ -171,7 +182,8 @@ function createServer(opts: CreateServerOptions = {}) {
   });
   // An export is substantially broader than an interactive read. One successful
   // attempt per account per day limits scraping and accidental retry storms.
-  const accountExportRateLimiter = createRateLimiter({
+  const accountExportRateLimiter = createSharedRateLimiter({
+    namespace: 'account-export', security: stores.security,
     maxRequests:
       opts.accountExportRateLimit ?? parseEnv('ACCOUNT_EXPORT_RATE_LIMIT', 1),
     windowMs:
@@ -182,7 +194,8 @@ function createServer(opts: CreateServerOptions = {}) {
   // A deletion request is queued, not carried out inline, so the limit only has
   // to stop a request storm; the erasure itself runs once however many times it
   // is asked for.
-  const accountDeletionRateLimiter = createRateLimiter({
+  const accountDeletionRateLimiter = createSharedRateLimiter({
+    namespace: 'account-deletion', security: stores.security,
     maxRequests:
       opts.accountDeletionRateLimit ?? parseEnv('ACCOUNT_DELETION_RATE_LIMIT', 5),
     windowMs:
@@ -193,7 +206,8 @@ function createServer(opts: CreateServerOptions = {}) {
   // A display name is rendered beside a username everywhere a person appears,
   // so churning it is how an impersonator probes which spelling slips through.
   // Changes are rare and deliberate; a handful an hour is generous.
-  const profileUpdateRateLimiter = createRateLimiter({
+  const profileUpdateRateLimiter = createSharedRateLimiter({
+    namespace: 'profile-update', security: stores.security,
     maxRequests:
       opts.profileUpdateRateLimit ?? parseEnv('PROFILE_UPDATE_RATE_LIMIT', 5),
     windowMs:
@@ -215,7 +229,6 @@ function createServer(opts: CreateServerOptions = {}) {
   // Keyed runtime collections (rooms, sessions, calls, …) are obtained from a
   // pluggable store bundle.  Defaults to in-memory Maps; tests/production may
   // inject an alternative backend via opts.stores.
-  const stores = createStores({ stores: opts.stores });
 
   // Optional Drizzle db instance for durable persistence of users and devices.
   // When null/undefined (tests, no DATABASE_URL) the server operates fully
@@ -296,6 +309,8 @@ function createServer(opts: CreateServerOptions = {}) {
      */
     messageBus: opts.messageBus ?? stores.messageBus ?? null,
     stateAffinity: stores.stateAffinity ?? 'sticky',
+    security: stores.security,
+    blockState: stores.blockState ?? (stores.stateAffinity === 'shared' && db ? createPgSharedBlocks(db) : undefined),
     instanceId: stores.instanceId ?? process.env.INSTANCE_ID ?? `${process.pid}`,
     callState: stores.callState,
     sessionState: stores.sessionState,
@@ -752,9 +767,9 @@ function createServer(opts: CreateServerOptions = {}) {
     /**
      * Populate the in-memory state from the Neon database.
      *
-     * Loads persisted `users`, `devices`, `calls`, `call_events`, and `blocks`
-     * into in-memory caches so identity, push delivery, call history/timelines,
-     * and block rules survive restarts.
+     * Loads persisted identities and call history into in-memory caches.
+     * Sticky mode also hydrates blocks; shared mode reads authoritative
+     * PostgreSQL relationships directly, never replaying a startup snapshot.
      * A no-op when no `db` was passed to `createServer`.
      */
     loadPersistedState: async (): Promise<void> => {

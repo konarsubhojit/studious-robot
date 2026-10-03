@@ -1,5 +1,5 @@
 import express from 'express';
-import { isBlocked } from '../security.ts';
+import { isDirectoryVisibleAsync, filterVisible, listBlocksAsync } from '../security.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { DEFAULT_FIRST_MESSAGE_LIMIT, deriveConversationId, clampMessageLimit } from '../messageStore.ts';
@@ -75,14 +75,6 @@ function parseTimelineCursor(query: express.Request['query']): TimelineCursor | 
     beforeMessageId: beforeType === 'call' ? undefined : beforeMessageId ?? undefined,
     beforeCallId: beforeType === 'message' ? undefined : beforeCallId ?? undefined,
   };
-}
-
-function blockedPeerIds(state: import('../stores/contracts.ts').ServerState, userId: string): string[] {
-  const blocked = new Set(state.blocks.get(userId) ?? []);
-  for (const [blocker, users] of state.blocks) {
-    if (users.has(userId)) blocked.add(blocker);
-  }
-  return [...blocked];
 }
 
 function encodeSyncCursor(change: { changedAt: string; changeId: string }): string {
@@ -199,9 +191,7 @@ async function buildHistoryResponse({
   }
   if (!includeCalls) return pageResponse(conversationId, participantMessages, limit);
 
-  const hidden =
-    isBlocked(state.blocks, sessionUserId, peerId) ||
-    isBlocked(state.blocks, peerId, sessionUserId);
+  const hidden = !(await isDirectoryVisibleAsync(state, sessionUserId, peerId));
   const callEntries = hidden
     ? []
     : (await readCallsBetween(
@@ -359,7 +349,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     }
 
     const conversationId = normaliseOptionalString(req.query?.conversationId);
-    const rateCheck = state.messageSearchRateLimiter.check(session.userId);
+    const rateCheck = await state.messageSearchRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       state.auditLog.record({
         event: 'message_search.rate_limited',
@@ -396,7 +386,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
         userId: session.userId,
         query,
         conversationId: conversationId ?? undefined,
-        excludedUserIds: blockedPeerIds(state, session.userId),
+        excludedUserIds: await listBlocksAsync(state, session.userId, true),
         createdAtAfter,
         limit: limit + 1,
         before: cursor?.before,
@@ -426,16 +416,11 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       );
     }
 
-    const resultsWithLookahead = participantMatches
+    const resultsWithLookahead = await filterVisible(participantMatches
       .map((message) => ({
         ...message,
         peerId: message.senderId === session.userId ? message.recipientId : message.senderId,
-      }))
-      .filter(
-        (message) =>
-          !isBlocked(state.blocks, session.userId, message.peerId) &&
-          !isBlocked(state.blocks, message.peerId, session.userId)
-      );
+      })), message => isDirectoryVisibleAsync(state, session.userId, message.peerId));
     const results = resultsWithLookahead.slice(0, limit);
     const nextCursor = resultsWithLookahead.length > limit
       ? cursorForEntry(results[results.length - 1])
@@ -471,7 +456,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       return;
     }
 
-    const rateCheck = state.messageSyncRateLimiter.check(session.userId);
+    const rateCheck = await state.messageSyncRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       state.auditLog.record({
         event: 'message_sync.rate_limited',
@@ -496,7 +481,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
         since,
         afterChangedAt: cursor?.changedAt,
         afterChangeId: cursor?.changeId,
-        excludedUserIds: blockedPeerIds(state, session.userId),
+        excludedUserIds: await listBlocksAsync(state, session.userId, true),
         createdAtAfter,
         limit: limit + 1,
       });
@@ -506,23 +491,16 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       return;
     }
 
-    const participantChanges = changes.filter(
-      (change) =>
+    const participantChanges = await filterVisible(changes,
+      async (change) =>
         (change.message.senderId === session.userId ||
           change.message.recipientId === session.userId) &&
-        !isBlocked(
-          state.blocks,
+        await isDirectoryVisibleAsync(
+          state,
           session.userId,
           change.message.senderId === session.userId
             ? change.message.recipientId
             : change.message.senderId
-        ) &&
-        !isBlocked(
-          state.blocks,
-          change.message.senderId === session.userId
-            ? change.message.recipientId
-            : change.message.senderId,
-          session.userId
         )
     );
     const page = participantChanges.slice(0, limit);
@@ -573,12 +551,10 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
 
     // Calls are part of the same relationship: fold them in so the preview and
     // the unread badge reflect the newest activity, message or call.
-    const visible = (await augmentConversationsWithCalls(state, session.userId, conversations))
-      .filter(
-        (conversation) =>
-          !isBlocked(state.blocks, session.userId, conversation.peerId) &&
-          !isBlocked(state.blocks, conversation.peerId, session.userId)
-      )
+    const visible = (await filterVisible(
+      await augmentConversationsWithCalls(state, session.userId, conversations),
+      conversation => isDirectoryVisibleAsync(state, session.userId, conversation.peerId)
+    ))
       .map((conversation) => ({
         ...conversation,
         online: getPresenceSnapshot(state, conversation.peerId).online,

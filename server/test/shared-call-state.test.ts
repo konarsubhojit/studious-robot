@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { createMemoryStores } from '../src/stores/index.ts';
-import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, readJson, createTestSharedBlocks } from './helpers.ts';
 
 function createSharedBackends() {
   const calls = new Map<string, import('../src/stores/contracts.ts').CallRecord>();
@@ -67,6 +67,7 @@ function createSharedBackends() {
 }
 
 async function startServer(stores: import('../src/stores/contracts.ts').Stores) {
+  if (stores.stateAffinity === 'shared' && !stores.blockState) stores.blockState = createTestSharedBlocks();
   const server = createServer({ stores });
   const port = await listenOnRandomPort(server.httpServer);
   return {

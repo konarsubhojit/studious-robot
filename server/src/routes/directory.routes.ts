@@ -1,7 +1,7 @@
 import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
 import { USER_DIRECTORY_DEFAULT_LIMIT, USER_DIRECTORY_MAX_LIMIT } from '../config.ts';
-import { isDirectoryVisible } from '../security.ts';
+import { isDirectoryVisibleAsync } from '../security.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { getPresenceSnapshot, hasKnownUser, listKnownUsers } from '../lib/state.ts';
@@ -95,7 +95,7 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
       // Hide users in either direction of a block relationship. The same
       // predicate authorises avatar downloads, so a blocked user disappears
       // from the directory and loses access to the pictures in it together.
-      if (!isDirectoryVisible(state.blocks, session.userId, candidateId)) continue;
+      if (!(await isDirectoryVisibleAsync(state, session.userId, candidateId))) continue;
       matches.push(candidateId);
     }
 

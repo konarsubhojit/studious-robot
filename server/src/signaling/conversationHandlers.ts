@@ -1,7 +1,7 @@
 import { SIGNALING_VERSION } from '../config.ts';
 import { fanoutConversationEvent } from '../domain/conversationFanout.ts';
 import { normaliseId } from '../lib/normalize.ts';
-import { isBlocked } from '../security.ts';
+import { isDirectoryVisibleAsync, filterVisible } from '../security.ts';
 import { ConversationStoreError } from '../conversationStore.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
 import { acknowledgeError, acknowledgeSuccess, parseInboundPayload, requireSocketSession, validateSignalingVersion } from './ack.ts';
@@ -49,9 +49,7 @@ function registerConversationHandlers(
       acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'invalid group members', state);
       return;
     }
-    if (inviteeIds.some((userId) =>
-      isBlocked(state.blocks, userId, creatorId) || isBlocked(state.blocks, creatorId, userId)
-    )) {
+    if ((await filterVisible(inviteeIds, userId => isDirectoryVisibleAsync(state, creatorId, userId))).length !== inviteeIds.length) {
       acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'you cannot add a blocked user', state);
       return;
     }
@@ -149,9 +147,7 @@ function registerConversationHandlers(
       acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'invalid group members', state);
       return;
     }
-    if (userIds.some((userId) =>
-      isBlocked(state.blocks, userId, actorId) || isBlocked(state.blocks, actorId, userId)
-    )) {
+    if ((await filterVisible(userIds, userId => isDirectoryVisibleAsync(state, actorId, userId))).length !== userIds.length) {
       acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'you cannot add a blocked user', state);
       return;
     }
@@ -315,18 +311,17 @@ function registerConversationHandlers(
       acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'conversationId is required', state);
       return;
     }
-    const rateCheck = state.callInitRateLimiter.check(initiatorId);
+    const rateCheck = await state.callInitRateLimiter.check(initiatorId);
     if (!rateCheck.allowed) {
       acknowledgeError(socket, ack, eventName, ERROR_CODES.RATE_LIMITED, 'too many call attempts', state);
       return;
     }
     try {
       const members = await state.conversationStore.listMembers(conversationId);
-      const excludedUserIds = members
-        .filter(({ userId }) =>
+      const excludedUserIds = (await filterVisible(members, async ({ userId }) =>
           userId !== initiatorId &&
-          (isBlocked(state.blocks, userId, initiatorId) || isBlocked(state.blocks, initiatorId, userId))
-        )
+          !(await isDirectoryVisibleAsync(state, initiatorId, userId))
+        ))
         .map(({ userId }) => userId);
       const change = await state.conversationStore.startCall({
         conversationId,
