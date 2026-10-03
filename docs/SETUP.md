@@ -412,9 +412,9 @@ The following single-VM example uses **GCP with Ubuntu**, with the signaling
 server as a **systemd service** listening on
 `0.0.0.0:4173` behind an **nginx** reverse proxy, **DuckDNS** for dynamic DNS,
 and **certbot/Let's Encrypt** (`certbot.timer`) for TLS. The current
-`backend-ci.yml` invokes the configured host's `redeploy` command over SSH
-after backend CI on a matching push to `master`; configure that command for
-the host rather than assuming this example is the live deployment.
+`backend-ci.yml` invokes `/usr/local/bin/redeploy.sh` over SSH after backend CI
+on a matching push to `master`; install the tracked deploy script at that path
+on the host rather than relying on `PATH` to locate a host-specific command.
 
 > Oracle Cloud Ampere A1 (arm64) + `opc` user + firewalld + Caddy also works
 > and remains documented as an alternative — see

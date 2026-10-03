@@ -116,4 +116,4 @@ jobs:
           port: ${{ secrets.DEPLOY_SSH_PORT || '22' }}
           script: |
             set -euo pipefail
-            redeploy
+            /usr/local/bin/redeploy.sh
