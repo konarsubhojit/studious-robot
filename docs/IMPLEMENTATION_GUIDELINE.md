@@ -7,13 +7,8 @@ This is not a backlog of previously completed chat/call work.
 
 | Gap | Evidence / decision |
 | --- | --- |
-<<<<<<< HEAD
 | Group calls | [group-call-topology.md](./group-call-topology.md) selects a four-participant mesh launch and requires topology-neutral group signalling to permit a later SFU migration without another protocol break. |
-| Group messaging | Deferred by [group-messaging-mvp.md](./group-messaging-mvp.md) until its admission/history model is reviewed against the E2EE decision. This is a product/protocol gate, not authorization to start implementation. |
-=======
-| Group calls | The call record and signalling protocol still model a caller and callee, not a group media topology (`shared/signaling/schemas.ts`, `server/src/domain/calls.ts`). |
 | Group messaging | Admission, pre-join history visibility, roles, blocks, lifecycle, and size cap are resolved in [group-messaging-mvp.md](./group-messaging-mvp.md); the server-readable MVP closes the E2EE-related deferral under the recorded no-go. |
->>>>>>> origin/master
 | Production messaging E2EE | [e2ee-design.md](./e2ee-design.md) records a no-go; the current message schema and push previews remain server-readable. |
 | Remote crash reporting | Optional Sentry reporting is wired through `crashReporting.ts` for global JS/native crashes and handled React render errors, with diagnostic breadcrumbs and CI Hermes source-map uploads. Local reports remain available through `crashReporter.ts`. See [crash-reporting-decision.md](./crash-reporting-decision.md) for required repository configuration and end-to-end verification; native-symbol upload remains follow-up work. |
 | iOS build CI | The checked-in mobile CI runs typecheck, lint and Jest on Ubuntu; the native build workflow builds Android. There is no iOS build workflow. |
