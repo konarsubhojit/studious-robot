@@ -3,6 +3,8 @@ import { timingSafeEqual } from 'crypto';
 import { API_ROUTES } from '../../../shared/index.ts';
 import { CALL_END_REASONS } from '../config.ts';
 import { summarizeDeviceFanout } from '../lib/state.ts';
+import { getCallQualityMetrics } from '../callQuality.ts';
+import { describeError } from '../lib/errors.ts';
 
 /**
  * Operational endpoints:
@@ -58,16 +60,25 @@ function createMetricsRouter({ state }: { state: import('../stores/contracts.ts'
    *                   (which fan a push out to handsets that no longer exist)
    *                   are visible to a scraper.  Aggregate only: no per-user
    *                   detail and never a push token.
+   *   callQuality   – MOS-style quality buckets and p50/p95 per call and fleet.
    */
-  router.get(API_ROUTES.METRICS, (req, res) => {
+  router.get(API_ROUTES.METRICS, async (req, res) => {
     if (!hasMetricsToken(req)) {
       res.status(401).json({ error: 'metrics authentication required' });
       return;
     }
 
+    let callQuality;
+    try {
+      callQuality = await getCallQualityMetrics(state.db);
+    } catch (error) {
+      console.error(`[metrics] call-quality query failed: ${describeError(error)}`);
+      callQuality = null;
+    }
     res.status(200).json({
       ...state.telemetry.getSnapshot(),
       devices: summarizeDeviceFanout(state),
+      callQuality,
     });
   });
 

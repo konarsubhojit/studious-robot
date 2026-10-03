@@ -80,6 +80,15 @@ describe('crashReporting', () => {
       );
     });
 
+    test('leaves release and dist unset for credential-free local builds', () => {
+      const { initCrashReporting } = require('../src/crashReporting');
+
+      initCrashReporting(undefined, DSN);
+      expect(sdk.init).toHaveBeenCalledWith(
+        expect.objectContaining({ release: undefined, dist: undefined }),
+      );
+    });
+
     test('is idempotent, so a second call never re-initialises the SDK', () => {
       const { initCrashReporting } = require('../src/crashReporting');
 

@@ -203,6 +203,15 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     activeCallIds: s.array(s.id()).optional(),
     callId: optionalId,
   }),
+  [CLIENT_EVENTS.CALL_STATS]: s.object({
+    version: versionField,
+    callId: idField,
+    rttMs: s.number({ min: 0, max: 60_000 }),
+    jitterMs: s.number({ min: 0, max: 10_000 }),
+    packetLossPercent: s.number({ min: 0, max: 100 }),
+    bitrateBps: s.number({ min: 0, max: 1_000_000_000 }),
+    codec: s.string({ min: 1, max: 64, trim: true }),
+  }),
 
   [CLIENT_EVENTS.RTC_OFFER]: s.object({
     version: versionField,

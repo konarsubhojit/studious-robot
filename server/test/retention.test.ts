@@ -39,9 +39,11 @@ function buildDeleteRecorder({
   selected = new Map<unknown, unknown[]>(),
 } = {}) {
   const calls: { table: unknown; limit: number | null; }[] = [];
+  const selects: { table: unknown; limit: number; }[] = [];
 
   const db = {
     calls,
+    selects,
     transaction(callback: (tx: unknown) => Promise<unknown>) {
       return callback(this);
     },
@@ -57,6 +59,7 @@ function buildDeleteRecorder({
             orderBy: () => chain,
             limit(n: number) {
               chain.limitValue = n;
+              selects.push({ table, limit: n });
               return chain;
             },
             then(resolve: (rows: unknown[]) => unknown) {
@@ -106,11 +109,12 @@ test('the retention sweep prunes calls and the audit log, and reports what it de
   const result = await runRetentionSweep(asDatabase(db), {
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
+    callQualityRetentionMs: 0,
     auditRetentionMs: 180 * DAY_MS,
     messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 3, auditLog: 7, messages: 0 });
+  assert.deepEqual(result, { calls: 3, callQualitySamples: 0, auditLog: 7, messages: 0 });
   assert.deepEqual(
     db.calls.map((entry) => entry.table),
     [schema.calls, schema.auditLog],
@@ -124,6 +128,7 @@ test('call_events is never swept directly — it cascades with its call', async 
   await runRetentionSweep(asDatabase(db), {
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
+    callQualityRetentionMs: 0,
     auditRetentionMs: 180 * DAY_MS,
     messageRetentionMs: 0,
   });
@@ -140,11 +145,12 @@ test('a retention of 0 disables that table\'s sweep without disabling the other'
   const result = await runRetentionSweep(asDatabase(db), {
     now: NOW,
     callRetentionMs: 0,
+    callQualityRetentionMs: 0,
     auditRetentionMs: 180 * DAY_MS,
     messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 0, auditLog: 2, messages: 0 });
+  assert.deepEqual(result, { calls: 0, callQualitySamples: 0, auditLog: 2, messages: 0 });
   assert.deepEqual(db.calls.map((entry) => entry.table), [schema.auditLog]);
 });
 
@@ -157,6 +163,7 @@ test('a failing table does not stop the other from being swept', async () => {
   const result = await runRetentionSweep(asDatabase(db), {
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
+    callQualityRetentionMs: 0,
     auditRetentionMs: 180 * DAY_MS,
     messageRetentionMs: 0,
   });
@@ -169,11 +176,34 @@ test('the sweep is a no-op without Postgres', async () => {
   const result = await runRetentionSweep(null, {
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
+    callQualityRetentionMs: 0,
     auditRetentionMs: 180 * DAY_MS,
     messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 0, auditLog: 0, messages: 0 });
+  assert.deepEqual(result, { calls: 0, callQualitySamples: 0, auditLog: 0, messages: 0 });
+});
+
+test('call-quality samples are deleted in bounded retention batches', async () => {
+  const db = buildDeleteRecorder({
+    deleted: new Map<unknown, number>([[schema.callQualitySamples, 4]]),
+  });
+  const result = await runRetentionSweep(asDatabase(db), {
+    now: NOW,
+    callRetentionMs: 0,
+    callQualityRetentionMs: 7 * DAY_MS,
+    auditRetentionMs: 0,
+    messageRetentionMs: 0,
+    batchSize: 25,
+  });
+
+  assert.deepEqual(result, { calls: 0, callQualitySamples: 4, auditLog: 0, messages: 0 });
+  assert.deepEqual(
+    db.selects,
+    [{ table: schema.callQualitySamples, limit: 25 }],
+    'the sample retention delete bounds each batch'
+  );
+  assert.deepEqual(db.calls.map(({ table }) => table), [schema.callQualitySamples]);
 });
 
 test('messages are kept forever unless an operator sets a retention window', async () => {
@@ -186,6 +216,7 @@ test('messages are kept forever unless an operator sets a retention window', asy
   const result = await runRetentionSweep(asDatabase(db), {
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
+    callQualityRetentionMs: 0,
     auditRetentionMs: 180 * DAY_MS,
     messageRetentionMs: 0,
   });
@@ -203,6 +234,7 @@ test('an explicit message retention window prunes expired messages', async () =>
   const result = await runRetentionSweep(asDatabase(db), {
     now: NOW,
     callRetentionMs: 0,
+    callQualityRetentionMs: 0,
     auditRetentionMs: 0,
     messageRetentionMs: 30 * DAY_MS,
   });
@@ -219,6 +251,7 @@ test('a message sweep that matches nothing reports nothing pruned', async () => 
   const result = await runRetentionSweep(asDatabase(db), {
     now: NOW,
     callRetentionMs: 0,
+    callQualityRetentionMs: 0,
     auditRetentionMs: 0,
     messageRetentionMs: 30 * DAY_MS,
   });

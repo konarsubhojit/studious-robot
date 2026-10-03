@@ -4,8 +4,8 @@ import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
-async function startServer() {
-  const server = createServer();
+async function startServer(options: Parameters<typeof createServer>[0] = {}) {
+  const server = createServer(options);
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
@@ -62,6 +62,59 @@ async function createSession(url: string, userId: string, deviceId: string = `de
   return res.body.sessionId;
 }
 
+test('call.stats accepts active-call participants and rejects malformed or unrelated reports', async () => {
+  const { url, teardown } = await startServer({
+    callStatsRateLimit: 2,
+    callStatsRateWindowMs: 60_000,
+  });
+  const callerSession = await createSession(url, 'stats-alice');
+  const calleeSession = await createSession(url, 'stats-bob');
+  const outsiderSession = await createSession(url, 'stats-carol');
+  const [caller, callee, outsider] = await Promise.all([
+    connect(url, { sessionId: callerSession }),
+    connect(url, { sessionId: calleeSession }),
+    connect(url, { sessionId: outsiderSession }),
+  ]);
+
+  try {
+    const initiated = await emitWithAck(caller, 'call.initiate', {
+      version: 1,
+      calleeId: 'stats-bob',
+    });
+    const accepted = await emitWithAck(callee, 'call.accept', {
+      version: 1,
+      callId: initiated.call.callId,
+    });
+    assert.equal(accepted.ok, true);
+
+    const sample = {
+      version: 1,
+      callId: initiated.call.callId,
+      rttMs: 85,
+      jitterMs: 12,
+      packetLossPercent: 0.5,
+      bitrateBps: 48_000,
+      codec: 'opus',
+    };
+    const acceptedSample = await emitWithAck(caller, 'call.stats', sample);
+    assert.equal(acceptedSample.ok, true);
+    assert.equal(acceptedSample.callId, initiated.call.callId);
+
+    const invalidSample = await emitWithAck(caller, 'call.stats', {
+      ...sample,
+      packetLossPercent: -1,
+    });
+    assert.equal(invalidSample.error.code, 'bad_request');
+
+    const unrelatedSample = await emitWithAck(outsider, 'call.stats', sample);
+    assert.equal(unrelatedSample.error.code, 'forbidden');
+
+    const rateLimited = await emitWithAck(caller, 'call.stats', sample);
+    assert.equal(rateLimited.error.code, 'rate_limited');
+  } finally {
+    await teardown(caller, callee, outsider);
+  }
+});
 test('call.initiate notifies the callee and caller with versioned call events', async () => {
   const { url, teardown } = await startServer();
   const callerSession = await createSession(url, 'user-alice');

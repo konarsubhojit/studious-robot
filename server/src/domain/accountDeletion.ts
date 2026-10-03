@@ -308,7 +308,8 @@ async function eraseAvatar(
  *
  * A call row is nothing but two user ids and their timings, so there is no
  * anonymised form of it worth keeping: unlike a message it carries no content
- * that belongs to the other participant.  `call_events` cascades with its call.
+ * that belongs to the other participant.  Call events and quality samples
+ * cascade with their call.
  */
 async function eraseCalls(state: ServerState, userId: string): Promise<number> {
   let removed = 0;

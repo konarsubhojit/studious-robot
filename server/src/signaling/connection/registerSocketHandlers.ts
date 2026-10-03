@@ -11,7 +11,7 @@ import {
 } from '../../domain/calls.ts';
 import { placeCallWithShared } from '../../domain/sharedCalls.ts';
 import { notifyCallCreated, notifyIncomingCallAcknowledged, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice, notifyCallTransition } from '../../domain/notifications.ts';
-import { handleSocketCallTransition, handleRtcRelay, handleCallConnected } from '../callHandlers.ts';
+import { handleSocketCallTransition, handleRtcRelay, handleCallConnected, handleCallStats } from '../callHandlers.ts';
 import { registerMessageHandlers } from '../messageHandlers.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from '../ack.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, TRANSPORT_EVENTS } from '../../../../shared/index.ts';
@@ -41,6 +41,14 @@ function registerSocketHandlers(
 
     const identity = await resolveSocketIdentityAsync(socket, state);
     socket.data.identity = identity;
+    const socketDeviceKey = JSON.stringify([identity.userId, identity.deviceId]);
+    const disconnectedAt = state.socketDisconnects.get(socketDeviceKey);
+    if (typeof disconnectedAt === 'number') {
+      if (Date.now() - disconnectedAt <= 120_000) {
+        state.telemetry.recordSocketReconnect();
+      }
+      state.socketDisconnects.delete(socketDeviceKey);
+    }
     ensurePresenceRecord(state, identity.userId);
     upsertDevice(state, identity);
     addConnection(state, {
@@ -342,6 +350,12 @@ function registerSocketHandlers(
       });
     });
 
+    socket.on(CLIENT_EVENTS.CALL_STATS, (payload = {}, ack) => {
+      void handleCallStats(socket, ack, payload, state).catch((error) => {
+        console.error('[signaling] call.stats handler failed:', (error as any)?.message);
+      });
+    });
+
     socket.on(CLIENT_EVENTS.RTC_OFFER, (payload = {}, ack) => {
       void handleRtcRelay(socket, ack, payload, {
         state,
@@ -421,6 +435,18 @@ function registerSocketHandlers(
     socket.on(TRANSPORT_EVENTS.DISCONNECT, (reason) => {
       const identity = socket.data.identity;
       removeConnection(state, identity?.userId, socket.id);
+      if (identity?.userId && identity.deviceId) {
+        const remainingDeviceSockets = [...(state.userConnections.get(identity.userId)?.values() ?? [])]
+          .some((connection) => connection.deviceId === identity.deviceId);
+        if (!remainingDeviceSockets) {
+          const disconnectedAt = Date.now();
+          const key = JSON.stringify([identity.userId, identity.deviceId]);
+          state.socketDisconnects.set(key, disconnectedAt);
+          for (const [deviceKey, timestamp] of state.socketDisconnects) {
+            if (disconnectedAt - timestamp > 120_000) state.socketDisconnects.delete(deviceKey);
+          }
+        }
+      }
       const remainingConnections = identity?.userId
         ? state.userConnections.get(identity.userId)?.size ?? 0
         : 0;

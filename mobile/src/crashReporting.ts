@@ -134,6 +134,8 @@ export function initCrashReporting(
   try {
     sdk.init({
       dsn,
+      release: process.env.SENTRY_RELEASE?.trim() || undefined,
+      dist: process.env.SENTRY_DIST?.trim() || undefined,
       // The app redacts its own payloads (see `addBreadcrumb`); never let the
       // SDK attach request bodies, headers or user identifiers on its own.
       sendDefaultPii: false,

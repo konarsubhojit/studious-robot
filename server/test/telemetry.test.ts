@@ -72,6 +72,9 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     assert.equal(snap.counters.calls_busy, 0);
     assert.equal(snap.counters.calls_unreachable, 0);
     assert.equal(snap.counters.calls_failed, 0);
+    assert.equal(snap.counters.call_setup_failures_total, 0);
+    assert.equal(snap.counters.socket_reconnects_total, 0);
+    assert.equal(snap.counters.call_stats_received_total, 0);
     assert.equal(snap.counters.signaling_errors, 0);
     assert.equal(snap.counters.message_persist_errors, 0);
 
@@ -81,9 +84,43 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     // Derived rates are null before any calls
     assert.equal(snap.derived.call_connect_rate, null);
     assert.equal(snap.derived.call_completion_rate, null);
+    assert.deepEqual(snap.callQuality, {
+      fleet: {
+        samples: 0,
+        rttP50: null,
+        rttP95: null,
+        jitterP50: null,
+        jitterP95: null,
+        packetLossP50: null,
+        packetLossP95: null,
+        bitrateP50: null,
+        bitrateP95: null,
+        excellent: 0,
+        good: 0,
+        fair: 0,
+        poor: 0,
+      },
+      perCall: [],
+      mosBuckets: { excellent: 0, good: 0, fair: 0, poor: 0 },
+    });
   } finally {
     await teardown();
   }
+});
+
+test('call setup failures and socket reconnects have dedicated counters', () => {
+  const telemetry = createTelemetry();
+  const call = { callId: 'setup-failure', status: 'ringing', createdAt: new Date().toISOString() };
+  telemetry.recordCallCreated(call);
+  telemetry.recordCallTransition(
+    { ...call, status: 'ended', endReason: 'media_connect_timeout' },
+    'connecting_media'
+  );
+  telemetry.recordSocketReconnect();
+
+  const { counters } = telemetry.getSnapshot();
+  assert.equal(counters.call_setup_failures_total, 1);
+  assert.equal(counters.socket_reconnects_total, 1);
 });
 
 test('event_loop_lag_ms reports a healthy idle loop below the old 20ms sampling-resolution floor', async () => {
