@@ -58,6 +58,14 @@ export type TimelineCursor = {
   beforeMessageId?: string;
   beforeCallId?: string;
 };
+/**
+ * Local socket watermark for one conversation. This is not the server's
+ * account-global `/messages/sync` cursor, which is an opaque change-log token.
+ */
+export type SocketMessageCursor = {
+  messageCreatedAt: string;
+  messageId: string;
+};
 
 /**
  * Newest event of a conversation: either a message or a call, as merged by the

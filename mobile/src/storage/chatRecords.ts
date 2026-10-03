@@ -34,7 +34,8 @@ export function snapshotRows(snapshot: ChatSnapshot, previous?: ChatSnapshot, he
   for (const [peer, entries] of Object.entries(snapshot.messagesByPeer)) {
     if (entries === previous?.messagesByPeer[peer]) continue;
     entries.forEach((entry, position) =>
-      addRow(rows, 'messagesByPeer', JSON.stringify([peer, timelineEntryId(entry)]), peer, position, entry));
+      addRow(rows, 'messagesByPeer',
+        JSON.stringify([entry.conversationId || peer, timelineEntryId(entry)]), peer, position, entry));
   }
   if (snapshot.outbox !== previous?.outbox) {
     snapshot.outbox.forEach((entry, position) =>
@@ -43,6 +44,10 @@ export function snapshotRows(snapshot: ChatSnapshot, previous?: ChatSnapshot, he
   if (snapshot.drafts !== previous?.drafts) {
     Object.entries(snapshot.drafts).forEach(([peer, draft]) =>
       addRow(rows, 'drafts', peer, peer, 0, draft));
+  }
+  if (snapshot.socketCursors !== previous?.socketCursors) {
+    Object.entries(snapshot.socketCursors).forEach(([conversationId, cursor]) =>
+      addRow(rows, 'socketCursors', conversationId, conversationId, 0, cursor));
   }
   return rows;
 }

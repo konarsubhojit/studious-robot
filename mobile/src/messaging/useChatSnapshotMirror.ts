@@ -37,12 +37,14 @@ export const SNAPSHOT_PERSIST_DEBOUNCE_MS = 750;
 export default function useChatSnapshotMirror({
   conversations,
   messagesByPeer,
+  socketCursors,
   drafts,
   onHydrate,
   scope = 'legacy',
 }: {
   conversations: ConversationSummary[];
   messagesByPeer: MessagesByPeer;
+  socketCursors: ChatSnapshot['socketCursors'];
   drafts: Drafts;
   onHydrate: (snapshot: ChatSnapshot) => void;
   scope?: string;
@@ -50,7 +52,7 @@ export default function useChatSnapshotMirror({
   // True once the local store has been read; gates persistence so an empty
   // initial render can't overwrite the cached history with nothing.
   const hydratedRef = useRef(false);
-  const snapshotRef = useRef({ conversations, messagesByPeer, drafts: {} as Drafts });
+  const snapshotRef = useRef({ conversations, messagesByPeer, socketCursors, drafts: {} as Drafts });
   const persistTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
   const onHydrateRef = useRef(onHydrate);
 
@@ -85,17 +87,20 @@ export default function useChatSnapshotMirror({
   }, [scope]);
 
   /** Write the pending mirror out now, cancelling the debounce. */
-  const persistNow = useCallback(() => {
+  const persistNow = useCallback((latest?: Partial<ChatSnapshot>) => {
     if (persistTimerRef.current) {
       clearTimeout(persistTimerRef.current);
       persistTimerRef.current = null;
     }
-    if (!hydratedRef.current || !scope) return;
-    saveChatSnapshot(snapshotRef.current, scope);
+    if (!hydratedRef.current || !scope) return false;
+    const snapshot = { ...snapshotRef.current, ...latest };
+    snapshotRef.current = snapshot;
+    saveChatSnapshot(snapshot, scope);
+    return true;
   }, [scope]);
 
   useEffect(() => {
-    snapshotRef.current = { conversations, messagesByPeer, drafts };
+    snapshotRef.current = { conversations, messagesByPeer, socketCursors, drafts };
     if (!hydratedRef.current) return undefined;
     if (persistTimerRef.current) return undefined;
     persistTimerRef.current = setTimeout(() => {
@@ -103,7 +108,7 @@ export default function useChatSnapshotMirror({
       saveChatSnapshot(snapshotRef.current, scope);
     }, SNAPSHOT_PERSIST_DEBOUNCE_MS);
     return undefined;
-  }, [conversations, messagesByPeer, drafts, scope]);
+  }, [conversations, messagesByPeer, socketCursors, drafts, scope]);
 
   // Leaving the foreground is the last moment the process is guaranteed to be
   // alive, so the pending mirror is written out (and pushed to disk) there.

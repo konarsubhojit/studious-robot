@@ -9,6 +9,7 @@ import {
   setActiveConversation,
 } from '../messageNotification';
 import { flushChatDb, loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
+import { advanceSocketMessageCursor } from '../messaging/messageSyncCursor';
 import { dataScope } from '../storage/localDatabase';
 import { RequestCoalescer } from '../storage/requestCoalescer';
 import type { ChatDraft, ChatSnapshot } from '../storage/chatDb';
@@ -38,6 +39,7 @@ import { withDraft, withoutDraft } from '../messaging/drafts';
 import {
   mergeHistoryPage,
   nextLocalCreatedAt,
+  dedupeAndSort,
   patchMessage as patchMessageIn,
   prependMessage,
   removeMessage,
@@ -203,6 +205,7 @@ export default function useMessaging({
   const [messagesByPeer, setMessagesByPeer] = useState(
     ({} as Record<string, ChatMessage[]>),
   );
+  const [socketCursors, setSocketCursors] = useState(({} as ChatSnapshot['socketCursors']));
   // Keyed by peerId → the composer text (and reply target) the user has typed
   // but not sent. Held here rather than in the composer's own state so it
   // survives switching conversations, backgrounding and process death.
@@ -243,6 +246,9 @@ export default function useMessaging({
   const conversationsRef = useRef(([] as ConversationSummary[]));
   const conversationsFetchedRef = useRef(false);
   const messagesByPeerRef = useRef(({} as Record<string, ChatMessage[]>));
+  const socketCursorsRef = useRef(({} as ChatSnapshot['socketCursors']));
+  const socketCursorScopeRef = useRef(scope);
+  const persistChatSnapshotRef = useRef<(snapshot?: Partial<ChatSnapshot>) => boolean>(() => false);
   const lastLocalCreatedAtMsRef = useRef(0);
   const { groupCalls, groupCallActions } = useGroupCalls({
     scope, userId, conversationsRef, signalingRef, socketRef, connected: isSocketConnected,
@@ -253,6 +259,7 @@ export default function useMessaging({
     setStateScope(scope);
     setConversations([]);
     setMessagesByPeer({});
+    setSocketCursors({});
     setDrafts({});
     setActiveChatPeerId(null);
     setTypingByPeer({});
@@ -262,6 +269,8 @@ export default function useMessaging({
     conversationsRef.current = [];
     conversationsFetchedRef.current = false;
     messagesByPeerRef.current = {};
+    socketCursorsRef.current = {};
+    socketCursorScopeRef.current = scope;
     activeChatPeerIdRef.current = null;
     attachmentUploadMetaRef.current = {};
     clearTimeout(drainTimerRef.current ?? undefined);
@@ -287,8 +296,22 @@ export default function useMessaging({
   // force-flushed on background and unmount — lives in the same module.
   const applySnapshot = useCallback((snapshot: ChatSnapshot) => {
     outboxRef.current = snapshot.outbox;
-    messagesByPeerRef.current = restoreOutboxMessages(
-      { ...snapshot.messagesByPeer, ...messagesByPeerRef.current }, snapshot.outbox, userId);
+    socketCursorsRef.current = {
+      ...snapshot.socketCursors,
+      ...(socketCursorScopeRef.current === scope ? socketCursorsRef.current : {}),
+    };
+    socketCursorScopeRef.current = scope;
+    setSocketCursors(socketCursorsRef.current);
+    const cachedHistories = snapshot.messagesByPeer;
+    const liveHistories = messagesByPeerRef.current;
+    const mergedHistories: Record<string, ChatMessage[]> = {};
+    for (const peerId of new Set([...Object.keys(cachedHistories), ...Object.keys(liveHistories)])) {
+      mergedHistories[peerId] = dedupeAndSort([
+        ...(cachedHistories[peerId] ?? []),
+        ...(liveHistories[peerId] ?? []),
+      ]);
+    }
+    messagesByPeerRef.current = restoreOutboxMessages(mergedHistories, snapshot.outbox, userId);
     let restoredConversations = snapshot.conversations;
     for (const item of snapshot.outbox) {
       if (restoredConversations.some(row => row.peerId === item.recipientId)) continue;
@@ -299,29 +322,31 @@ export default function useMessaging({
     // Only fill in what the network hasn't already provided: a response that
     // beat the disk read is newer than the cache.
     const pendingPeers = new Set(snapshot.outbox.map(item => item.recipientId));
-    setConversations(prev => {
-      const next = mergePendingConversations(
-        conversationsFetchedRef.current || prev.length ? prev : restoredConversations,
-        restoredConversations, pendingPeers);
-      conversationsRef.current = next;
-      return next;
-    });
-    setMessagesByPeer(prev => restoreOutboxMessages(
-      { ...snapshot.messagesByPeer, ...prev }, snapshot.outbox, userId));
+    const previousConversations = conversationsRef.current;
+    const hydrated = conversationsFetchedRef.current
+      ? previousConversations
+      : [...previousConversations, ...restoredConversations.filter(row =>
+        !previousConversations.some(current => current.peerId === row.peerId))];
+    const nextConversations = mergePendingConversations(hydrated, restoredConversations, pendingPeers);
+    conversationsRef.current = nextConversations;
+    setConversations(nextConversations);
+    setMessagesByPeer(messagesByPeerRef.current);
     // A local edit that beat the disk read wins over its older cached draft.
     setDrafts(prev => ({ ...snapshot.drafts, ...prev }));
     // Anything still queued from a previous run goes out as soon as the socket
     // allows it — this is what makes a force-quit mid-send safe.
     if (snapshot.outbox.some(isRetryable)) drainOutboxRef.current();
-  }, [userId]);
+  }, [scope, userId]);
 
-  useChatSnapshotMirror({
+  const { persistNow } = useChatSnapshotMirror({
     conversations: stateScope === scope ? conversations : [],
     messagesByPeer: stateScope === scope ? messagesByPeer : {},
+    socketCursors: stateScope === scope ? socketCursors : {},
     drafts: stateScope === scope ? drafts : {},
     onHydrate: applySnapshot,
     scope,
   });
+  persistChatSnapshotRef.current = persistNow;
 
   // Mirror the open conversation into the push layer, so a message push for
   // the conversation the user is looking at is suppressed instead of being
@@ -405,9 +430,14 @@ export default function useMessaging({
         messages.forEach((message: ChatMessage) => {
           if (message.deletedAt) evictTombstonedAttachment(message.messageId);
         });
+        const beforeCursor = cursor?.before ?? before;
+        const merged = mergeHistoryPage(
+          messagesByPeerRef.current[trimmedPeerId] ?? [], messages, { before: beforeCursor },
+        );
+        messagesByPeerRef.current = { ...messagesByPeerRef.current, [trimmedPeerId]: merged };
         setMessagesByPeer(prev => ({
           ...prev,
-          [trimmedPeerId]: mergeHistoryPage(prev[trimmedPeerId] ?? [], messages, { before: cursor?.before ?? before }),
+          [trimmedPeerId]: mergeHistoryPage(prev[trimmedPeerId] ?? [], messages, { before: beforeCursor }),
         }));
         return messages;
       } catch (error) {
@@ -434,10 +464,12 @@ export default function useMessaging({
       if (group) {
         if (group.left || !group.group!.memberIds.includes(userId)) return;
         // The implemented read endpoint is direct-only; group counts remain local.
-        setConversations(prev => prev.map(row => row.peerId !== trimmedPeerId ? row : {
+        const next = conversationsRef.current.map(row => row.peerId !== trimmedPeerId ? row : {
           ...row, unreadCount: 0,
           readByMember: { ...row.readByMember, [userId]: new Date().toISOString() },
-        }));
+        });
+        conversationsRef.current = next;
+        setConversations(next);
         return;
       }
       try {
@@ -451,7 +483,9 @@ export default function useMessaging({
           },
         }));
         if (!response?.ok || scopeRef.current !== scope) return;
-        setConversations(prev => withConversationRead(prev, trimmedPeerId));
+        const next = withConversationRead(conversationsRef.current, trimmedPeerId);
+        conversationsRef.current = next;
+        setConversations(next);
       } catch (error) {
         logWarn('[Messaging] markConversationRead failed', {
           message: errorMessage(error),
@@ -520,10 +554,14 @@ export default function useMessaging({
   const recordCallActivity = useCallback((peerId: string, activity: CallActivity) => {
     const trimmedPeerId = (peerId ?? '').trim();
     if (!trimmedPeerId || !activity?.callId) return;
-    setMessagesByPeer(prev =>
-      upsertTimelineEntry(prev, trimmedPeerId, activity as unknown as ChatMessage),
+    const nextMessages = upsertTimelineEntry(
+      messagesByPeerRef.current, trimmedPeerId, activity as unknown as ChatMessage,
     );
-    setConversations(prev => withCallActivity(prev, trimmedPeerId, activity));
+    messagesByPeerRef.current = nextMessages;
+    setMessagesByPeer(nextMessages);
+    const nextConversations = withCallActivity(conversationsRef.current, trimmedPeerId, activity);
+    conversationsRef.current = nextConversations;
+    setConversations(nextConversations);
   }, []);
 
   /**
@@ -667,9 +705,11 @@ export default function useMessaging({
         }
         const now = new Date().toISOString();
         if (action === 'read') {
-          setConversations(prev => prev.map(entry => entry.peerId !== id ? entry : {
+          const next = conversationsRef.current.map(entry => entry.peerId !== id ? entry : {
             ...entry, readByMember: { ...entry.readByMember, [memberId]: now },
-          }));
+          });
+          conversationsRef.current = next;
+          setConversations(next);
         } else if (action === 'typing') {
           const key = JSON.stringify([id, memberId]);
           clearTimeout(typingTimeoutsRef.current[key]);
@@ -683,7 +723,11 @@ export default function useMessaging({
           };
           messagesByPeerRef.current = prependMessage(messagesByPeerRef.current, id, message);
           setMessagesByPeer(prev => prependMessage(prev, id, message));
-          setConversations(prev => withIncomingMessage(prev, message, { incrementUnread: activeChatPeerIdRef.current !== id }));
+          const next = withIncomingMessage(conversationsRef.current, message, {
+            incrementUnread: activeChatPeerIdRef.current !== id,
+          });
+          conversationsRef.current = next;
+          setConversations(next);
         }
       },
     };
@@ -1158,6 +1202,39 @@ export default function useMessaging({
     setGroupTyping({});
   }, []);
 
+  const commitMessageHistory = useCallback((next: Record<string, ChatMessage[]>) => {
+    if (next === messagesByPeerRef.current) return;
+    messagesByPeerRef.current = next;
+    setMessagesByPeer(next);
+  }, []);
+
+  const commitLiveMessage = useCallback((
+    peerId: string,
+    message: ChatMessage,
+    nextMessages: Record<string, ChatMessage[]>,
+    nextConversations: ConversationSummary[],
+  ) => {
+    messagesByPeerRef.current = nextMessages;
+    conversationsRef.current = nextConversations;
+    setMessagesByPeer(nextMessages);
+    setConversations(nextConversations);
+
+    const conversationId = message.conversationId ??
+      conversationIdForPeer(nextConversations, peerId);
+    let cursors = socketCursorScopeRef.current === scope ? socketCursorsRef.current : {};
+    if (conversationId) {
+      const cursor = advanceSocketMessageCursor(cursors[conversationId], message);
+      if (cursor !== cursors[conversationId]) {
+        cursors = { ...cursors, [conversationId]: cursor! };
+      }
+    }
+    if (scope && scopeRef.current === scope) {
+      socketCursorScopeRef.current = scope;
+      socketCursorsRef.current = cursors;
+      if (cursors !== socketCursors) setSocketCursors(cursors);
+    }
+  }, [scope, socketCursors]);
+
   // ─── Socket-event adapters ────────────────────────────────────────────────
   // These encapsulate exactly how each raw `message.*` socket event mutates
   // this hook's state, so `useCallFlow`'s socket handlers stay thin.
@@ -1169,13 +1246,13 @@ export default function useMessaging({
       !groupRow.group!.memberIds.includes(message.senderId)) return true;
     const key = groupRow.peerId;
     const duplicate = messagesByPeerRef.current[key]?.some(entry => entry.messageId === message.messageId);
-    messagesByPeerRef.current = prependMessage(messagesByPeerRef.current, key, message);
-    setMessagesByPeer(prev => prependMessage(prev, key, message));
-    const next = withIncomingMessage(conversationsRef.current, message, {
-      incrementUnread: !duplicate && message.senderId !== userId && activeChatPeerIdRef.current !== key,
+    const nextMessages = duplicate
+      ? messagesByPeerRef.current
+      : prependMessage(messagesByPeerRef.current, key, message);
+    const next = duplicate ? conversationsRef.current : withIncomingMessage(conversationsRef.current, message, {
+      incrementUnread: message.senderId !== userId && activeChatPeerIdRef.current !== key,
     });
-    conversationsRef.current = next;
-    setConversations(next);
+    commitLiveMessage(key, message, nextMessages, next);
     if (activeChatPeerIdRef.current === key) {
       void markConversationRead(key);
       markMessageSeen(message.messageId);
@@ -1190,7 +1267,7 @@ export default function useMessaging({
     }
     markMessageSeen(message.messageId);
     return true;
-  }, [markConversationRead, userId]);
+  }, [commitLiveMessage, markConversationRead, userId]);
 
   const handleMessageReceived = useCallback(
       (message: ChatMessage) => {
@@ -1205,16 +1282,16 @@ export default function useMessaging({
       }
       const senderId = message.senderId;
 
-      setMessagesByPeer(prev => applyIncomingMessage(prev, message));
-
+      const duplicate = messagesByPeerRef.current[senderId]?.some(entry => entry.messageId === message.messageId);
+      const nextMessages = applyIncomingMessage(messagesByPeerRef.current, message);
       const isActiveConversation = activeChatPeerIdRef.current === senderId;
       const isNewConversation = !conversationsRef.current.some(
         conversation => conversation.peerId === senderId,
       );
-      setConversations(prev =>
-        withIncomingMessage(prev, message, { incrementUnread: !isActiveConversation }),
-      );
-      if (isNewConversation) void fetchConversations();
+      const nextConversations = duplicate ? conversationsRef.current :
+        withIncomingMessage(conversationsRef.current, message, { incrementUnread: !isActiveConversation });
+      commitLiveMessage(senderId, message, nextMessages, nextConversations);
+      if (isNewConversation && !duplicate) void fetchConversations();
 
       if (isActiveConversation) {
         // The conversation is currently open: auto-mark-read, no unread bump,
@@ -1229,6 +1306,10 @@ export default function useMessaging({
         return;
       }
 
+      if (duplicate) {
+        markMessageSeen(message.messageId);
+        return;
+      }
       displayMessageReceivedInApp(message).catch(error => {
         logWarn('[Messaging] in-app message notification failed', {
           message: errorMessage(error),
@@ -1238,18 +1319,19 @@ export default function useMessaging({
       // path has had a chance to consult the shared dedupe registry.
       markMessageSeen(message.messageId);
     },
-    [fetchConversations, markConversationRead, userId, handleGroupMessageReceived, scope],
+    [commitLiveMessage, fetchConversations, markConversationRead, userId, handleGroupMessageReceived, scope],
   );
 
   const handleMessageDelivered = useCallback(/** @param message */ (message: ChatMessage) => {
     if (!message?.recipientId) return;
     const group = conversationsRef.current.find(row => row.group && row.conversationId === message.conversationId);
     if (group) {
-      setMessagesByPeer(prev => patchMessageIn(prev, group.peerId, message.messageId, entry => asSent(entry, message)));
+      commitMessageHistory(patchMessageIn(messagesByPeerRef.current, group.peerId, message.messageId,
+        entry => asSent(entry, message)));
       return;
     }
-    setMessagesByPeer(prev => applyDeliveryReceipt(prev, message));
-  }, []);
+    commitMessageHistory(applyDeliveryReceipt(messagesByPeerRef.current, message));
+  }, [commitMessageHistory]);
 
   /**
    * Whether a direct `message.*` event names a conversation that is not this
@@ -1271,18 +1353,20 @@ export default function useMessaging({
       const group = conversationsRef.current.find(row => row.group && row.conversationId === conversationId);
       if (group) {
         if (!readAt || !group.group!.memberIds.includes(readerId) || !Number.isFinite(Date.parse(readAt))) return;
-        setConversations(prev => prev.map(row => row.peerId !== group.peerId ||
+        const next = conversationsRef.current.map(row => row.peerId !== group.peerId ||
           Date.parse(row.readByMember?.[readerId] ?? '') >= Date.parse(readAt) ? row : {
             ...row, readByMember: { ...row.readByMember, [readerId]: readAt },
-          }));
+          });
+        conversationsRef.current = next;
+        setConversations(next);
         return;
       }
       if (contradictsDirectConversation(readerId, conversationId)) return;
-      setMessagesByPeer(prev =>
-        applyReadReceipt(prev, { readerId, readAt, currentUserId: userId }),
-      );
+      commitMessageHistory(applyReadReceipt(messagesByPeerRef.current, {
+        readerId, readAt, currentUserId: userId,
+      }));
     },
-    [userId, contradictsDirectConversation],
+    [commitMessageHistory, userId, contradictsDirectConversation],
   );
 
   const handleTypingEvent = useCallback(
@@ -1330,10 +1414,10 @@ export default function useMessaging({
     }) => {
       const messageId = payload?.messageId;
       if (!messageId) return;
-      setMessagesByPeer(prev => applyTombstone(prev, messageId, payload?.message ?? undefined));
+      commitMessageHistory(applyTombstone(messagesByPeerRef.current, messageId, payload?.message ?? undefined));
       evictTombstonedAttachment(messageId);
     },
-    [],
+    [commitMessageHistory],
   );
 
   /**
@@ -1346,9 +1430,9 @@ export default function useMessaging({
       const messageId = payload?.messageId;
       if (!messageId) return;
       const reactions = payload?.reactions ?? {};
-      setMessagesByPeer(prev => applyReactions(prev, messageId, reactions));
+      commitMessageHistory(applyReactions(messagesByPeerRef.current, messageId, reactions));
     },
-    [],
+    [commitMessageHistory],
   );
 
   /**
@@ -1411,6 +1495,44 @@ export default function useMessaging({
   /** The socket went down: drive the offline banner. */
   const handleSocketDisconnected = useCallback(() => {
     setIsSocketConnected(false);
+    const disconnectedScope = scopeRef.current;
+    if (!disconnectedScope) return;
+    const persistLatest = () => {
+      if (scopeRef.current !== disconnectedScope) return;
+      const snapshot = {
+        conversations: conversationsRef.current,
+        messagesByPeer: messagesByPeerRef.current,
+        socketCursors: socketCursorsRef.current,
+      };
+      persistChatSnapshotRef.current(snapshot);
+    };
+    const flush = () => {
+      if (scopeRef.current !== disconnectedScope) return;
+      void flushChatDb(disconnectedScope).catch(error => {
+        logWarn('[Messaging] Failed to flush message cache on disconnect', {
+          message: errorMessage(error),
+        });
+      });
+    };
+    const latest = {
+      conversations: conversationsRef.current,
+      messagesByPeer: messagesByPeerRef.current,
+      socketCursors: socketCursorsRef.current,
+    };
+    if (persistChatSnapshotRef.current(latest)) {
+      flush();
+      return;
+    }
+    // Hydration can still be in flight if the socket drops immediately after
+    // launch. Let it merge disk state with any live event refs before flushing.
+    void loadChatSnapshot(disconnectedScope).then(() => {
+      persistLatest();
+      flush();
+    }).catch(error => {
+      logWarn('[Messaging] Failed to hydrate message cache on disconnect', {
+        message: errorMessage(error),
+      });
+    });
   }, []);
 
   /**
