@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import { errorMessage } from './errors';
+import { captureCrash } from './crashReporting';
 
 /**
  * @returns `YYYYMMDD-HHMMSS`, safe for use in a file name.
@@ -99,6 +100,12 @@ export function installCrashHandler(getLogsCallback: () => string) {
     saveCrashLog(error, Boolean(isFatal), getLogsCallback).catch(() => {
       // Swallow write errors to prevent recursive crash handling.
     });
+
+    try {
+      captureCrash(error, Boolean(isFatal), getLogsCallback);
+    } catch {
+      // Swallow reporter errors to prevent recursive crash handling.
+    }
 
     if (typeof previousHandler === 'function') {
       previousHandler(error, isFatal);
