@@ -43,7 +43,7 @@ jest.mock('../../src/attachmentCache', () => ({
 // In-memory stand-in for the durable local store, so the hook's hydration and
 // persistence can be observed without touching the filesystem.
 jest.mock('../../src/storage/chatDb', () => {
-  const snapshot = { conversations: [], messagesByPeer: {}, outbox: [] };
+  const snapshot = { conversations: [], messagesByPeer: {}, socketCursors: {}, outbox: [] };
   return {
     __snapshot: snapshot,
     loadChatSnapshot: jest.fn(async () => snapshot),
@@ -103,6 +103,7 @@ beforeEach(() => {
   jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
   (chatDb as any).__snapshot.conversations = [];
   (chatDb as any).__snapshot.messagesByPeer = {};
+  (chatDb as any).__snapshot.socketCursors = {};
   (chatDb as any).__snapshot.outbox = [];
 });
 
@@ -698,6 +699,29 @@ describe('useMessaging', () => {
     expect(resultRef.current.conversations[0].unreadCount).toBe(0);
   });
 
+  test('a live message preserves a queued mark-read update before React renders', async () => {
+    (chatDb as any).__snapshot.conversations = [
+      { conversationId: 'c1', peerId: 'bob', unreadCount: 4 },
+    ];
+    const { resultRef, params } = setup();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    params.authedFetchRef.current.mockResolvedValueOnce({ ok: true });
+
+    await act(async () => {
+      await resultRef.current.markConversationRead('bob');
+      resultRef.current.handleMessageReceived({
+        messageId: 'after-read', conversationId: 'c1', senderId: 'bob', body: 'new message',
+        createdAt: '2026-10-03T07:00:00.000Z',
+      });
+    });
+
+    expect(resultRef.current.conversations[0].unreadCount).toBe(1);
+    expect(resultRef.current.messagesByPeer.bob.map((message: any) => message.messageId))
+      .toEqual(['after-read']);
+  });
+
   test('sendMessage queues durably while offline instead of failing', async () => {
     const socketRef = { current: makeSocket({ connected: false }) };
     const { resultRef, params } = setup({ socketRef });
@@ -827,7 +851,7 @@ describe('useMessaging', () => {
     (chatDb as any).__snapshot.messagesByPeer = {
       bob: [{ messageId: 'm1', body: 'cached', createdAt: '2024-01-01T00:00:00.000Z' }],
     };
-    const { resultRef, params } = setup();
+    const { resultRef, params } = setup({ socketRef: { current: makeSocket({ connected: false }) } });
 
     await act(async () => {});
 
@@ -835,6 +859,91 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob[0].body).toBe('cached');
     expect(resultRef.current.unreadTotal).toBe(2);
     expect(params.authedFetchRef.current).not.toHaveBeenCalled();
+  });
+
+  test('a socket event after a history page is queued retains both page and live message', async () => {
+    jest.useFakeTimers();
+    (chatDb as any).__snapshot.conversations = [
+      { conversationId: 'c1', peerId: 'bob', unreadCount: 0 },
+    ];
+    const { resultRef, params } = setup();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    (chatDb.saveChatSnapshot as jest.Mock).mockClear();
+    params.authedFetchRef.current.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        messages: [{
+          messageId: 'history', conversationId: 'c1', senderId: 'bob', recipientId: 'alice',
+          body: 'from page', createdAt: '2026-10-03T06:00:00.000Z',
+        }],
+      }),
+    });
+
+    await act(async () => {
+      await resultRef.current.fetchMessagesForPeer('bob');
+      resultRef.current.handleMessageReceived({
+        messageId: 'live-after-page', conversationId: 'c1', senderId: 'bob', body: 'live',
+        createdAt: '2026-10-03T07:00:00.000Z',
+      });
+    });
+
+    expect(resultRef.current.messagesByPeer.bob.map((message: any) => message.messageId))
+      .toEqual(['live-after-page', 'history']);
+    expect(chatDb.saveChatSnapshot).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(750);
+    });
+    expect(chatDb.saveChatSnapshot).toHaveBeenCalledTimes(1);
+    const snapshot = (chatDb.saveChatSnapshot as jest.Mock).mock.calls[0][0];
+    expect(snapshot.messagesByPeer.bob.map((message: any) => message.messageId))
+      .toEqual(['live-after-page', 'history']);
+    expect(snapshot.socketCursors.c1).toEqual({
+      messageCreatedAt: '2026-10-03T07:00:00.000Z', messageId: 'live-after-page',
+    });
+    jest.useRealTimers();
+  });
+
+  test('socket messages arriving during cold hydration merge with cached history and advance the cursor', async () => {
+    jest.useFakeTimers();
+    let resolveLoad!: (value: any) => void;
+    (chatDb.loadChatSnapshot as jest.Mock).mockImplementationOnce(() => new Promise(resolve => {
+      resolveLoad = resolve;
+    }));
+    const { resultRef } = setup();
+
+    act(() => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'live', conversationId: 'c1', senderId: 'bob', body: 'arrived during hydration',
+        createdAt: '2026-10-03T07:00:00.000Z',
+      });
+    });
+
+    await act(async () => {
+      resolveLoad({
+        conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 2 }],
+        messagesByPeer: {
+          bob: [{ messageId: 'cached', conversationId: 'c1', senderId: 'bob', body: 'from disk',
+            createdAt: '2026-10-03T06:00:00.000Z' }],
+        },
+        socketCursors: {},
+        outbox: [],
+        drafts: {},
+      });
+      await Promise.resolve();
+    });
+
+    expect(resultRef.current.messagesByPeer.bob.map((message: any) => message.messageId))
+      .toEqual(['live', 'cached']);
+    act(() => {
+      jest.advanceTimersByTime(750);
+    });
+    expect((chatDb as any).__snapshot.socketCursors.c1).toEqual({
+      messageCreatedAt: '2026-10-03T07:00:00.000Z', messageId: 'live',
+    });
+    jest.useRealTimers();
   });
 
   test('retryMessage re-queues an exhausted send and discardMessage drops it', async () => {
@@ -1138,6 +1247,30 @@ describe('useMessaging', () => {
       expect.objectContaining({ messageId: 'm1', senderId: 'bob', body: 'hi' }),
     );
     expect(markMessageSeen).toHaveBeenCalledWith('m1');
+  });
+
+  test('a replayed message after socket reconnect preserves one persisted row and one unread increment', async () => {
+    const { resultRef } = setup();
+    await act(async () => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'replayed', conversationId: 'c1', senderId: 'bob', body: 'once',
+        createdAt: '2026-10-03T07:00:00.000Z',
+      });
+      resultRef.current.handleSocketDisconnected();
+      resultRef.current.handleSocketConnected();
+      resultRef.current.handleMessageReceived({
+        messageId: 'replayed', conversationId: 'c1', senderId: 'bob', body: 'once',
+        createdAt: '2026-10-03T07:00:00.000Z',
+      });
+    });
+
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.conversations[0].unreadCount).toBe(1);
+    expect((chatDb as any).__snapshot.messagesByPeer.bob).toHaveLength(1);
+    expect((chatDb as any).__snapshot.conversations[0].unreadCount).toBe(1);
+    expect((chatDb as any).__snapshot.socketCursors.c1).toEqual({
+      messageCreatedAt: '2026-10-03T07:00:00.000Z', messageId: 'replayed',
+    });
   });
 
   test('handleMessageReceived auto-marks-read and does not bump unread when the conversation is active', async () => {
@@ -1585,7 +1718,7 @@ describe('useMessaging searchMessages', () => {
 });
 
 describe('useMessaging snapshot persistence', () => {
-  test('coalesces a burst of state changes into a single mirror', async () => {
+  test('coalesces socket events for 750ms and persists history and cursor together', async () => {
     jest.useFakeTimers();
     const { resultRef } = setup();
     // Let the hydration promise settle so the persistence gate is open.
@@ -1597,16 +1730,18 @@ describe('useMessaging snapshot persistence', () => {
     act(() => {
       resultRef.current.handleMessageReceived({
         messageId: 'm-1', conversationId: 'c1', senderId: 'bob', body: 'one',
+        createdAt: '2026-10-03T07:00:00.000Z',
       });
       resultRef.current.handleMessageReceived({
         messageId: 'm-2', conversationId: 'c1', senderId: 'bob', body: 'two',
+        createdAt: '2026-10-03T07:00:01.000Z',
       });
       resultRef.current.handleMessageReceived({
         messageId: 'm-3', conversationId: 'c1', senderId: 'bob', body: 'three',
+        createdAt: '2026-10-03T07:00:02.000Z',
       });
     });
 
-    // Nothing written yet: the trailing window has not elapsed.
     expect(chatDb.saveChatSnapshot).not.toHaveBeenCalled();
 
     act(() => {
@@ -1614,9 +1749,11 @@ describe('useMessaging snapshot persistence', () => {
     });
 
     expect(chatDb.saveChatSnapshot).toHaveBeenCalledTimes(1);
-    expect(
-      (chatDb.saveChatSnapshot as jest.Mock).mock.calls[0][0].messagesByPeer.bob,
-    ).toHaveLength(3);
+    const latest = (chatDb.saveChatSnapshot as jest.Mock).mock.calls[0][0];
+    expect(latest.messagesByPeer.bob).toHaveLength(3);
+    expect(latest.socketCursors.c1).toEqual({
+      messageCreatedAt: '2026-10-03T07:00:02.000Z', messageId: 'm-3',
+    });
     jest.useRealTimers();
   });
 

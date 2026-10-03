@@ -109,7 +109,7 @@ describe('chatDb', () => {
 
   test('loads an empty snapshot when nothing has been persisted', async () => {
     const snapshot = await loadChatSnapshot();
-    expect(snapshot).toEqual({ conversations: [], messagesByPeer: {}, outbox: [], drafts: {} });
+    expect(snapshot).toEqual({ conversations: [], messagesByPeer: {}, socketCursors: {}, outbox: [], drafts: {} });
     expect(RNFS.readFile).not.toHaveBeenCalled();
   });
 
@@ -137,6 +137,7 @@ describe('chatDb', () => {
     expect(await loadChatSnapshot()).toEqual({
       conversations: [],
       messagesByPeer: {},
+      socketCursors: {},
       outbox: [],
       drafts: {},
     });
@@ -219,8 +220,40 @@ describe('chatDb', () => {
     expect(await loadChatSnapshot()).toEqual({
       conversations: [],
       messagesByPeer: {},
+      socketCursors: {},
       outbox: [],
       drafts: {},
+    });
+  });
+
+  test('message rows and socket cursors survive a cold reload under conversation keys', async () => {
+    const scope = 'https://example.test:message-cache';
+    await loadChatSnapshot(scope);
+    const message = {
+      messageId: 'm-1', conversationId: 'conversation-1', senderId: 'bob',
+      recipientId: 'alice', body: 'cached live event', createdAt: '2026-10-03T07:00:00.000Z',
+    } as any;
+    saveChatSnapshot({
+      messagesByPeer: { bob: [message] },
+      socketCursors: {
+        'conversation-1': {
+          messageCreatedAt: message.createdAt, messageId: message.messageId,
+        },
+      },
+    }, scope);
+    await flushChatDb(scope);
+
+    const row = await withDatabase(db => db.execute(
+      "SELECT id FROM chat_records WHERE scope = ? AND kind = 'messagesByPeer'",
+      [scope],
+    ));
+    expect(row.rows[0].id).toBe(JSON.stringify(['conversation-1', 'm-1']));
+
+    resetChatDbCache();
+    const restored = await loadChatSnapshot(scope);
+    expect(restored.messagesByPeer.bob).toEqual([message]);
+    expect(restored.socketCursors['conversation-1']).toEqual({
+      messageCreatedAt: message.createdAt, messageId: message.messageId,
     });
   });
 
@@ -235,6 +268,7 @@ describe('chatDb', () => {
       const snapshot = {
         conversations: [{ peerId: 'bob' }],
         messagesByPeer: { bob: history },
+        socketCursors: {},
         outbox: [{ messageId: 'old-pending', recipientId: 'bob', body: 'unsent' }],
         drafts: { bob: { text: 'unfinished' } },
       };
@@ -276,6 +310,7 @@ describe('chatDb', () => {
       const snapshot = {
         conversations: Object.keys(messagesByPeer).map(peerId => ({ peerId })),
         messagesByPeer,
+        socketCursors: {},
         outbox: [{ messageId: 'q', recipientId: 'peer-102', body: 'unsent' }],
         drafts: { 'peer-101': { text: 'unfinished' } },
       };
@@ -319,6 +354,7 @@ describe('chatDb', () => {
       const snapshot = {
         conversations: [],
         messagesByPeer: { bob: makeMessages(MAX_MESSAGES_PER_CONVERSATION + 5) },
+        socketCursors: {},
         outbox: [],
         drafts: {},
       };
@@ -359,6 +395,7 @@ describe('chatDb', () => {
       const snapshot = {
         conversations: [],
         messagesByPeer: {},
+        socketCursors: {},
         outbox: [],
         drafts: {},
       } as any;

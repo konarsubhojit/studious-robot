@@ -1,9 +1,9 @@
 import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
-import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
+import type { ChatMessage, ConversationSummary, OutboxItem, SocketMessageCursor } from '../messaging/types';
 import { normalizeEntryTimestamps } from '../messaging/messageHistory';
 import { byNewestFirst } from '../messaging/messageIdentity';
-import { timestampMs } from '../../../shared/time';
+import { normalizeTimestamp, timestampMs } from '../../../shared/time';
 import { errorMessage } from '../errors';
 import { withDatabase } from './localDatabase';
 import { rowChanges, snapshotRows } from './chatRecords';
@@ -65,13 +65,15 @@ export type ChatDraft = {
 export type ChatSnapshot = {
   conversations: ConversationSummary[];
   messagesByPeer: Record<string, ChatMessage[]>;
+  /** conversationId -> local socket watermark; never the server change-log cursor */
+  socketCursors: Record<string, SocketMessageCursor>;
   outbox: OutboxItem[];
   /** peerId -> draft; a peer with no typed text has no entry at all. */
   drafts: Record<string, ChatDraft>;
 };
 
 function emptySnapshot(): ChatSnapshot {
-  return { conversations: [], messagesByPeer: {}, outbox: [], drafts: {} };
+  return { conversations: [], messagesByPeer: {}, socketCursors: {}, outbox: [], drafts: {} };
 }
 
 /**
@@ -193,6 +195,26 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
     );
   });
 
+  const socketCursors: Record<string, SocketMessageCursor> = {};
+  const rawCursors: Record<string, any> =
+    raw.socketCursors && typeof raw.socketCursors === 'object'
+      ? raw.socketCursors
+      : raw.syncCursors && typeof raw.syncCursors === 'object' ? raw.syncCursors : {};
+  Object.keys(rawCursors).forEach(conversationId => {
+    const cursor = rawCursors[conversationId];
+    const messageCreatedAt = typeof cursor?.messageCreatedAt === 'string'
+      ? cursor.messageCreatedAt
+      : typeof cursor?.createdAt === 'string' ? cursor.createdAt : cursor?.since;
+    if (!conversationId || !cursor || typeof messageCreatedAt !== 'string' || !messageCreatedAt ||
+      typeof cursor.messageId !== 'string' || !cursor.messageId) return;
+    const normalizedCreatedAt = normalizeTimestamp(messageCreatedAt);
+    if (!Number.isFinite(timestampMs(normalizedCreatedAt))) return;
+    socketCursors[conversationId] = {
+      messageCreatedAt: normalizedCreatedAt,
+      messageId: cursor.messageId,
+    };
+  });
+
   const outbox = Array.isArray(raw.outbox)
     ? raw.outbox
         .filter(
@@ -224,6 +246,7 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
   return {
     conversations: pruneConversations(conversations, outbox),
     messagesByPeer: prunePeerHistories(messagesByPeer, outbox, drafts),
+    socketCursors,
     outbox,
     drafts,
   };
@@ -289,6 +312,8 @@ async function readSnapshot(store: Store, scope: string): Promise<void> {
         snapshot.messagesByPeer[peer].push(value as ChatMessage);
       } else if (row.kind === 'drafts') {
         snapshot.drafts[String(row.peer)] = value as ChatDraft;
+      } else if (row.kind === 'socketCursors' || row.kind === 'syncCursors') {
+        snapshot.socketCursors[String(row.peer)] = value as SocketMessageCursor;
       } else if (row.kind === 'conversations') {
         snapshot.conversations.push(value as ConversationSummary);
       } else if (row.kind === 'outbox') {
@@ -372,6 +397,7 @@ export function saveChatSnapshot(partial: Partial<ChatSnapshot>, scope = 'legacy
       ? pruneConversations(partial.conversations, partial.outbox ?? base.outbox)
       : base.conversations,
     messagesByPeer,
+    socketCursors: partial.socketCursors ?? base.socketCursors,
     outbox: partial.outbox ?? base.outbox,
     drafts: partial.drafts ?? base.drafts ?? {},
   };
