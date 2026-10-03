@@ -488,18 +488,22 @@ export function toCallQualityMetrics(
   sample: CallStatsSample,
   packetLossRatio: number | undefined,
   bitrateKbps: number | undefined,
-): CallQualityMetrics {
+): CallQualityMetrics | null {
+  if (
+    !isFiniteNumber(sample.rttMs) ||
+    !isFiniteNumber(sample.jitterMs) ||
+    !isFiniteNumber(packetLossRatio) ||
+    !isFiniteNumber(bitrateKbps)
+  ) {
+    return null;
+  }
   const boundedInteger = (value: number | undefined, max: number) =>
     Math.round(typeof value === 'number' && Number.isFinite(value) ? clamp(value, 0, max) : 0);
-  const safePacketLossPercent =
-    typeof packetLossRatio === 'number' && Number.isFinite(packetLossRatio)
-      ? packetLossRatio * 100
-      : 0;
   return {
     rttMs: boundedInteger(sample.rttMs, 60_000),
     jitterMs: boundedInteger(sample.jitterMs, 10_000),
-    packetLossPercent: clamp(safePacketLossPercent, 0, 100),
-    bitrateBps: boundedInteger(bitrateKbps === undefined ? 0 : bitrateKbps * 1000, 1_000_000_000),
+    packetLossPercent: clamp(packetLossRatio * 100, 0, 100),
+    bitrateBps: boundedInteger(bitrateKbps * 1000, 1_000_000_000),
     codec: sample.codec?.trim().slice(0, 64) || 'unknown',
   };
 }

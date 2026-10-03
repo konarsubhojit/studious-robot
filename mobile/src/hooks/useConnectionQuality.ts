@@ -75,10 +75,6 @@ function selectedCandidatePairFromReports(
   return collectCallStats(candidatePairReport).candidatePair;
 }
 
-function hasMeasuredQuality(...metrics: (number | undefined)[]): boolean {
-  return metrics.some(Number.isFinite);
-}
-
 function roundTripTimeMs(
   sample: { rttMs?: number },
   candidatePair: { currentRoundTripTime?: unknown } | null,
@@ -224,11 +220,12 @@ export default function useConnectionQuality({
           packetLossRatio,
           bitrateKbps,
         });
-        if (hasMeasuredQuality(rttMs, packetLossRatio, bitrateKbps)) {
-          onStatsSample?.(
-            toCallQualityMetrics({ ...callStats, rttMs }, packetLossRatio, bitrateKbps),
-          );
-        }
+        const metrics = toCallQualityMetrics(
+          { ...callStats, rttMs },
+          packetLossRatio,
+          bitrateKbps,
+        );
+        if (metrics) onStatsSample?.(metrics);
         qualitySmootherRef.current = smoothConnectionQuality(
           qualitySmootherRef.current,
           sampledQuality,

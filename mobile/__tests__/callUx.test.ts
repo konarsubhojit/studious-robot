@@ -220,6 +220,16 @@ describe('callUx', () => {
       codec: 'unknown',
     });
   });
+
+  test('does not turn unavailable metrics into measured zeros', () => {
+    expect(
+      toCallQualityMetrics(
+        { rttMs: 80, totalPacketsLost: 0, totalPacketsReceived: 10, totalBytesReceived: 100, candidatePair: null },
+        0,
+        undefined,
+      ),
+    ).toBeNull();
+  });
 });
 
 describe('smoothConnectionQuality', () => {

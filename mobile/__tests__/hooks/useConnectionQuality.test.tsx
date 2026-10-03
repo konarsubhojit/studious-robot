@@ -132,6 +132,13 @@ describe('useConnectionQuality', () => {
 
     expect(getStats).toHaveBeenCalledTimes(1);
     expect(resultRef.current.connectionQuality).toEqual({ bars: 3, label: 'Good' });
+    expect(params.onStatsSample).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+    });
+    await act(async () => {});
+
     expect(params.onStatsSample).toHaveBeenCalledWith({
       rttMs: 50,
       jitterMs: 15,
