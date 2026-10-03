@@ -438,16 +438,19 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
         online: getPresenceSnapshot(state, conversation.peerId).online,
       }));
 
-    let groupConversations;
+    let groupConversations: Awaited<
+      ReturnType<typeof state.conversationStore.listForUser>
+    > | undefined;
     try {
       groupConversations = await state.conversationStore.listForUser(session.userId);
     } catch (error) {
       console.error(`[messages] group conversation lookup failed: ${describeError(error)}`);
-      res.status(503).json({ error: 'conversation store unavailable' });
-      return;
     }
 
-    res.status(200).json({ conversations: visible, groupConversations });
+    res.status(200).json({
+      conversations: visible,
+      ...(groupConversations ? { groupConversations } : {}),
+    });
   });
 
   /**
