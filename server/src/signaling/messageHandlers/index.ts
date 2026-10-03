@@ -1,7 +1,7 @@
 import { SIGNALING_VERSION } from '../../config.ts';
 import { deriveConversationId } from '../../messageStore.ts';
 import { normaliseId } from '../../lib/normalize.ts';
-import { isBlocked } from '../../security.ts';
+import { isBlockedAsync } from '../../security.ts';
 import { emitToUserSockets } from '../../domain/notifications.ts';
 import { invalidateCache, conversationsCachePrefix, messagesCachePrefix } from '../../cache.ts';
 import { deleteAttachmentObject, loadR2Config } from '../../attachments.ts';
@@ -184,7 +184,7 @@ function registerMessageHandlers(
       return;
     }
     const senderId = socket.data.identity.userId;
-    const rateCheck = state.messageSendRateLimiter.check(senderId);
+    const rateCheck = await state.messageSendRateLimiter.check(senderId);
     if (!rateCheck.allowed) {
       acknowledgeError(
         socket,
@@ -208,7 +208,7 @@ function registerMessageHandlers(
     }
 
     const requesterId = socket.data.identity.userId;
-    const rateCheck = state.messageSendRateLimiter.check(requesterId);
+    const rateCheck = await state.messageSendRateLimiter.check(requesterId);
     if (!rateCheck.allowed) {
       acknowledgeError(
         socket,
@@ -350,7 +350,7 @@ function registerMessageHandlers(
     }
 
     const requesterId = socket.data.identity.userId;
-    const rateCheck = state.messageSendRateLimiter.check(requesterId);
+    const rateCheck = await state.messageSendRateLimiter.check(requesterId);
     if (!rateCheck.allowed) {
       acknowledgeError(
         socket,
@@ -383,7 +383,7 @@ function registerMessageHandlers(
       return;
     }
 
-    if (isBlocked(state.blocks, peerId, requesterId) || isBlocked(state.blocks, requesterId, peerId)) {
+    if (await isBlockedAsync(state, peerId, requesterId) || await isBlockedAsync(state, requesterId, peerId)) {
       acknowledgeError(
         socket,
         ack,

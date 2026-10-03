@@ -107,7 +107,7 @@ function createProfileRouter({ state, db }: { state: ServerState; db: Database |
       return;
     }
 
-    const rateCheck = state.profileUpdateRateLimiter.check(session.userId);
+    const rateCheck = await state.profileUpdateRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       state.auditLog.record({
         event: 'profile.rate_limited',

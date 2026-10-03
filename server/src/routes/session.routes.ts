@@ -60,16 +60,16 @@ async function reauthenticationRequiredForDevice({
 function sessionRateLimitKey(req: express.Request): string {
   const requestedUserId = normaliseId(req.body?.userId) ?? 'unknown-user';
   const requestedDeviceId = normaliseId(req.body?.deviceId) ?? 'unknown-device';
-  return `${requestedUserId}:${requestedDeviceId}:${req.ip ?? 'unknown-ip'}`;
+  return JSON.stringify(['create', requestedUserId, requestedDeviceId, req.ip ?? 'unknown-ip']);
 }
 
-function rejectRateLimitedSession(
+async function rejectRateLimitedSession(
   state: import('../stores/contracts.ts').ServerState,
   res: express.Response,
   key: string,
   actor?: string | null
-): boolean {
-  const rateCheck = state.sessionRateLimiter.check(key);
+): Promise<boolean> {
+  const rateCheck = await state.sessionRateLimiter.check(key);
   if (rateCheck.allowed) return false;
   state.auditLog.record({
     event: 'session.rate_limited',
@@ -98,7 +98,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
 
   // lgtm[js/missing-rate-limiting] Guarded by state.sessionRateLimiter at the start of this handler.
   router.post(API_ROUTES.SESSION, async (req, res) => {
-    if (rejectRateLimitedSession(state, res, sessionRateLimitKey(req), normaliseId(req.body?.userId))) {
+    if (await rejectRateLimitedSession(state, res, sessionRateLimitKey(req), normaliseId(req.body?.userId))) {
       return;
     }
     let externalIdentity;
@@ -216,7 +216,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
-    if (rejectRateLimitedSession(state, res, `refresh:${session.userId}:${session.deviceId}`, session.userId)) {
+    if (await rejectRateLimitedSession(state, res, JSON.stringify(['refresh', session.userId, session.deviceId]), session.userId)) {
       return;
     }
 

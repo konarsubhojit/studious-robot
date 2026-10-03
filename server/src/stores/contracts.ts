@@ -76,6 +76,18 @@ export type MessageRecord = import('../../../shared/signaling/schemas.ts').Messa
   readAt: string | null;
 };
 export type BlockStore = Map<string, Set<string>>;
+export type RateLimitResult = { allowed: boolean; remaining: number; resetAt: number };
+export type SecurityTransport = {
+  check: (namespace: string, key: string, max: number, windowMs: number) => Promise<RateLimitResult>;
+  getStatus: () => { transport: 'redis' | 'local'; degraded: boolean };
+};
+export type SharedBlocks = {
+  isBlocked: (blockerId: string, targetId: string) => Promise<boolean>;
+  list: (userId: string, bothDirections?: boolean) => Promise<string[]>;
+  add: (blockerId: string, targetId: string) => Promise<void>;
+  remove: (blockerId: string, targetId: string) => Promise<boolean>;
+  erase: (userId: string) => Promise<number>;
+};
 /**
  * A queued account erasure.
  *
@@ -107,6 +119,8 @@ export type Stores = {
   messageBus?: import('../messageBus.ts').MessageBus | null;
   attachAdapter?: (io: import('socket.io').Server) => void;
   stateAffinity?: 'sticky' | 'shared';
+  security?: SecurityTransport;
+  blockState?: SharedBlocks;
   instanceId?: string;
   callState?: {
     get: (callId: string) => Promise<CallRecord | null>;
@@ -161,7 +175,7 @@ export type RateLimiter = {
   check: (
     key: string,
     now?: number
-  ) => { allowed: boolean; remaining: number; resetAt: number };
+  ) => RateLimitResult | Promise<RateLimitResult>;
 };
 export type ServerState = Stores & {
   db: import('../../db/client.ts').Database | null;

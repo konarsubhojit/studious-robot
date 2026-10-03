@@ -328,6 +328,7 @@ async function hydrateDevices(db: DrizzleDb, state: Stores, devicesTable: any): 
  * @returns number of rows read
  */
 async function hydrateBlocks(db: DrizzleDb, state: Stores, blocksTable: any): Promise<number> {
+  if (state.stateAffinity === 'shared') return 0;
   const rows = await db.select().from(blocksTable);
   for (const row of rows) {
     if (!row?.blockerId || !row?.blockeeId) continue;

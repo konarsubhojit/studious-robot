@@ -144,6 +144,50 @@ function asSocketIoServer<T>(double: T): T & import('socket.io').Server {
   return double as T & import('socket.io').Server;
 }
 
+export function createTestSharedBlocks(): import('../src/stores/contracts.ts').SharedBlocks & { failure: boolean } {
+  const entries = new Map<string, Set<string>>();
+  const requireAvailable = () => {
+    if (store.failure) throw new Error('block store unavailable');
+  };
+  const store: import('../src/stores/contracts.ts').SharedBlocks & { failure: boolean } = {
+    failure: false,
+    isBlocked(blocker, target) {
+      requireAvailable();
+      return Promise.resolve(entries.get(blocker)?.has(target) ?? false);
+    },
+    list(userId, bothDirections) {
+      requireAvailable();
+      const result = new Set(entries.get(userId));
+      if (bothDirections) {
+        for (const [blocker, targets] of entries) {
+          if (targets.has(userId)) result.add(blocker);
+        }
+      }
+      return Promise.resolve([...result]);
+    },
+    add(blocker, target) {
+      requireAvailable();
+      if (!entries.has(blocker)) entries.set(blocker, new Set());
+      entries.get(blocker)!.add(target);
+      return Promise.resolve();
+    },
+    remove(blocker, target) {
+      requireAvailable();
+      return Promise.resolve(entries.get(blocker)?.delete(target) ?? false);
+    },
+    erase(userId) {
+      requireAvailable();
+      let count = entries.get(userId)?.size ?? 0;
+      entries.delete(userId);
+      for (const targets of entries.values()) {
+        if (targets.delete(userId)) count += 1;
+      }
+      return Promise.resolve(count);
+    },
+  };
+  return store;
+}
+
 export {
   asDatabase,
   asMessageStore,

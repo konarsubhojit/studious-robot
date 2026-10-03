@@ -41,6 +41,7 @@ function createHealthRouter({ state }: {
             draining: boolean;
             messageStore: { type: string; };
             stateAffinity?: 'sticky' | 'shared';
+            security?: import('../stores/contracts.ts').SecurityTransport;
             instanceId?: string;
             callState?: object;
             messageBus?: object | null;
@@ -73,6 +74,7 @@ function createHealthRouter({ state }: {
       messageStore: {
         type: state.messageStore.type,
       },
+      rateLimit: state.security?.getStatus() ?? { transport: 'local', degraded: false },
       fanout: state.fanout?.getStatus() ?? null,
       redis: getRedisHealth(),
       uptime: process.uptime(),

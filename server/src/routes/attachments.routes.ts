@@ -3,7 +3,7 @@ import { API_ROUTES } from '../../../shared/index.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { deriveConversationId } from '../messageStore.ts';
-import { isBlocked } from '../security.ts';
+import { isBlockedAsync } from '../security.ts';
 import {
   attachmentKeyFromReference,
   attachmentScopeFromKey,
@@ -71,7 +71,7 @@ function createAttachmentsRouter({ state, env = process.env }: {
 
     // Presigning is a write-shaped operation (it mints a credential), so it is
     // throttled with the same budget as sending a message.
-    const rateCheck = state.messageSendRateLimiter.check(session.userId);
+    const rateCheck = await state.messageSendRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       state.auditLog.record({
         event: 'attachment_presign.rate_limited',
@@ -94,8 +94,8 @@ function createAttachmentsRouter({ state, env = process.env }: {
     // Mirror `message.send`: a blocked pair cannot exchange media either, so
     // refuse before minting an upload credential rather than after the upload.
     if (
-      isBlocked(state.blocks, peerId, session.userId) ||
-      isBlocked(state.blocks, session.userId, peerId)
+      await isBlockedAsync(state, peerId, session.userId) ||
+      await isBlockedAsync(state, session.userId, peerId)
     ) {
       res.status(403).json({ error: 'blocked' });
       return;
@@ -163,7 +163,7 @@ function createAttachmentsRouter({ state, env = process.env }: {
       return;
     }
 
-    const rateCheck = state.attachmentDownloadRateLimiter.check(session.userId);
+    const rateCheck = await state.attachmentDownloadRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       state.auditLog.record({
         event: 'attachment_download.rate_limited',
@@ -186,8 +186,8 @@ function createAttachmentsRouter({ state, env = process.env }: {
     // Mirror `POST /attachments/presign` and `message.send`: a blocked pair
     // cannot exchange media, so it cannot fetch it back either.
     if (
-      isBlocked(state.blocks, peerId, session.userId) ||
-      isBlocked(state.blocks, session.userId, peerId)
+      await isBlockedAsync(state, peerId, session.userId) ||
+      await isBlockedAsync(state, session.userId, peerId)
     ) {
       res.status(403).json({ error: 'blocked' });
       return;
