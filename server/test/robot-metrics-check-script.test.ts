@@ -116,6 +116,7 @@ test('a healthy server with completion rate above 1 and a negative marking gap i
   const h = createHarness();
   try {
     const metrics = healthyMetrics();
+    assert.ok(metrics.derived.call_completion_rate !== null);
     assert.ok(metrics.derived.call_completion_rate > 1);
     const result = await h.run(metrics);
     assert.equal(result.code, 0, result.stderr);
