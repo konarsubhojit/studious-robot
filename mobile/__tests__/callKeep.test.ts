@@ -179,6 +179,35 @@ describe('callKeep with the native module present', () => {
     );
   });
 
+  test('uses the display name in native and branded UI without changing the handle', async () => {
+      await mod.displayIncomingCall({
+        callId: 'named-call',
+        callerId: 'alice',
+        callerDisplayName: ' Alice Chen ',
+      });
+      expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledWith(
+        'named-call', 'alice', 'Alice Chen', 'generic', true,
+      );
+
+      mod.registerShowIncomingCallUiListener();
+      const handler = mockCallKeep.addEventListener.mock.calls.find(
+        ([event]: any[]) => event === 'showIncomingCallUi',
+      )[1];
+      await handler({ callUUID: 'named-call', handle: 'alice' });
+      expect(mockShowIncomingCallNotification).toHaveBeenCalledWith({
+        callId: 'named-call', callerId: 'Alice Chen', hasVideo: true,
+      });
+    });
+
+  test('falls back to the user ID when the display name is empty', async () => {
+      await mod.displayIncomingCall({
+        callId: 'unnamed-call', callerId: 'alice', callerDisplayName: '   ',
+      });
+      expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledWith(
+        'unnamed-call', 'alice', 'alice', 'generic', true,
+      );
+    });
+
   test('displayIncomingCall ignores a duplicate ring for the same call', async () => {
     await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toEqual({
       shown: true,

@@ -12,8 +12,9 @@ import {
   shouldWarnPoorConnection,
   smoothConnectionQuality,
   summarizeCandidatePair,
+  toCallQualityMetrics,
 } from '../callUx';
-import type { ConnectionQuality } from '../callUx';
+import type { CallQualityMetrics, ConnectionQuality } from '../callUx';
 import type { IceCandidatePairSummary } from '../diagnostics';
 import { errorMessage } from '../errors';
 import * as Telemetry from '../telemetry';
@@ -44,6 +45,7 @@ type UseConnectionQualityParams = {
   remoteStreamRef: RefObject<RemoteStreamLike | null>;
   updateStatus: (message: string, severity?: 'info' | 'success' | 'warning' | 'error') => void;
   onQualitySample?: (quality: ConnectionQuality) => void;
+  onStatsSample?: (metrics: CallQualityMetrics) => void;
 };
 
 function areConnectionQualitiesEqual(left: ConnectionQuality, right: ConnectionQuality): boolean {
@@ -73,6 +75,32 @@ function selectedCandidatePairFromReports(
   return collectCallStats(candidatePairReport).candidatePair;
 }
 
+function roundTripTimeMs(
+  sample: { rttMs?: number },
+  candidatePair: { currentRoundTripTime?: unknown } | null,
+): number | undefined {
+  if (typeof sample.rttMs === 'number') return sample.rttMs;
+  if (typeof candidatePair?.currentRoundTripTime !== 'number') return undefined;
+  return candidatePair.currentRoundTripTime * 1000;
+}
+
+function reportSelectedCandidatePair(
+  report: StatsReport,
+  candidatePair: any,
+  noteSelectedCandidatePair: (
+    summary: IceCandidatePairSummary,
+    candidatePair: { id?: unknown; localCandidateId?: unknown; remoteCandidateId?: unknown },
+  ) => void,
+) {
+  if (!candidatePair) return;
+  const getReportStat =
+    typeof report.get === 'function' ? (id: unknown) => report.get?.(id) : () => undefined;
+  noteSelectedCandidatePair(
+    summarizeCandidatePair(candidatePair, getReportStat),
+    candidatePair,
+  );
+}
+
 export default function useConnectionQuality({
   activeCallIdRef,
   activeIceTransportPolicy,
@@ -81,6 +109,7 @@ export default function useConnectionQuality({
   remoteStreamRef,
   updateStatus,
   onQualitySample,
+  onStatsSample,
 }: UseConnectionQualityParams) {
   const [connectionQuality, setConnectionQuality] = useState(NO_LINK_CONNECTION_QUALITY);
   const [selectedCandidatePair, setSelectedCandidatePair] = useState(
@@ -163,7 +192,6 @@ export default function useConnectionQuality({
 
         const callStats = collectCallStats(report);
         const {
-          rttMs,
           totalPacketsLost,
           totalPacketsReceived,
           totalBytesReceived,
@@ -173,15 +201,8 @@ export default function useConnectionQuality({
           candidatePairReport,
           callStats,
         );
-
-        if (succeededCandidatePair) {
-          const getReportStat =
-            typeof report.get === 'function' ? (id: unknown) => report.get?.(id) : () => undefined;
-          noteSelectedCandidatePair(
-            summarizeCandidatePair(succeededCandidatePair, getReportStat),
-            succeededCandidatePair,
-          );
-        }
+        const rttMs = roundTripTimeMs(callStats, succeededCandidatePair);
+        reportSelectedCandidatePair(report, succeededCandidatePair, noteSelectedCandidatePair);
 
         const sampleTimestampMs = Date.now();
         const bitrateKbps = deriveBitrateKbps(connectionStatsRef.current, {
@@ -199,6 +220,12 @@ export default function useConnectionQuality({
           packetLossRatio,
           bitrateKbps,
         });
+        const metrics = toCallQualityMetrics(
+          { ...callStats, rttMs },
+          packetLossRatio,
+          bitrateKbps,
+        );
+        if (metrics) onStatsSample?.(metrics);
         qualitySmootherRef.current = smoothConnectionQuality(
           qualitySmootherRef.current,
           sampledQuality,
@@ -209,8 +236,8 @@ export default function useConnectionQuality({
           areConnectionQualitiesEqual(current, nextQuality) ? current : nextQuality,
         );
 
-        if (shouldWarnPoorConnection({ bars: nextQuality.bars, packetLossRatio })) {
-          updateStatus('Poor connection — high packet loss detected', 'error');
+        if (shouldWarnPoorConnection({ bars: nextQuality.bars })) {
+          updateStatus('Poor connection — call quality is degraded', 'warning');
         }
       } catch (error) {
         logWarn('[CallFlow] Failed to read connection stats', {
@@ -242,7 +269,15 @@ export default function useConnectionQuality({
       stopPolling();
       subscription?.remove?.();
     };
-  }, [isInCall, noteSelectedCandidatePair, onQualitySample, peerConnectionRef, remoteStreamRef, updateStatus]);
+  }, [
+    isInCall,
+    noteSelectedCandidatePair,
+    onQualitySample,
+    onStatsSample,
+    peerConnectionRef,
+    remoteStreamRef,
+    updateStatus,
+  ]);
 
   return {
     connectionQuality,

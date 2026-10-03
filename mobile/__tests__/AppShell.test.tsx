@@ -16,6 +16,13 @@ jest.mock('../src/appLogger', () => ({
 
 jest.mock('../src/observability', () => ({ getDegradations: jest.fn(() => []) }));
 
+const mockProfileNames: Record<string, string> = {};
+jest.mock('../src/profile/ProfileContext', () => ({
+  usePeerProfile: (userId: string) => ({
+    userId, name: mockProfileNames[userId] || userId, displayName: mockProfileNames[userId],
+  }),
+}));
+
 jest.mock('../src/hooks/useCallFlow', () => ({
   __esModule: true,
   default: jest.fn(),
@@ -118,6 +125,10 @@ function mockPrimer(isPrimerVisible: boolean) {
 }
 const getDegradationsMock = ((getDegradations) as jest.Mock);
 
+beforeEach(() => {
+  for (const id of Object.keys(mockProfileNames)) delete mockProfileNames[id];
+});
+
 function makeCallFlow(overrides = {}) {
   return {
     isLoadingIdentity: false,
@@ -155,11 +166,8 @@ function CallProbe() {
   return null;
 }
 
-async function renderShell() {
-  let tree: any;
-  // Async act so the persisted-settings load resolves before assertions.
-  await act(async () => {
-    tree = renderer.create(
+function shellElement() {
+  return (
       <SafeAreaProvider
         initialMetrics={{
           frame: { x: 0, y: 0, width: 320, height: 640 },
@@ -171,8 +179,15 @@ async function renderShell() {
             <AppShell />
           </ChatProvider>
         </CallProvider>
-      </SafeAreaProvider>,
-    );
+      </SafeAreaProvider>
+  );
+}
+
+async function renderShell() {
+  let tree: any;
+  // Async act so the persisted-settings load resolves before assertions.
+  await act(async () => {
+    tree = renderer.create(shellElement());
   });
   return tree;
 }
@@ -192,6 +207,56 @@ describe('AppShell screen routing', () => {
     jest.clearAllMocks();
     callRef.current = null;
   });
+
+  test.each(['user-alice', 'user-bob'])('resolves active and minimized labels without changing raw IDs as %s', async userId => {
+    const remoteId = userId === 'user-alice' ? 'user-bob' : 'user-alice';
+    mockProfileNames[remoteId] = '  Alex Taylor  ';
+    useCallFlowMock.mockReturnValue(makeCallFlow({
+      userId, callPhase: CALL_STATES.IN_CALL, isInCall: true,
+      activeCall: { callId: 'call-identity', callerId: 'user-alice', calleeId: 'user-bob' },
+    }));
+    const tree = await renderShell();
+    const screen = tree.root.findByType(require('../src/components/CallScreen').default);
+    expect(screen.props.participantId).toBe(remoteId);
+    expect(screen.props.participantLabel).toBe('Call with Alex Taylor');
+    expect(callRef.current.participantLabel).toBe(`Call with ${remoteId}`);
+
+    act(() => callRef.current.minimizeCall());
+    for (const component of [
+      require('../src/components/InCallBanner').default,
+      require('../src/components/FloatingCallBubble').default,
+    ]) {
+      const surface = tree.root.findByType(component);
+      expect(surface.props.participantId).toBe(remoteId);
+      expect(surface.props.participantLabel).toBe('Call with Alex Taylor');
+    }
+    act(() => tree.unmount());
+  });
+
+  test('preserves raw fallback labels without a profile name', async () => {
+    useCallFlowMock.mockReturnValue(makeCallFlow({
+      callPhase: CALL_STATES.IN_CALL, isInCall: true,
+      activeCall: { callId: 'call-identity', callerId: 'user-alice', calleeId: 'user-bob' },
+    }));
+    const tree = await renderShell();
+    const screen = tree.root.findByType(require('../src/components/CallScreen').default);
+    expect(screen.props.participantId).toBe('user-bob');
+    expect(screen.props.participantLabel).toBe('Call with user-bob');
+    act(() => tree.unmount());
+  });
+
+  test.each([null, { callerId: 'user-alice' }, { calleeId: 'user-bob' }])(
+    'keeps partial active-call fixtures on the existing generic fallback: %j', async activeCall => {
+      useCallFlowMock.mockReturnValue(makeCallFlow({
+        callPhase: CALL_STATES.IN_CALL, isInCall: true, activeCall,
+      }));
+      const tree = await renderShell();
+      const screen = tree.root.findByType(require('../src/components/CallScreen').default);
+      expect(screen.props.participantId).toBeNull();
+      expect(screen.props.participantLabel).toBeNull();
+      act(() => tree.unmount());
+    },
+  );
 
   test('renders nothing while the identity is loading', async () => {
     useCallFlowMock.mockReturnValue(makeCallFlow({ isLoadingIdentity: true, isRegistered: false }));
@@ -445,6 +510,52 @@ describe('AppShell accessibility and error states', () => {
     expect(announce).toHaveBeenCalledWith('Incoming call from user-alice');
   });
 
+  test.each([
+    { callPhase: CALL_STATES.INCOMING_RINGING, incomingCall: { callerId: 'user-bob' }, message: 'Incoming call from Bob' },
+    { callPhase: CALL_STATES.OUTGOING_RINGING, calleeId: 'user-bob', message: 'Calling Bob' },
+  ])('announces resolved names for $callPhase', async ({ message, ...flow }) => {
+    mockProfileNames['user-bob'] = 'Bob';
+    useCallFlowMock.mockReturnValue(makeCallFlow(flow));
+    const tree = await renderShell();
+    expect(announce).toHaveBeenCalledWith(message);
+    act(() => tree.unmount());
+  });
+
+  test('does not repeat a transition when the profile loads in the same phase', async () => {
+    useCallFlowMock.mockReturnValue(makeCallFlow({
+      callPhase: CALL_STATES.OUTGOING_RINGING, calleeId: 'user-bob',
+    }));
+    const tree = await renderShell();
+    expect(announce).toHaveBeenCalledWith('Calling user-bob');
+    announce.mockClear();
+    mockProfileNames['user-bob'] = 'Bob';
+    await act(async () => tree.update(shellElement()));
+    expect(announce).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  test.each([false, true])('refreshes live identity labels without reannouncing a connected call (minimized=%s)', async minimized => {
+    useCallFlowMock.mockReturnValue(makeCallFlow({
+      callPhase: CALL_STATES.IN_CALL, isInCall: true,
+      activeCall: { callId: 'call-identity', callerId: 'user-alice', calleeId: 'user-bob' },
+    }));
+    const tree = await renderShell();
+    if (minimized) act(() => callRef.current.minimizeCall());
+    announce.mockClear();
+    mockProfileNames['user-bob'] = 'Bob';
+    await act(async () => tree.update(shellElement()));
+    const components = minimized
+      ? [require('../src/components/InCallBanner').default, require('../src/components/FloatingCallBubble').default]
+      : [require('../src/components/CallScreen').default];
+    for (const component of components) {
+      const surface = tree.root.findByType(component);
+      expect(surface.props.participantId).toBe('user-bob');
+      expect(surface.props.participantLabel).toBe('Call with Bob');
+    }
+    expect(announce).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
   test('announces a connected call', async () => {
     useCallFlowMock.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true }));
     await renderShell();
@@ -560,6 +671,17 @@ describe('AppShell accessibility and error states', () => {
         ),
       );
     expect(texts).toContain('In a call with bob on another device');
+  });
+
+  test('resolves the peer name on the other-device banner', async () => {
+    mockProfileNames.bob = 'Bob Taylor';
+    useCallFlowMock.mockReturnValue(makeCallFlow({
+      callElsewhere: { callId: 'call-far', peerId: 'bob', status: 'accepted' },
+    }));
+    const tree = await renderShell();
+    const texts = tree.root.findAll((node: any) => node.props.children === 'In a call with Bob Taylor on another device');
+    expect(texts.length).toBeGreaterThan(0);
+    act(() => tree.unmount());
   });
 
   test('does not repeat the other device when this device is the one in the call', async () => {

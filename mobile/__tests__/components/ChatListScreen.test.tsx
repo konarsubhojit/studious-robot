@@ -1,5 +1,7 @@
 import React from 'react';
+import { installRenderCleanup } from '../../testUtils/renderCleanup';
 import renderer, { act } from 'react-test-renderer';
+installRenderCleanup();
 import ChatListScreen from '../../src/components/ChatListScreen';
 import SwipeableRow from '../../src/components/SwipeableRow';
 import { fontScaleCaps, sizes } from '../../src/theme';

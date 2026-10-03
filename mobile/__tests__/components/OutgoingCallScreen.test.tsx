@@ -1,5 +1,7 @@
 import React from 'react';
+import { installRenderCleanup } from '../../testUtils/renderCleanup';
 import renderer, { act } from 'react-test-renderer';
+installRenderCleanup();
 import OutgoingCallScreen from '../../src/components/OutgoingCallScreen';
 
 jest.mock(

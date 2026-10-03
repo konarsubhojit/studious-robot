@@ -9,6 +9,8 @@ import type { ThemeColors } from '../theme';
 export type InCallBannerProps = {
   /** e.g. "Call with bob"; falls back to a generic label when the remote party can't be determined yet. */
   participantLabel?: string | null;
+  /** Raw remote user ID for profile/avatar lookup. */
+  participantId?: string | null;
   elapsedCallSeconds?: number;
   onExpand: () => void;
   isMuted?: boolean;
@@ -34,6 +36,7 @@ export type InCallBannerProps = {
  */
 export default function InCallBanner({
   participantLabel = null,
+  participantId = null,
   elapsedCallSeconds = 0,
   onExpand,
   isMuted = false,
@@ -49,7 +52,7 @@ export default function InCallBanner({
       accessibilityLabel={`Return to call${participantLabel ? `: ${participantLabel}` : ''}`}
       testID="in-call-banner"
       style={({ pressed }) => [styles.banner, pressed && styles.pressed]}>
-      <Avatar id={participantLabel || ''} size="xs" />
+      <Avatar id={participantId || ''} size="xs" />
       <Text style={styles.text} numberOfLines={1}>
         {participantLabel || 'Call in progress'}
       </Text>

@@ -5,6 +5,7 @@ import AppShell from './src/AppShell';
 import { CallProvider } from './src/call/CallProvider';
 import { ChatProvider } from './src/chat/ChatProvider';
 import ThemeProvider from './src/ThemeProvider';
+import ProfileProvider from './src/profile/ProfileProvider';
 
 /**
  * Composition root: providers only.
@@ -28,9 +29,11 @@ export default function App() {
       <SafeAreaProvider>
         <ThemeProvider>
           <CallProvider>
-            <ChatProvider>
-              <AppShell />
-            </ChatProvider>
+            <ProfileProvider>
+              <ChatProvider>
+                <AppShell />
+              </ChatProvider>
+            </ProfileProvider>
           </CallProvider>
         </ThemeProvider>
       </SafeAreaProvider>

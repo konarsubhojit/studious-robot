@@ -1,5 +1,7 @@
 import React from 'react';
+import { installRenderCleanup } from '../../testUtils/renderCleanup';
 import renderer, { act } from 'react-test-renderer';
+installRenderCleanup();
 import SettingsScreen from '../../src/components/SettingsScreen';
 import ThemeContext, { buildTheme } from '../../src/ThemeContext';
 const originalCreate = renderer.create;
@@ -27,6 +29,7 @@ const baseProps: any = {
   userId: 'alice',
   signalingUrl: 'https://signal.example.com',
   onSaveSignalingUrl: jest.fn(),
+  onSaveDisplayName: jest.fn().mockResolvedValue('Alice Example'),
   onSignOut: jest.fn(),
   onClose: jest.fn(),
   status: { message: '', severity: 'info' },
@@ -112,6 +115,51 @@ describe('SettingsScreen', () => {
     pressByTestID(tree, 'settings-signaling-row');
     const input = findByTestID(tree, 'settings-signaling-input')[0];
     expect(input.props.value).toBe('https://signal.example.com');
+  });
+
+  test('saves a mutable display name and closes the editor', async () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(<SettingsScreen {...baseProps} />);
+    });
+
+    pressByTestID(tree, 'settings-display-name-row');
+    act(() => {
+      findByTestID(tree, 'settings-display-name-input')[0].props.onChangeText('Alice Example');
+    });
+    await act(async () => {
+      tree.root
+        .findAllByType('AppButton')
+        .find((button: any) => button.props.testID === 'settings-save-display-name')
+        .props.onPress();
+    });
+
+    expect(baseProps.onSaveDisplayName).toHaveBeenCalledWith('Alice Example');
+    expect(findByTestID(tree, 'settings-display-name-input')).toHaveLength(0);
+  });
+
+  test('shows server validation errors inline and keeps the editor open', async () => {
+    const onSaveDisplayName = jest
+      .fn()
+      .mockRejectedValue(new Error('displayName must not match another user\'s username'));
+    let tree: any;
+    act(() => {
+      tree = renderer.create(<SettingsScreen {...baseProps} onSaveDisplayName={onSaveDisplayName} />);
+    });
+    pressByTestID(tree, 'settings-display-name-row');
+    act(() => {
+      findByTestID(tree, 'settings-display-name-input')[0].props.onChangeText('Bob');
+    });
+    await act(async () => {
+      tree.root
+        .findAllByType('AppButton')
+        .find((button: any) => button.props.testID === 'settings-save-display-name')
+        .props.onPress();
+    });
+
+    expect(findByTestID(tree, 'settings-display-name-error')[0].props.children)
+      .toBe('displayName must not match another user\'s username');
+    expect(findByTestID(tree, 'settings-display-name-input').length).toBeGreaterThan(0);
   });
 
   test('Save server is disabled until the URL changes, and commits the trimmed value', () => {

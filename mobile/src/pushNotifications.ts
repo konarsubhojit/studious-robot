@@ -1,5 +1,5 @@
 import { Linking, Platform } from 'react-native';
-import { API_ROUTES, describeMessagePreview } from '../../shared';
+import { API_ROUTES, describeMessagePreview, resolveDisplayName } from '../../shared';
 import { getApp } from '@react-native-firebase/app';
 import {
   flushDurableLogs,
@@ -431,17 +431,19 @@ export async function registerForPushNotifications({ sessionId, signalingUrl }: 
 /**
  * Parse the incoming-call payload from an FCM/APNs data message.
  */
-export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): { callId: string; callerId: string | null; deepLink: string; mediaType: 'audio' | 'video'; } | null {
+export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): { callId: string; callerId: string | null; callerDisplayName?: string; deepLink: string; mediaType: 'audio' | 'video'; } | null {
   const data = remoteMessage?.data ?? {};
   const callId = typeof data.callId === 'string' ? data.callId.trim() : '';
   if (!callId) return null;
 
   const parsedCallerId = typeof data.callerId === 'string' ? data.callerId.trim() : '';
+  const callerDisplayName = typeof data.callerDisplayName === 'string' ? data.callerDisplayName.trim() : '';
   const parsedDeepLink = typeof data.deepLink === 'string' ? data.deepLink.trim() : '';
 
   return {
     callId,
     callerId: parsedCallerId || null,
+    ...(callerDisplayName ? { callerDisplayName } : {}),
     mediaType: data.mediaType === 'audio' ? 'audio' : 'video',
     deepLink: parsedDeepLink || `wetalk://call/${callId}`,
   };
@@ -469,7 +471,7 @@ export function _extractMessageFromMessage(remoteMessage: { data?: Record<string
     messageId,
     conversationId,
     senderId: senderId || null,
-    title: title || senderId || 'New message',
+    title: resolveDisplayName(senderId || 'New message', title),
     body: body || 'Sent you a message',
     deepLink: deepLink || `wetalk://chat/${conversationId}`,
   };
@@ -486,7 +488,7 @@ export function formatMessageNotificationPreview(message: {
   }
   if (mode === 'sender') {
     return {
-      title: message.senderId || message.title || 'New message',
+      title: resolveDisplayName(message.senderId || 'New message', message.title),
       body: 'Sent you a message',
     };
   }
@@ -523,7 +525,7 @@ function normalizeMessageNotificationPayload(message: {
     messageId,
     conversationId,
     senderId: senderId || null,
-    title: title || senderId || 'New message',
+    title: resolveDisplayName(senderId || 'New message', title),
     body: body || 'Sent you a message',
     deepLink: deepLink || `wetalk://chat/${conversationId}`,
   };
@@ -866,6 +868,7 @@ export async function handleBackgroundPushMessage(remoteMessage: { data?: Record
   const displayResult = await displayCallKeepIncomingCall({
     callId: incoming.callId,
     callerId: incoming.callerId,
+    ...(incoming.callerDisplayName ? { callerDisplayName: incoming.callerDisplayName } : {}),
     hasVideo: incoming.mediaType !== 'audio',
   }).catch(error => ({
     shown: false,
@@ -1032,6 +1035,7 @@ export async function handleForegroundPushMessage(remoteMessage: { data?: Record
   await displayCallKeepIncomingCall({
     callId: incoming.callId,
     callerId: incoming.callerId,
+    ...(incoming.callerDisplayName ? { callerDisplayName: incoming.callerDisplayName } : {}),
     hasVideo: incoming.mediaType !== 'audio',
   }).catch(error => {
     logWarn('[Push] CallKeep displayIncomingCall failed', { message: errorMessage(error) });

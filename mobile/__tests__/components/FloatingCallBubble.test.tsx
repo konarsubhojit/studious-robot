@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import FloatingCallBubble from '../../src/components/FloatingCallBubble';
+import { Avatar } from '../../src/components/primitives';
 import { triggerHaptic } from '../../src/haptics';
 import { fontScaleCaps } from '../../src/theme';
 
@@ -114,6 +115,19 @@ function refresh(tree: any, props?: any) {
 }
 
 describe('FloatingCallBubble', () => {
+  test('keeps the raw avatar ID separate from its display label', () => {
+    const tree = render({ participantId: 'user-bob', participantLabel: 'Call with Bob' });
+    expect(tree.root.findByType(Avatar).props.id).toBe('user-bob');
+    expect(tree.root.findAll((node: any) => node.props.children === 'Call with Bob').length).toBeGreaterThan(0);
+    act(() => tree.unmount());
+  });
+
+  test('never looks up a profile using a formatted label when the ID is absent', () => {
+    const tree = render({ participantLabel: 'Call with Bob' });
+    expect(tree.root.findByType(Avatar).props.id).toBe('');
+    act(() => tree.unmount());
+  });
+
   beforeEach(() => {
     (triggerHaptic as jest.Mock).mockClear();
     mockPanCallbacks.onStart = null;

@@ -11,6 +11,7 @@ import {
 } from '../callLog';
 import { formatCallDuration } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
+import { usePeerProfile } from '../profile/ProfileContext';
 import { spacing, typography } from '../theme';
 import { Avatar, Icon, IconAction, ListItem, SectionHeader, Switch } from './primitives';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
@@ -139,12 +140,13 @@ function PeerActions({
   styles,
 }: Pick<PeerProfileScreenProps, 'peerId' | 'isBlocked' | 'onMessage' | 'onAudioCall' |
   'onVideoCall'> & { styles: ReturnType<typeof createStyles> }) {
+  const { name } = usePeerProfile(peerId);
   return (
     <View style={styles.actions}>
       <PrimaryAction
         icon="tabChats"
         label="Message"
-        accessibilityLabel={`Message ${peerId}`}
+        accessibilityLabel={`Message ${name}`}
         accessibilityHint="Opens the conversation"
         onPress={onMessage ? () => onMessage(peerId) : undefined}
         disabled={isBlocked || !onMessage}
@@ -153,7 +155,7 @@ function PeerActions({
       <PrimaryAction
         icon="chatAudioCall"
         label="Audio"
-        accessibilityLabel={`Audio call ${peerId}`}
+        accessibilityLabel={`Audio call ${name}`}
         accessibilityHint="Starts an audio call"
         onPress={onAudioCall ? () => onAudioCall(peerId) : undefined}
         disabled={isBlocked || !onAudioCall}
@@ -162,7 +164,7 @@ function PeerActions({
       <PrimaryAction
         icon="chatVideoCall"
         label="Video"
-        accessibilityLabel={`Video call ${peerId}`}
+        accessibilityLabel={`Video call ${name}`}
         accessibilityHint="Starts a video call"
         onPress={onVideoCall ? () => onVideoCall(peerId) : undefined}
         disabled={isBlocked || !onVideoCall}
@@ -183,10 +185,11 @@ function PeerRecentCalls({
   sections: ReturnType<typeof groupCallsByDay>;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { name } = usePeerProfile(peerId);
   if (recentCalls.length === 0) {
     return (
       <Text style={styles.empty} testID="peer-profile-no-calls">
-        No calls with {peerId} yet
+        No calls with {name} yet
       </Text>
     );
   }
@@ -211,7 +214,7 @@ function PeerRecentCalls({
                 // Read-only: the primary actions above are how a call starts
                 // here, so a history row can never dial by surprise.
                 accessibilityRole="none"
-                accessibilityLabel={describeCallEntryForA11y(entry, durationLabel)}
+                accessibilityLabel={describeCallEntryForA11y(entry, durationLabel, name)}
                 trailing={
                   <Icon name={callMediaIcon(entry)} size={16} color={styles.rowGlyph.color} />
                 }
@@ -263,6 +266,7 @@ function PeerProfileScreen({
 }: PeerProfileScreenProps) {
   const styles = useThemedStyles(createStyles);
   const [isUpdatingBlock, setIsUpdatingBlock] = useState(false);
+  const { name } = usePeerProfile(peerId);
 
   const recentCalls = useMemo(
     () =>
@@ -319,7 +323,11 @@ function PeerProfileScreen({
           testID="peer-profile-avatar"
         />
         <Text style={styles.name} accessibilityRole="header" numberOfLines={1}>
-          {peerId}
+          {name}
+        </Text>
+        <Text style={styles.identityHint}>Display name · cosmetic and changeable</Text>
+        <Text style={styles.userId} testID="peer-profile-user-id">
+          {`Username (stable identity): ${peerId}`}
         </Text>
         <Text style={styles.presence} testID="peer-profile-presence">
           {presenceLabel}
@@ -353,11 +361,11 @@ function PeerProfileScreen({
       <SectionHeader title="Privacy" icon="settingsPrivacy" variant="section" />
       <Switch
         label="Mute notifications"
-        hint={`Messages from ${peerId} arrive silently. Calls still ring.`}
+        hint={`Messages from ${name} arrive silently. Calls still ring.`}
         value={isMuted}
         onValueChange={handleToggleMute}
         accessibilityLabel={
-          isMuted ? `Unmute notifications from ${peerId}` : `Mute notifications from ${peerId}`
+          isMuted ? `Unmute notifications from ${name}` : `Mute notifications from ${name}`
         }
         testID="peer-profile-mute"
       />
@@ -365,8 +373,8 @@ function PeerProfileScreen({
         title={isBlocked ? 'Unblock' : 'Block'}
         subtitle={
           isBlocked
-            ? `Lets ${peerId} call and message you again`
-            : `Stops ${peerId} from calling or messaging you`
+            ? `Lets ${name} call and message you again`
+            : `Stops ${name} from calling or messaging you`
         }
         icon="block"
         // An applied block is a state, not a destructive action to repeat; the
@@ -374,7 +382,7 @@ function PeerProfileScreen({
         destructive={!isBlocked}
         disabled={isUpdatingBlock}
         onPress={handleBlockPress}
-        accessibilityLabel={isBlocked ? `Unblock ${peerId}` : `Block ${peerId}`}
+        accessibilityLabel={isBlocked ? `Unblock ${name}` : `Block ${name}`}
         testID="peer-profile-block"
       />
     </ScrollView>
@@ -403,6 +411,15 @@ const createStyles = (colors: ThemeColors) =>
     name: {
       ...typography.title,
       color: colors.onSurface,
+    },
+    identityHint: {
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
+    },
+    userId: {
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
+      textAlign: 'center',
     },
     presence: {
       ...typography.caption,

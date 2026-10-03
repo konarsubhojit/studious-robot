@@ -1,5 +1,7 @@
 import React from 'react';
+import { installRenderCleanup } from '../../testUtils/renderCleanup';
 import renderer, { act } from 'react-test-renderer';
+installRenderCleanup();
 import SearchScreen, { SEARCH_DEBOUNCE_MS } from '../../src/components/SearchScreen';
 import { describeOffline, OFFLINE_CONSEQUENCE } from '../../src/connectivityUx';
 

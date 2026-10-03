@@ -7,6 +7,7 @@
  * assertable without a network, a provider or a device.
  */
 
+import { resolveDisplayName } from '../../../shared/index.ts';
 import type {
   CallCancelledPushData,
   CallPushData,
@@ -59,15 +60,17 @@ export function resolveCallTtlSeconds(ringTimeoutAt: string | null | undefined):
  * Describe an incoming call as a transport-neutral push envelope.
  */
 export function buildCallEnvelope(callData: CallPushData): PushEnvelope {
+  const callerDisplayName = resolveDisplayName(callData.callerId, callData.callerDisplayName);
   return {
     type: 'call.incoming',
     ttlSeconds: resolveCallTtlSeconds(callData.ringTimeoutAt),
     title: 'Incoming call',
-    body: `Call from ${callData.callerId}`,
+    body: `Call from ${callerDisplayName}`,
     deepLink: `wetalk://call/${callData.callId}`,
     data: {
       callId: callData.callId,
       callerId: callData.callerId,
+      callerDisplayName,
       mediaType: callData.mediaType ?? 'video',
     },
   };
@@ -91,7 +94,7 @@ export function buildMessageEnvelope(messageData: MessagePushData): PushEnvelope
       : preview;
   return {
     type: 'message.received',
-    title: messageData.senderId,
+    title: resolveDisplayName(messageData.senderId, messageData.senderDisplayName),
     body: truncated || 'Sent you a message',
     deepLink: `wetalk://chat/${messageData.conversationId}`,
     data: {

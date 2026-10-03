@@ -32,7 +32,7 @@ const MESSAGE = {
 };
 
 /** Keys the incoming-call push carries; renaming one is a breaking change. */
-const CALL_DATA_KEYS = ['callId', 'callerId', 'mediaType', 'type', 'deepLink', 'title', 'body'];
+const CALL_DATA_KEYS = ['callId', 'callerId', 'callerDisplayName', 'mediaType', 'type', 'deepLink', 'title', 'body'];
 
 /** Keys the message push carries; the client renders the notification itself. */
 const MESSAGE_DATA_KEYS = [
@@ -103,6 +103,7 @@ test('both transports send the same data block for an incoming call', () => {
   const expected = {
     callId: 'call-abc',
     callerId: 'alice',
+    callerDisplayName: 'alice',
     mediaType: 'video',
     type: 'call.incoming',
     deepLink: 'wetalk://call/call-abc',
@@ -112,6 +113,24 @@ test('both transports send the same data block for an incoming call', () => {
   assert.deepEqual(directDataBlock(), expected);
   assert.deepEqual(hubDataBlock(), expected);
   assert.deepEqual(Object.keys(directDataBlock()).sort(), [...CALL_DATA_KEYS].sort());
+});
+
+test('both transports carry resolved call names and message titles without changing ids', () => {
+  const call = { ...CALL, callerDisplayName: '  Alice Example  ' };
+  const directCall = JSON.parse(push._buildFcmPayload('device-token-123', call)).message.data;
+  const hubCall = push._buildNotificationHubAndroidPayload(call).message.android.data;
+  assert.deepEqual(directCall, hubCall);
+  assert.equal(directCall.callerDisplayName, 'Alice Example');
+  assert.equal(directCall.callerId, 'alice');
+  assert.equal(directCall.body, 'Call from Alice Example');
+
+  const message = { ...MESSAGE, senderDisplayName: '  Alice Example  ', preview: null };
+  const directMessage = JSON.parse(push._buildFcmMessagePayload('device-token-123', message)).message.data;
+  const hubMessage = push._buildNotificationHubAndroidMessagePayload(message).message.android.data;
+  assert.deepEqual(directMessage, hubMessage);
+  assert.equal(directMessage.title, 'Alice Example');
+  assert.equal(directMessage.senderId, 'alice');
+  assert.equal(directMessage.body, 'Sent you a message');
 });
 
 test('every data value is a string, as FCM v1 requires', () => {

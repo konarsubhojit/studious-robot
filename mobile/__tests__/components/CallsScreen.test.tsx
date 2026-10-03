@@ -1,5 +1,7 @@
 import React from 'react';
+import { installRenderCleanup } from '../../testUtils/renderCleanup';
 import renderer, { act } from 'react-test-renderer';
+installRenderCleanup();
 import CallsScreen from '../../src/components/CallsScreen';
 import { describeOffline, OFFLINE_CONSEQUENCE } from '../../src/connectivityUx';
 const mountedTrees: renderer.ReactTestRenderer[] = [];

@@ -31,6 +31,7 @@ import CallTimelineRow from '../CallTimelineRow';
 import IconButton from '../IconButton';
 import MediaViewer from '../MediaViewer';
 import { Avatar, Banner, Chip, FAB, Icon, Skeleton } from '../primitives';
+import { usePeerProfile } from '../../profile/ProfileContext';
 import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../../connectivityUx';
 import { announceForAccessibility, describeMessageDelivery } from '../../accessibilityAnnouncer';
 import SwipeableRow from '../SwipeableRow';
@@ -1528,6 +1529,7 @@ function ConversationHeader({
   styles: ChatStyles;
 }) {
   const presenceLabel = peerPresence ? (peerPresence.online ? 'Online' : 'Offline') : null;
+  const { name } = usePeerProfile(peerId);
   const presenceColor = peerPresence?.online ? colors.success : colors.textMuted;
   return (
     <View style={styles.header}>
@@ -1546,7 +1548,7 @@ function ConversationHeader({
         onPress={onOpenProfile}
         disabled={!onOpenProfile}
         accessibilityRole={onOpenProfile ? 'button' : undefined}
-        accessibilityLabel={onOpenProfile ? `${peerId} profile` : undefined}
+        accessibilityLabel={onOpenProfile ? `${name} profile` : undefined}
         accessibilityHint={
           onOpenProfile ? 'Opens contact details, calls and privacy options' : undefined
         }
@@ -1554,7 +1556,7 @@ function ConversationHeader({
         <Avatar id={peerId} size="sm" online={peerPresence?.online} />
         <View style={styles.headerTextColumn}>
           <Text style={styles.headerTitle} accessibilityRole="header" numberOfLines={1}>
-            {peerId}
+            {name}
           </Text>
           {isPeerTyping ? (
             <Text style={styles.headerSubtitle} testID="chat-typing-indicator">
@@ -1580,7 +1582,7 @@ function ConversationHeader({
           size={40}
           disabled={isStartingCall}
           loading={isStartingCall}
-          accessibilityLabel={`Call ${peerId}`}
+          accessibilityLabel={`Call ${name}`}
           testID="chat-call-audio"
         />
       ) : null}
@@ -1591,7 +1593,7 @@ function ConversationHeader({
           size={40}
           disabled={isStartingCall}
           loading={isStartingCall}
-          accessibilityLabel={`Video call ${peerId}`}
+          accessibilityLabel={`Video call ${name}`}
           testID="chat-call-video"
         />
       ) : null}
@@ -1774,6 +1776,7 @@ function ConversationComposer({
   styles: ChatStyles;
 }) {
   const hasDraft = Boolean(draft.trim());
+  const { name } = usePeerProfile(peerId);
   return (
     <View style={[styles.composer, isComposerFocused && styles.composerFocused]}>
       <IconButton
@@ -1799,7 +1802,7 @@ function ConversationComposer({
         placeholderTextColor={colors.textSecondary}
         style={[styles.composerInput, isComposerFocused && styles.composerInputFocused]}
         multiline
-        accessibilityLabel={`Message to ${peerId}`}
+        accessibilityLabel={`Message to ${name}`}
         testID="chat-message-input"
       />
       {!hasDraft ? (
@@ -1834,7 +1837,7 @@ function ConversationComposer({
         disabled={!hasDraft || isSending}
         size={44}
         accessibilityLabel="Send message"
-        accessibilityHint={`Sends the message to ${peerId}`}
+        accessibilityHint={`Sends the message to ${name}`}
         testID="chat-message-send"
       />
     </View>

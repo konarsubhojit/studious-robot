@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallStage from '../../src/components/CallStage';
+import { Avatar } from '../../src/components/primitives';
 
 jest.mock(
   '../../src/SafeRTCView',
@@ -38,6 +39,29 @@ function findByTestId(tree: any, testID: string) {
 }
 
 describe('CallStage', () => {
+  test.each([false, true])('uses the raw avatar ID in compact=%s mode', isCompact => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({
+        isAudioOnly: true, isCompact, participantId: 'user-bob', participantLabel: 'Call with Bob',
+      })} />);
+    });
+    expect(tree.root.findByType(Avatar).props.id).toBe('user-bob');
+    expect(tree.root.findAll((node: any) => node.props.children === 'Call with Bob').length).toBeGreaterThan(0);
+    act(() => tree.unmount());
+  });
+
+  test('never uses the label as an avatar ID when participantId is missing', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({
+        isAudioOnly: true, participantLabel: 'Call with Bob',
+      })} />);
+    });
+    expect(tree.root.findByType(Avatar).props.id).toBe('');
+    act(() => tree.unmount());
+  });
+
   test('renders main stream and DraggablePip in normal mode', () => {
     let tree: any;
     act(() => {

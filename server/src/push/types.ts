@@ -53,6 +53,7 @@ export type CallPushData = {
   callId: string;
   mediaType?: 'audio' | 'video';
   callerId: string;
+  callerDisplayName?: string | null;
   ringTimeoutAt?: string | null;
 };
 
@@ -67,6 +68,7 @@ export type MessagePushData = {
   messageId: string;
   conversationId: string;
   senderId: string;
+  senderDisplayName?: string | null;
   preview?: string | null;
 };
 

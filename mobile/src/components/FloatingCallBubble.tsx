@@ -34,6 +34,8 @@ const DISMISS_DURATION_MS = 160;
 
 export type FloatingCallBubbleProps = {
   participantLabel?: string | null;
+  /** Raw remote user ID for profile/avatar lookup. */
+  participantId?: string | null;
   elapsedCallSeconds?: number;
   isMuted?: boolean;
   isScreenSharing?: boolean;
@@ -64,6 +66,7 @@ export type FloatingCallBubbleProps = {
  */
 export default function FloatingCallBubble({
   participantLabel = null,
+  participantId = null,
   elapsedCallSeconds = 0,
   isMuted = false,
   isScreenSharing = false,
@@ -192,7 +195,7 @@ export default function FloatingCallBubble({
           accessibilityRole="button"
           accessibilityLabel="Expand call"
           testID="floating-call-bubble-expand">
-          <Avatar id={participantLabel || ''} size="xs" online />
+          <Avatar id={participantId || ''} size="xs" online />
           <View style={styles.textWrap}>
             {/* Capped, both of them: `BUBBLE_WIDTH`/`BUBBLE_HEIGHT` are not
                 styling, they are the drag maths. The pan worklets clamp

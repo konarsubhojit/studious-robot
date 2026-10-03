@@ -1,5 +1,8 @@
 import React from 'react';
+import { ListItem } from '../../src/components/primitives';
+import { installRenderCleanup } from '../../testUtils/renderCleanup';
 import renderer, { act } from 'react-test-renderer';
+installRenderCleanup();
 import PeoplePickerSheet from '../../src/components/PeoplePickerSheet';
 
 const mountedTrees: renderer.ReactTestRenderer[] = [];
@@ -194,7 +197,8 @@ describe('PeoplePickerSheet', () => {
     });
 
     const labels = tree.root
-      .findAll((n: any) => n.props?.testID === 'people-picker-row' && typeof n.type === 'function')
+      .findAllByType(ListItem)
+      .filter((n: any) => n.props?.testID === 'people-picker-row')
       .map((n: any) => n.props.title);
     expect(labels).toEqual(['user-zoe']);
   });

@@ -57,6 +57,7 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
    *
    * Query params:
    *   - `search`: case-insensitive substring filter on `userId` or `displayName`.
+   *   - `userId`: exact identifier filter for resolving a known peer's profile.
    *   - `limit`:  max number of results (default 50, capped at 100).
    *
    * The authenticated user is excluded from their own directory, as are users
@@ -73,6 +74,11 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
     }
 
     const search = (normaliseOptionalString(req.query?.search) || '').toLowerCase();
+    const targetUserId = normaliseId(req.query?.userId);
+    if (req.query?.userId !== undefined && !targetUserId) {
+      res.status(400).json({ error: 'userId must be a non-empty string' });
+      return;
+    }
     const requestedLimit = Number(req.query?.limit);
     const limit =
       Number.isFinite(requestedLimit) && requestedLimit > 0
@@ -80,7 +86,10 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
         : USER_DIRECTORY_DEFAULT_LIMIT;
 
     const matches = [];
-    for (const candidateId of listKnownUsers(state)) {
+    const candidates = targetUserId
+      ? [targetUserId].filter(id => hasKnownUser(state, id))
+      : listKnownUsers(state);
+    for (const candidateId of candidates) {
       if (candidateId === session.userId) continue;
       if (search && !matchesSearch(state, candidateId, search)) continue;
       // Hide users in either direction of a block relationship. The same

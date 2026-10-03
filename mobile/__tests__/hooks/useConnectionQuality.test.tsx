@@ -60,7 +60,10 @@ function makeStatsReport({
       packetsLost,
       packetsReceived,
       bytesReceived,
+      jitter: 0.015,
+      codecId: 'codec-1',
     },
+    { id: 'codec-1', type: 'codec', mimeType: 'video/VP8' },
   ]);
 }
 
@@ -86,6 +89,7 @@ function setup(overrides: any = {}) {
     peerConnectionRef: { current: { getStats } },
     remoteStreamRef: { current: null },
     updateStatus: jest.fn(),
+    onStatsSample: jest.fn(),
     ...overrides,
   };
   const resultRef: { current: any } = { current: null };
@@ -122,12 +126,26 @@ afterEach(() => {
 
 describe('useConnectionQuality', () => {
   test('polls immediately in foreground and publishes quality plus candidate pair', async () => {
-    const { getStats, resultRef } = setup();
+    const { getStats, params, resultRef } = setup();
 
     await act(async () => {});
 
     expect(getStats).toHaveBeenCalledTimes(1);
-    expect(resultRef.current.connectionQuality).toEqual({ bars: 3, label: 'Strong' });
+    expect(resultRef.current.connectionQuality).toEqual({ bars: 3, label: 'Good' });
+    expect(params.onStatsSample).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+    });
+    await act(async () => {});
+
+    expect(params.onStatsSample).toHaveBeenCalledWith({
+      rttMs: 50,
+      jitterMs: 15,
+      packetLossPercent: 0,
+      bitrateBps: 0,
+      codec: 'VP8',
+    });
     expect(resultRef.current.selectedCandidatePair).toEqual({
       local: 'relay',
       remote: 'srflx',
@@ -163,8 +181,8 @@ describe('useConnectionQuality', () => {
     await act(async () => {});
 
     expect(params.updateStatus).toHaveBeenCalledWith(
-      'Poor connection — high packet loss detected',
-      'error',
+      'Poor connection — call quality is degraded',
+      'warning',
     );
   });
 
@@ -184,7 +202,7 @@ describe('useConnectionQuality', () => {
   test('resets quality and selected pair when the call ends', async () => {
     const { instance, params, resultRef } = setup();
     await act(async () => {});
-    expect(resultRef.current.connectionQuality.label).toBe('Strong');
+    expect(resultRef.current.connectionQuality.label).toBe('Good');
 
     act(() => {
       instance.update(

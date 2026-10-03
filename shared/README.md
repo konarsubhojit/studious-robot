@@ -9,6 +9,7 @@ Single source of truth for everything that crosses the wire between
 | `shared/signaling/events.ts` | Every Socket.IO event name (`CLIENT_EVENTS`, `SERVER_EVENTS`, `TRANSPORT_EVENTS`) |
 | `shared/signaling/schemas.ts` | Payload schema per event + `parseEventPayload()` |
 | `shared/api/routes.ts` | REST paths (`API_ROUTES`) and response schemas |
+| `shared/identity.ts` | `resolveDisplayName(userId, displayName)`: trimmed display name, falling back to the unchanged user ID |
 
 ## Why no `zod`?
 

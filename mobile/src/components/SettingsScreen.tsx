@@ -15,10 +15,12 @@ import { THIRD_PARTY_LICENSES, summarizeLicenses } from '../licenses';
 import { EMPTY_STORAGE_USAGE, formatBytes } from '../storageUsage';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing, touchSlop, typography } from '../theme';
+import { errorMessage } from '../errors';
 import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
 import AppButton from './AppButton';
 import AppearanceSettings from './AppearanceSettings';
 import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch, Toast } from './primitives';
+import { usePeerProfile, useUpdatePeerProfile } from '../profile/ProfileContext';
 import type { StorageUsage } from '../storageUsage';
 import type { ThemeColors } from '../theme';
 import type { ToastTone } from './primitives';
@@ -40,6 +42,8 @@ export type SettingsScreenProps = {
   signalingUrl: string;
   /** Persist a new URL. */
   onSaveSignalingUrl: (url: string) => void;
+  /** Persist a display name and return the server-normalized value. */
+  onSaveDisplayName: (displayName: string) => Promise<string | null>;
   /** Clear the identity and return to registration. */
   onSignOut: () => void;
   /** Active devices for this account, excluding sensitive push/session tokens. */
@@ -117,6 +121,53 @@ export type SettingsScreenProps = {
   onOpenProfile?: (peerId: string) => void;
 };
 
+function RelationshipRow({ peer, blocked, subtitle, onOpenProfile, onRestore, confirm, styles }: {
+  peer: string;
+  blocked?: boolean;
+  subtitle: string;
+  onOpenProfile?: (peerId: string) => void;
+  onRestore?: (peerId: string) => void;
+  confirm: (message: string) => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const { name } = usePeerProfile(peer);
+  const action = blocked ? 'Unblock' : 'Unmute';
+  const handleRestore = () => {
+    onRestore?.(peer);
+    confirm(`${name} ${blocked ? 'unblocked' : 'unmuted'}`);
+  };
+  return (
+    <ListItem
+      title={name}
+      subtitle={subtitle}
+      leading={<Avatar id={peer} size="sm" />}
+      onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
+      accessibilityLabel={`${name}, ${blocked ? 'blocked' : 'muted'}`}
+      accessibilityHint={onOpenProfile ? `Opens ${name}'s profile` : undefined}
+      trailing={onRestore ? blocked ? (
+        <AppButton
+          title={action}
+          onPress={handleRestore}
+          style={styles.inlineButton}
+          accessibilityLabel={`${action} ${name}`}
+          accessibilityHint="Lets them call and message you again"
+          testID="settings-unblock"
+        />
+      ) : (
+        <IconAction
+          icon="unmuteNotifications"
+          accessibilityLabel={`${action} ${name}`}
+          accessibilityHint="Lets their messages notify you again"
+          onPress={handleRestore}
+          size={40}
+          testID="settings-unmute"
+        />
+      ) : null}
+      testID={blocked ? 'settings-blocked-row' : 'settings-muted-row'}
+    />
+  );
+}
+
 function MutedPeopleSettings({
   mutedPeers,
   mutedPeerExpirations = {},
@@ -145,30 +196,14 @@ function MutedPeopleSettings({
     <View testID="settings-muted-people">
       <Text style={styles.groupCaption}>Muted people</Text>
       {mutedPeers.map(peer => (
-        <ListItem
+        <RelationshipRow
           key={peer}
-          title={peer}
+          peer={peer}
           subtitle={describeMutedPeer(peer, mutedPeerExpirations)}
-          leading={<Avatar id={peer} size="sm" />}
-          onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
-          accessibilityLabel={`${peer}, muted`}
-          accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
-          trailing={
-            onUnmutePeer ? (
-              <IconAction
-                icon="unmuteNotifications"
-                accessibilityLabel={`Unmute ${peer}`}
-                accessibilityHint="Lets their messages notify you again"
-                onPress={() => {
-                  onUnmutePeer(peer);
-                  confirm(`${peer} unmuted`);
-                }}
-                size={40}
-                testID="settings-unmute"
-              />
-            ) : null
-          }
-          testID="settings-muted-row"
+          onOpenProfile={onOpenProfile}
+          onRestore={onUnmutePeer}
+          confirm={confirm}
+          styles={styles}
         />
       ))}
     </View>
@@ -317,30 +352,15 @@ function BlockedPeopleSettings({
     <View testID="settings-blocked-people">
       <Text style={styles.groupCaption}>Blocked people</Text>
       {blockedUsers.map(peer => (
-        <ListItem
+        <RelationshipRow
           key={peer}
-          title={peer}
+          peer={peer}
+          blocked
           subtitle="Can't call or message you"
-          leading={<Avatar id={peer} size="sm" />}
-          onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
-          accessibilityLabel={`${peer}, blocked`}
-          accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
-          trailing={
-            onUnblockUser ? (
-              <AppButton
-                title="Unblock"
-                onPress={() => {
-                  onUnblockUser(peer);
-                  confirm(`${peer} unblocked`);
-                }}
-                style={styles.inlineButton}
-                accessibilityLabel={`Unblock ${peer}`}
-                accessibilityHint="Lets them call and message you again"
-                testID="settings-unblock"
-              />
-            ) : null
-          }
-          testID="settings-blocked-row"
+          onOpenProfile={onOpenProfile}
+          onRestore={onUnblockUser}
+          confirm={confirm}
+          styles={styles}
         />
       ))}
     </View>
@@ -574,6 +594,7 @@ function SettingsScreen({
   accountProviderId,
   signalingUrl,
   onSaveSignalingUrl,
+  onSaveDisplayName,
   onSignOut,
   devices = [],
   onRefreshDevices,
@@ -612,9 +633,15 @@ function SettingsScreen({
 }: SettingsScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const { name, displayName } = usePeerProfile(userId);
+  const updatePeerProfile = useUpdatePeerProfile(userId);
 
   const [url, setUrl] = useState(signalingUrl ?? '');
   const [isEditingSignalingUrl, setIsEditingSignalingUrl] = useState(false);
+  const [displayNameDraft, setDisplayNameDraft] = useState('');
+  const [isEditingDisplayName, setIsEditingDisplayName] = useState(false);
+  const [isSavingDisplayName, setIsSavingDisplayName] = useState(false);
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
   const [isShowingLicenses, setIsShowingLicenses] = useState(false);
   // Transient confirmations, per the three-level rule in `Banner.tsx`: an
   // *event* that has already happened is a toast, a *condition* that persists
@@ -654,6 +681,7 @@ function SettingsScreen({
   const activeIceTransportPolicy = normalizeIceTransportPolicy(iceTransportPolicy);
   const trimmedUrl = url.trim();
   const urlDirty = trimmedUrl.length > 0 && trimmedUrl !== (signalingUrl ?? '').trim();
+  const displayNameDirty = displayNameDraft !== (displayName ?? '');
   const accountLine = describeAccount({ email: accountEmail, providerId: accountProviderId });
 
   const openSignalingEditor = () => {
@@ -667,6 +695,27 @@ function SettingsScreen({
     onSaveSignalingUrl(trimmedUrl);
     setIsEditingSignalingUrl(false);
     confirm('Signaling server saved');
+  };
+
+  const openDisplayNameEditor = () => {
+    setDisplayNameDraft(displayName ?? '');
+    setDisplayNameError(null);
+    setIsEditingDisplayName(true);
+  };
+
+  const saveDisplayName = async () => {
+    setIsSavingDisplayName(true);
+    setDisplayNameError(null);
+    try {
+      const savedDisplayName = await onSaveDisplayName(displayNameDraft);
+      updatePeerProfile({ displayName: savedDisplayName });
+      setIsEditingDisplayName(false);
+      confirm('Display name saved');
+    } catch (error) {
+      setDisplayNameError(errorMessage(error) ?? 'Could not save display name');
+    } finally {
+      setIsSavingDisplayName(false);
+    }
   };
 
   return (
@@ -693,7 +742,7 @@ function SettingsScreen({
           <Avatar id={userId} size="lg" />
           <View style={styles.identityText}>
             <Text style={styles.identityName} numberOfLines={1}>
-              {userId || 'Not signed in'}
+              {name || 'Not signed in'}
             </Text>
             <Text style={styles.identityAccount} numberOfLines={2} testID="settings-account">
               {accountLine}
@@ -705,10 +754,20 @@ function SettingsScreen({
         <SectionHeader title="Account" icon="settingsUsername" />
         <ListItem
           title="Username"
-          subtitle="Other people call you by this name. It is bound to your account and can't be changed here."
+          subtitle="Your permanent, claimed identity. It is bound to your account and can't be changed."
           value={userId || 'Not set'}
           icon="settingsUsername"
           testID="settings-username-row"
+        />
+        <ListItem
+          title="Display name"
+          subtitle="A cosmetic name you can change at any time."
+          value={displayName || 'Not set'}
+          icon="settingsUsername"
+          onPress={openDisplayNameEditor}
+          accessibilityLabel="Display name"
+          accessibilityHint="Opens an editor for your cosmetic name"
+          testID="settings-display-name-row"
         />
         <ListItem
           title="Signed in with"
@@ -858,9 +917,49 @@ function SettingsScreen({
         </Text>
       </ScrollView>
 
-      {/* The one editable value on this screen gets the full width and an
-          explicit commit, instead of a list-width input that can be edited by
-          accident. */}
+      <Sheet
+        visible={isEditingDisplayName}
+        onClose={() => setIsEditingDisplayName(false)}
+        title="Display name"
+        testID="settings-display-name-sheet">
+        <Text style={styles.hint}>
+          This cosmetic name can be changed at any time. Your username remains your permanent identity.
+        </Text>
+        <TextInput
+          value={displayNameDraft}
+          onChangeText={value => {
+            setDisplayNameDraft(value);
+            setDisplayNameError(null);
+          }}
+          placeholder="How others will see you"
+          placeholderTextColor={colors.textSecondary}
+          autoCapitalize="words"
+          autoCorrect={false}
+          autoFocus
+          style={styles.input}
+          accessibilityLabel="Display name"
+          accessibilityHint="A cosmetic name that can be changed at any time"
+          testID="settings-display-name-input"
+        />
+        {displayNameError ? (
+          <Text
+            style={styles.fieldError}
+            accessibilityRole="alert"
+            testID="settings-display-name-error">
+            {displayNameError}
+          </Text>
+        ) : null}
+        <AppButton
+          title={isSavingDisplayName ? 'Saving…' : 'Save display name'}
+          onPress={saveDisplayName}
+          disabled={!displayNameDirty || isSavingDisplayName}
+          testID="settings-save-display-name"
+          style={styles.saveButton}
+        />
+      </Sheet>
+
+      {/* The signaling URL gets the full width and an explicit commit, instead
+          of a list-width input that can be edited by accident. */}
       <Sheet
         visible={isEditingSignalingUrl}
         onClose={() => setIsEditingSignalingUrl(false)}
@@ -985,6 +1084,10 @@ const createStyles = (colors: ThemeColors) =>
       ...typography.hint,
       color: colors.textSecondary,
       marginBottom: spacing.sm,
+    },
+    fieldError: {
+      ...typography.caption,
+      color: colors.negative,
     },
     emptyText: {
       ...typography.body,

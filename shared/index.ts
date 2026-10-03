@@ -10,3 +10,4 @@ export * from './signaling/timing.ts';
 export * from './api/routes.ts';
 export * from './messages.ts';
 export * from './time.ts';
+export * from './identity.ts';

@@ -198,6 +198,19 @@ After adding/updating the native SQLite dependency, rebuild Android and run
 Jest uses Node's built-in SQLite to test real SQL and rollback behavior; native
 JSI initialization and on-device performance still require device validation.
 
+## Profile presentation
+
+Identity surfaces use `shared/identity.ts` to show the display name when set,
+otherwise the user ID. Routing, call handles, and actions always retain the
+user ID. Directory caches retain display names and avatar keys, not presence.
+Profile and signed-avatar resolution is scoped to the current account and
+server; avatars use the authorised `/avatar/download` endpoint and fall back
+to initials when unavailable or when image loading fails.
+
+Incoming-call pushes carry `callerDisplayName` so the system call UI can show
+the caller's name even during a cold start. Message previews use the sender's
+display name; generic notification previews still hide identity and content.
+
 ## Run the app
 
 ```bash

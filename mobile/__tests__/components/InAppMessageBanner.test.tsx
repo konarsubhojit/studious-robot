@@ -2,11 +2,28 @@ import React from 'react';
 import { Linking } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import InAppMessageBanner from '../../src/components/InAppMessageBanner';
+import { ProfileDataProvider } from '../../src/profile/ProfileContext';
+import { installRenderCleanup } from '../../testUtils/renderCleanup';
 import {
   dismissInAppMessageNotification,
   enqueueInAppMessageNotification,
   resetInAppMessageNotifications,
 } from '../../src/inAppMessageNotifications';
+
+installRenderCleanup();
+
+async function renderWithProfiles(profileUserId = 'alice') {
+  const transport = {
+    userId: 'self', signalingUrl: 'https://signal.example',
+    authedFetch: jest.fn(async () => null),
+    searchUsers: jest.fn(async () => [{ userId: profileUserId, displayName: '  Alice Name  ', avatarKey: null }]),
+  };
+  let tree!: ReturnType<typeof renderer.create>;
+  await act(async () => {
+    tree = renderer.create(<ProfileDataProvider transport={transport}><InAppMessageBanner /></ProfileDataProvider>);
+  });
+  return tree;
+}
 
 function render() {
   let tree: any;
@@ -66,6 +83,38 @@ describe('InAppMessageBanner', () => {
     expect(findByTestId(tree, 'in-app-message-banner').props.accessibilityLabel).toBe(
       'Alice. 📷 Photo',
     );
+  });
+
+  test('resolves socket raw-ID titles without changing body or raw deep link', async () => {
+    const tree = await renderWithProfiles();
+    enqueue({ title: 'alice' });
+    expect(textsOf(tree)).toEqual(expect.arrayContaining(['Alice Name', '📷 Photo']));
+    expect(findByTestId(tree, 'in-app-message-banner').props.accessibilityLabel).toBe('Alice Name. 📷 Photo');
+    await act(async () => { findByTestId(tree, 'in-app-message-banner').props.onPress(); });
+    expect(Linking.openURL).toHaveBeenCalledWith('wetalk://chat/alice:bob');
+  });
+
+  test.each(['New message', 'Parent Resolved Name'])('preserves privacy or supplied title %p', async title => {
+    const tree = await renderWithProfiles();
+    enqueue({ title, body: 'Hidden message' });
+    expect(textsOf(tree)).toContain(title);
+    expect(textsOf(tree)).not.toContain('Alice Name');
+    expect(findByTestId(tree, 'in-app-message-banner').props.accessibilityLabel).toBe(`${title}. Hidden message`);
+  });
+
+  test.each([
+    ['Open WeTalk to view it.', 'New WeTalk message'],
+    ['Visible message body', 'Alice Name'],
+  ])('handles a username colliding with the generic privacy title for body %p', async (body, expectedTitle) => {
+    const senderId = 'New WeTalk message';
+    const deepLink = 'wetalk://chat/self:New%20WeTalk%20message';
+    const tree = await renderWithProfiles(senderId);
+    enqueue({ senderId, title: senderId, body, deepLink });
+    expect(textsOf(tree)).toEqual(expect.arrayContaining([expectedTitle, body]));
+    expect(findByTestId(tree, 'in-app-message-banner').props.accessibilityLabel).toBe(`${expectedTitle}. ${body}`);
+    if (expectedTitle === senderId) expect(textsOf(tree)).not.toContain('Alice Name');
+    await act(async () => { findByTestId(tree, 'in-app-message-banner').props.onPress(); });
+    expect(Linking.openURL).toHaveBeenCalledWith(deepLink);
   });
 
   test('queues later messages instead of stacking them', () => {

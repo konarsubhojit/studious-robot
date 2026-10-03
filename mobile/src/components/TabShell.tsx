@@ -2,8 +2,11 @@ import { memo, useCallback, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
+import { API_ROUTES } from '../../../shared';
+import { bearerAuthHeaders } from '../authHeaders';
 import { resolveAttachmentDownloadUrl } from '../attachmentAccess';
 import { AttachmentUriProvider } from '../attachmentUri';
+import { errorMessage } from '../errors';
 import {
   describeAttachmentDownloadResult,
   downloadAttachment,
@@ -173,6 +176,23 @@ function TabShell() {
     if (chat.conversations.find(row => row.peerId === id)?.group) openGroupConversation(id);
     else openChatConversation(id, options);
   }, [chat.conversations]);
+
+  const saveDisplayName = useCallback(async (displayName: string) => {
+    const response = await authedFetch(sessionId => ({
+      url: `${signalingUrl.replace(/\/+$/, '')}${API_ROUTES.PROFILE}`,
+      options: {
+        method: 'PATCH',
+        headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ displayName }),
+      },
+    }));
+    if (!response) throw new Error('Unable to reach the signaling server');
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(errorMessage(result?.error) ?? `Unable to save display name (HTTP ${response.status})`);
+    }
+    return typeof result?.displayName === 'string' ? result.displayName : null;
+  }, [authedFetch, signalingUrl]);
 
   const renderChatConversation = useCallback((peerId: string | null, { messageId, isGroup }: {
     messageId?: string | null; isGroup?: boolean;
@@ -491,6 +511,7 @@ function TabShell() {
       accountProviderId={accountProviderId}
       signalingUrl={signalingUrl}
       onSaveSignalingUrl={setSignalingUrl}
+      onSaveDisplayName={saveDisplayName}
       onSignOut={() => {
         // Reset first, then clear: the reset's own state write can only ever
         // race with the clear as the (harmless) default route, never as the
@@ -548,6 +569,7 @@ function TabShell() {
     accountEmail,
     accountProviderId,
     devices,
+    saveDisplayName,
     setSignalingUrl,
     signalingUrl,
     userId,

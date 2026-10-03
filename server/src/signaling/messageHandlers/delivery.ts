@@ -25,6 +25,7 @@ function deliverMessage(
         messageId: message.messageId,
         conversationId: message.conversationId,
         senderId: message.senderId,
+        senderDisplayName: state.users.get(message.senderId)?.displayName,
         preview: describeMessagePreview(message),
       })
       .then((outcome) => {

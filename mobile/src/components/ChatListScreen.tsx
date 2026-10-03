@@ -2,6 +2,7 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { describeMessagePreview } from '../../../shared';
 import { useThemedStyles } from '../ThemeContext';
+import { usePeerProfile } from '../profile/ProfileContext';
 import { fontScaleCaps, sizes, spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
 import GroupDirectorySheet from './GroupDirectorySheet';
@@ -186,6 +187,7 @@ function ConversationListRow({
   const hasUnread = unreadCount > 0;
   const isMuted = Boolean(isPeerMuted?.(conversation.peerId));
   const peerId = conversation.peerId;
+  const { name } = usePeerProfile(peerId);
   const handleMarkRead = useCallback(() => onMarkRead?.(peerId), [onMarkRead, peerId]);
   const handleToggleMuted = useCallback(
     () => onSetPeerMuted?.(peerId, !isMuted),
@@ -202,7 +204,7 @@ function ConversationListRow({
         ? [{
             key: 'mark-read',
             label: 'Mark read',
-            accessibilityLabel: `Mark conversation with ${peerId} as read`,
+            accessibilityLabel: `Mark conversation with ${name} as read`,
             testID: 'chat-list-mark-read',
             onPress: handleMarkRead,
           }]
@@ -214,14 +216,14 @@ function ConversationListRow({
             key: 'mute',
             label: isMuted ? 'Unmute' : 'Mute',
             accessibilityLabel: isMuted
-              ? `Unmute notifications from ${peerId}`
-              : `Mute notifications from ${peerId}`,
+              ? `Unmute notifications from ${name}`
+              : `Mute notifications from ${name}`,
             testID: 'chat-list-mute',
             onPress: handleToggleMuted,
           }]
         : []),
     ],
-    [handleMarkRead, handleToggleMuted, hasUnread, isMuted, onMarkRead, onSetPeerMuted, peerId],
+    [handleMarkRead, handleToggleMuted, hasUnread, isMuted, onMarkRead, onSetPeerMuted, name],
   );
   const activityIcon = activityIconFor(conversation);
   // An unsent draft outranks the last event in the preview line: it is the
@@ -229,7 +231,7 @@ function ConversationListRow({
   const draftText = drafts?.[conversation.peerId]?.text?.trim();
   const timestamp = formatConversationTimestamp(lastActivityOf(conversation)?.createdAt);
   const accessibilityLabel = [
-    `Open conversation with ${conversation.group?.name ?? conversation.peerId}`,
+    `Open conversation with ${conversation.group?.name ?? name}`,
     conversation.group ? 'group' : '',
     conversation.localMock ? 'local mock' : '',
     hasUnread ? `${unreadCount} unread` : '',
@@ -239,7 +241,7 @@ function ConversationListRow({
   return (
     <SwipeableRow actions={actions}>
       <ListItem
-        title={conversation.group?.name ?? conversation.peerId}
+        title={conversation.group?.name ?? name}
         subtitle={draftText ? `Draft: ${draftText}` :
           `${conversation.group ? 'Group · ' : ''}${formatActivityPreview(conversation)}`}
         leading={

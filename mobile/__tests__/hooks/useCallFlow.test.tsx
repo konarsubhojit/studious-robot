@@ -12,6 +12,11 @@ import useCompactCallView from '../../src/hooks/useCompactCallView';
 import { registerCrashContext } from '../../src/crashReporting';
 import { startScreenCapture } from '../../src/screenShare';
 import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
+import { fetchPeerProfile } from '../../src/profile/fetchPeerProfile';
+
+jest.mock('../../src/profile/fetchPeerProfile', () => ({
+  fetchPeerProfile: jest.fn(async () => null),
+}));
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -120,7 +125,7 @@ jest.mock('../../src/callUx', () => ({
   // Only the quality grading is stubbed; the candidate-pair summary is pure
   // and is exactly what these ICE tests are asserting on.
   ...jest.requireActual('../../src/callUx'),
-  getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Strong' })),
+  getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Good' })),
 }));
 
 jest.mock('../../src/screenShare', () => ({
@@ -1495,6 +1500,66 @@ describe('useCallFlow incoming-call ringing', () => {
       callerId: 'bob',
       hasVideo: true,
     });
+  });
+
+  test('socket incoming calls resolve the stored display name for the system UI', async () => {
+    const { resultRef } = await renderWithSocket();
+    (fetchPeerProfile as jest.Mock).mockResolvedValueOnce({ displayName: 'Robert Chen' });
+    await act(async () => {
+      getSocketHandler('call.incoming')({ call: { callId: 'named-socket-call', callerId: 'bob' } });
+    });
+    await flushAsyncEffects();
+    expect(require('../../src/callKeep').displayIncomingCall).toHaveBeenCalledWith({
+      callId: 'named-socket-call', callerId: 'bob', callerDisplayName: 'Robert Chen', hasVideo: true,
+    });
+    expect(resultRef.current.status.message).toBe('Incoming call from Robert Chen');
+  });
+
+  test('a slow profile lookup cannot delay ringing indefinitely', async () => {
+    await renderWithSocket();
+    (fetchPeerProfile as jest.Mock).mockReturnValueOnce(new Promise(() => {}));
+    await act(async () => {
+      getSocketHandler('call.incoming')({ call: { callId: 'slow-profile-call', callerId: 'bob' } });
+    });
+    expect(require('../../src/callKeep').displayIncomingCall).not.toHaveBeenCalled();
+    await act(async () => { jest.advanceTimersByTime(750); });
+    await flushAsyncEffects();
+    expect(require('../../src/callKeep').displayIncomingCall).toHaveBeenCalledWith({
+      callId: 'slow-profile-call', callerId: 'bob', hasVideo: true,
+    });
+    expect((fetchPeerProfile as jest.Mock).mock.calls.at(-1)[0].signal.aborted).toBe(true);
+  });
+
+  test('a profile lookup completing after an account change cannot show the old caller', async () => {
+    const { resultRef } = await renderWithSocket();
+    let finishLookup!: (profile: { displayName: string }) => void;
+    (fetchPeerProfile as jest.Mock).mockReturnValueOnce(new Promise(resolve => { finishLookup = resolve; }));
+    await act(async () => {
+      getSocketHandler('call.incoming')({ call: { callId: 'old-account-lookup', callerId: 'bob' } });
+    });
+    await act(async () => {
+      resultRef.current.setUserId('carol');
+      finishLookup({ displayName: 'Robert Chen' });
+    });
+    await flushAsyncEffects();
+    expect(require('../../src/callKeep').displayIncomingCall).not.toHaveBeenCalled();
+  });
+
+  test('a profile lookup completing after cancellation cannot resurrect the call UI', async () => {
+    await renderWithSocket();
+    let finishLookup!: (profile: { displayName: string }) => void;
+    (fetchPeerProfile as jest.Mock).mockReturnValueOnce(new Promise(resolve => { finishLookup = resolve; }));
+    await act(async () => {
+      getSocketHandler('call.incoming')({ call: { callId: 'cancelled-lookup', callerId: 'bob' } });
+    });
+    await act(async () => {
+      await getSocketHandler('call.state_changed')({
+        status: 'ended', call: { callId: 'cancelled-lookup', callerId: 'bob' }, reason: 'ended',
+      });
+      finishLookup({ displayName: 'Robert Chen' });
+    });
+    await flushAsyncEffects();
+    expect(require('../../src/callKeep').displayIncomingCall).not.toHaveBeenCalled();
   });
 
   test('rerendered messaging handlers do not recreate the presence socket', async () => {
@@ -4074,6 +4139,48 @@ describe('useCallFlow chat', () => {
       peerConnection.onconnectionstatechange?.();
     });
     expect(emits.filter((entry: any) => entry.event === 'call.connected')).toHaveLength(1);
+  });
+
+  test('emits bounded call.stats metrics from the active peer connection', async () => {
+    const { peerConnection, emits } = await acceptCallWithPeerConnection('call-stats-1');
+    await connectPeerConnection(peerConnection, 'call-stats-1');
+    peerConnection.getStats.mockResolvedValue(new Map([
+      ['pair-1', {
+        id: 'pair-1',
+        type: 'candidate-pair',
+        state: 'succeeded',
+        selected: true,
+        currentRoundTripTime: 0.08,
+      }],
+      ['inbound-video', {
+        id: 'inbound-video',
+        type: 'inbound-rtp',
+        kind: 'video',
+        packetsLost: 1,
+        packetsReceived: 99,
+        bytesReceived: 100_000,
+        jitter: 0.02,
+        codecId: 'codec-1',
+      }],
+      ['codec-1', { id: 'codec-1', type: 'codec', mimeType: 'video/VP8' }],
+    ]));
+
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(emits.find((entry: any) => entry.event === 'call.stats')?.payload).toEqual(
+      expect.objectContaining({
+        version: 2,
+        callId: 'call-stats-1',
+        rttMs: 80,
+        jitterMs: 20,
+        packetLossPercent: 1,
+        codec: 'VP8',
+      }),
+    );
   });
 
   test('heartbeats over call.media-state while the call is connected', async () => {
