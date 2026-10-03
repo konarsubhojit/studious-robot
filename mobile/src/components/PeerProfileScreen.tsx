@@ -325,6 +325,10 @@ function PeerProfileScreen({
         <Text style={styles.name} accessibilityRole="header" numberOfLines={1}>
           {name}
         </Text>
+        <Text style={styles.identityHint}>Display name · cosmetic and changeable</Text>
+        <Text style={styles.userId} testID="peer-profile-user-id">
+          {`Username (stable identity): ${peerId}`}
+        </Text>
         <Text style={styles.presence} testID="peer-profile-presence">
           {presenceLabel}
         </Text>
@@ -407,6 +411,15 @@ const createStyles = (colors: ThemeColors) =>
     name: {
       ...typography.title,
       color: colors.onSurface,
+    },
+    identityHint: {
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
+    },
+    userId: {
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
+      textAlign: 'center',
     },
     presence: {
       ...typography.caption,

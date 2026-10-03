@@ -307,6 +307,8 @@ test('peer profile actions and mute/block controls keep raw IDs', async () => {
       onToggleMute={onToggleMute} onBlock={onBlock} />,
   );
   expect(texts(tree)).toContain(name);
+  expect(node(tree, 'peer-profile-user-id').props.children)
+    .toBe(`Username (stable identity): ${peerId}`);
   act(() => { button(tree, 'peer-profile-message').props.onPress(); });
   act(() => { button(tree, 'peer-profile-audio-call').props.onPress(); });
   const mute = tree.root.findAll(n => n.props.testID === 'peer-profile-mute' && n.props.onValueChange)[0];
@@ -321,9 +323,11 @@ test('peer profile actions and mute/block controls keep raw IDs', async () => {
 test('settings self/muted/blocked names resolve, retain raw account ID, and deny blocked images', async () => {
   const onUnmutePeer = jest.fn();
   const onUnblockUser = jest.fn();
+  const onSaveDisplayName = jest.fn().mockResolvedValue('Updated Self Name');
   const transport = makeTransport();
   const screen = <SettingsScreen userId="self-id" signalingUrl="https://signal.example"
-    onSaveSignalingUrl={jest.fn()} onSignOut={jest.fn()} onClose={jest.fn()} mutedPeers={[peerId]}
+    onSaveSignalingUrl={jest.fn()} onSaveDisplayName={onSaveDisplayName}
+    onSignOut={jest.fn()} onClose={jest.fn()} mutedPeers={[peerId]}
     blockedUsers={[peerId]} onUnmutePeer={onUnmutePeer} onUnblockUser={onUnblockUser} />;
   const tree = await renderProfile(screen, transport);
   await act(async () => {
@@ -333,6 +337,14 @@ test('settings self/muted/blocked names resolve, retain raw account ID, and deny
   expect(node(tree, 'settings-username-row').props.value).toBe('self-id');
   expect(node(tree, 'settings-muted-row').props.title).toBe(name);
   expect(node(tree, 'settings-blocked-row').props.title).toBe(name);
+  act(() => { button(tree, 'settings-display-name-row').props.onPress(); });
+  act(() => {
+    tree.root.findAll(n => n.props.testID === 'settings-display-name-input'
+      && typeof n.props.onChangeText === 'function')[0].props.onChangeText('Updated Self Name');
+  });
+  await act(async () => { await button(tree, 'settings-save-display-name').props.onPress(); });
+  expect(onSaveDisplayName).toHaveBeenCalledWith('Updated Self Name');
+  expect(texts(tree)).toContain('Updated Self Name');
   expect(tree.root.findAllByType(Avatar).filter(n => n.props.id === peerId)
     .every(n => n.findAll(nested => nested.props.source?.uri).length === 0)).toBe(true);
   act(() => { button(tree, 'settings-unmute').props.onPress(); });
