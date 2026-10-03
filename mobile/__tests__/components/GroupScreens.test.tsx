@@ -103,7 +103,8 @@ function groupProps(currentUserId = 'alice') {
     callActions: { start: jest.fn(async () => {}), transition: jest.fn(async () => {}), simulate: jest.fn(async () => {}) },
     messages: [] as ChatMessage[], currentUserId, typing: { bob: true, carol: true },
     actions: { mode: 'mock' as const, create: jest.fn(), members: jest.fn(async () => {}), rename: jest.fn(async () => {}),
-      leave: jest.fn(async () => {}), previewActivity: jest.fn() },
+      leave: jest.fn(async () => {}) },
+    preview: { activity: jest.fn(async () => {}) },
     onSearchUsers: jest.fn(async () => []), onSend: jest.fn(async () => 'm1'),
     onRetry: jest.fn(async () => {}), onTyping: jest.fn(), onRead: jest.fn(async () => {}),
     onBack: jest.fn(), draft: 'hello group', onDraft: jest.fn(), offline: true,
@@ -155,6 +156,31 @@ test('non-admin members cannot mutate membership and leave navigates back', asyn
   await act(async () => { find(tree, 'group-leave').props.onPress(); });
   expect(props.actions.leave).toHaveBeenCalledWith('mock-group-1');
   expect(props.onBack).toHaveBeenCalledTimes(1);
+});
+
+test('simulated member activity is only offered when a preview transport supplied it', async () => {
+  const props = groupProps();
+  const live = await render(<GroupConversationScreen {...props} preview={undefined} />);
+  act(() => find(live, 'group-open-members').props.onPress());
+  expect(live.root.findAll(node => node.props.testID === 'group-simulate-bob-message')).toHaveLength(0);
+  const tree = await render(<GroupConversationScreen {...props} />);
+  act(() => find(tree, 'group-open-members').props.onPress());
+  await act(async () => { find(tree, 'group-simulate-bob-message').props.onPress(); });
+  expect(props.preview.activity).toHaveBeenCalledWith('mock-group-1', 'bob', 'message');
+});
+
+test('a typist who falls silent stops reporting typing without blurring the composer', async () => {
+  jest.useFakeTimers();
+  try {
+    const props = groupProps();
+    const tree = await render(<GroupConversationScreen {...props} />);
+    act(() => find(tree, 'group-composer').props.onChangeText('typing now'));
+    expect(props.onTyping).toHaveBeenLastCalledWith(true);
+    act(() => { jest.advanceTimersByTime(3000); });
+    expect(props.onTyping).toHaveBeenLastCalledWith(false);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test('participant grid is explicitly media-free and shows individual mute/leave states', async () => {

@@ -10,6 +10,9 @@ import type { ConversationSummary } from '../messaging/types';
 import type { SignalingClient } from '../signalingClient';
 import type { Socket } from 'socket.io-client';
 
+/** How many superseded call ids stay suppressed; older ones cannot recur. */
+const RETIRED_CALL_LIMIT = 64;
+
 type Params = {
   scope: string;
   userId: string;
@@ -42,6 +45,11 @@ export default function useGroupCalls({ scope, userId, conversationsRef, signali
     if (previous?.callId === snapshot.callId && previous.call.stateVersion >= snapshot.call.stateVersion) return;
     if (previous && previous.callId !== snapshot.callId) {
       if (snapshot.call.status === 'ended') return;
+      // Bounded: only the most recent superseded calls need to stay suppressed.
+      if (retired.current.size >= RETIRED_CALL_LIMIT) {
+        const oldest = retired.current.values().next().value;
+        if (oldest !== undefined) retired.current.delete(oldest);
+      }
       retired.current.add(previous.callId);
     }
     held.current = { ...held.current, [row.peerId]: snapshot };

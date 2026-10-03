@@ -15,12 +15,13 @@ import type { ChatDraft, ChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
 import { CLIENT_EVENTS, SERVER_EVENTS } from '../signalingClient';
 import {
-  applyGroupSnapshot, createMockGroup, leaveMockGroup, mutateMockMembers,
-  renameMockGroup, sendMockGroup,
+  createMockGroup, leaveMockGroup, mutateMockMembers, renameMockGroup, sendMockGroup,
 } from '../chat/groupMockAdapter';
 import type { GroupMemberAction } from '../chat/groupMockAdapter';
 import useGroupCalls from '../chat/useGroupCalls';
-import { conversationAcknowledgement, GROUP_TRANSPORT, parseGroupList, remoteGroupRows } from '../chat/groupTransportAdapter';
+import {
+  applyGroupSnapshot, conversationAcknowledgement, GROUP_TRANSPORT, parseGroupList, remoteGroupRows,
+} from '../chat/groupTransportAdapter';
 import type { GroupTransport } from '../chat/groupTransportAdapter';
 import { SIGNALING_VERSION } from '../socketProtocol';
 import { displayMessageReceivedInApp } from '../pushNotifications';
@@ -627,10 +628,27 @@ export default function useMessaging({
         setMessagesByPeer(messages);
         persistOutbox(outboxRef.current.map(item => item.recipientId === id
           ? { ...item, attempts: OUTBOX_MAX_ATTEMPTS, lastError: 'Left group' } : item));
-        await flushChatDb(scope);
+        // The departure has already happened; a failed cache write must not be
+        // reported as a failed leave, or the screen stays on a group the user left.
+        try { await flushChatDb(scope); }
+        catch {
+          if (scopeRef.current === scope) updateStatus('You left the group, but its offline cache could not be saved.', 'error');
+        }
       },
-      previewActivity: (id: string, memberId: string, action: 'typing' | 'read' | 'message') => {
-        const row = find(id);
+    };
+  }, [scope, userId, persistOutbox, socketRef, signalingRef, groupTransport, updateStatus]);
+
+  /**
+   * The local-preview simulation surface, kept out of {@link groupActions} so
+   * only the screens that render the mock harness can reach it — and so a live
+   * build cannot inject fabricated peer activity at all.
+   */
+  const groupPreviewActions = useMemo(() => {
+    if (groupTransport === 'live') return null;
+    return {
+      activity: (id: string, memberId: string, action: 'typing' | 'read' | 'message') => {
+        const row = conversationsRef.current.find(entry => entry.peerId === id && entry.group);
+        if (!row || row.left || !row.group!.memberIds.includes(userId)) throw new Error('You are not a member');
         if (!row.localMock || memberId === userId || !row.group!.memberIds.includes(memberId)) {
           throw new Error('Simulation is available only for other local preview members');
         }
@@ -656,7 +674,7 @@ export default function useMessaging({
         }
       },
     };
-  }, [scope, userId, persistOutbox, socketRef, signalingRef, groupTransport, updateStatus]);
+  }, [userId, groupTransport]);
 
   useEffect(() => {
     const signaling = signalingRef.current;
@@ -1145,7 +1163,19 @@ export default function useMessaging({
     });
     conversationsRef.current = next;
     setConversations(next);
-    if (activeChatPeerIdRef.current === key) void markConversationRead(key);
+    if (activeChatPeerIdRef.current === key) {
+      void markConversationRead(key);
+      markMessageSeen(message.messageId);
+      return true;
+    }
+    if (!duplicate && message.senderId !== userId) {
+      displayMessageReceivedInApp(message).catch(error => {
+        logWarn('[Messaging] in-app group message notification failed', {
+          message: errorMessage(error),
+        });
+      });
+    }
+    markMessageSeen(message.messageId);
     return true;
   }, [markConversationRead, userId]);
 
@@ -1208,6 +1238,19 @@ export default function useMessaging({
     setMessagesByPeer(prev => applyDeliveryReceipt(prev, message));
   }, []);
 
+  /**
+   * Whether a direct `message.*` event names a conversation that is not this
+   * peer's. A row only learns its conversation id once the server has reported
+   * it, so an unknown id is "not yet known", never a mismatch: rejecting it
+   * would drop the read receipt and typing indicator of every conversation
+   * whose first message has not been refetched yet.
+   */
+  const contradictsDirectConversation = useCallback((peerId: string, conversationId?: string) => {
+    if (!conversationId) return false;
+    const known = conversationIdForPeer(conversationsRef.current, peerId);
+    return Boolean(known) && known !== conversationId;
+  }, []);
+
   const handleMessageRead = useCallback(
     /** @param payload */
     ({ readerId, readAt, conversationId }: { readerId?: string; readAt?: string; conversationId?: string; }) => {
@@ -1221,12 +1264,12 @@ export default function useMessaging({
           }));
         return;
       }
-      if (conversationId && conversationId !== conversationIdForPeer(conversationsRef.current, readerId)) return;
+      if (contradictsDirectConversation(readerId, conversationId)) return;
       setMessagesByPeer(prev =>
         applyReadReceipt(prev, { readerId, readAt, currentUserId: userId }),
       );
     },
-    [userId],
+    [userId, contradictsDirectConversation],
   );
 
   const handleTypingEvent = useCallback(
@@ -1245,7 +1288,7 @@ export default function useMessaging({
         if (isTyping) typingTimeoutsRef.current[key] = setTimeout(() => update(false), TYPING_INDICATOR_TIMEOUT_MS);
         return;
       }
-      if (conversationId && conversationId !== conversationIdForPeer(conversationsRef.current, senderId)) return;
+      if (contradictsDirectConversation(senderId, conversationId)) return;
       clearTimeout(typingTimeoutsRef.current[senderId]);
       setTypingByPeer(prev => ({ ...prev, [senderId]: Boolean(isTyping) }));
       if (isTyping) {
@@ -1255,7 +1298,7 @@ export default function useMessaging({
         }, TYPING_INDICATOR_TIMEOUT_MS);
       }
     },
-    [userId],
+    [userId, contradictsDirectConversation],
   );
 
   /**
@@ -1385,6 +1428,7 @@ export default function useMessaging({
     typingByPeer,
     groupTyping,
     groupActions,
+    groupPreviewActions,
     groupCalls,
     groupCallActions,
     unreadTotal: stateScope === scope ? unreadTotal : 0,

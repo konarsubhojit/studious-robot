@@ -261,10 +261,16 @@ describe('useMessaging', () => {
     await act(async () => { await resultRef.current.fetchConversations(); });
     expect(resultRef.current.conversations[0]).toMatchObject({ peerId: 'server-group', group, localMock: false });
     params.authedFetchRef.current.mockResolvedValueOnce({ ok: true, json: async () => ({
-      conversations: [], groupConversations: [{ conversationId: 'bad' }],
+      conversations: [{ peerId: 'bob', unreadCount: 3 }], groupConversations: [{ conversationId: 'bad' }],
     }) });
     await act(async () => { await resultRef.current.fetchConversations(); });
+    // The malformed group half is ignored; the direct half of the same response
+    // still lands, and the group already known is not erased.
     expect(resultRef.current.conversations).toHaveLength(2);
+    expect(resultRef.current.conversations.find((row: any) => row.peerId === 'server-group'))
+      .toMatchObject({ group, localMock: false });
+    expect(resultRef.current.conversations.find((row: any) => row.peerId === 'bob'))
+      .toMatchObject({ unreadCount: 3 });
   });
 
   test('a group message arriving before REST bootstrap discovers its group without creating a direct thread', async () => {

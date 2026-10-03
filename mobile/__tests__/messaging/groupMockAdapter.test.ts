@@ -1,8 +1,8 @@
 import { CLIENT_EVENTS, parseEventPayload } from '../../../shared';
 import {
-  applyGroupSnapshot, createMockGroup, leaveMockGroup,
-  mutateMockMembers, renameMockGroup, sendMockGroup,
+  createMockGroup, leaveMockGroup, mutateMockMembers, renameMockGroup, sendMockGroup,
 } from '../../src/chat/groupMockAdapter';
+import { applyGroupSnapshot } from '../../src/chat/groupTransportAdapter';
 import { buildOutboxItem, outboxSendPayload, restoreOutboxMessages } from '../../src/messaging/sendPipeline';
 import { mergePendingConversations, totalUnread } from '../../src/messaging/conversations';
 

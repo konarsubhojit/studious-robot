@@ -9,7 +9,10 @@ test('transport is mock by default and validates actual server lifecycle acknowl
   expect(GROUP_TRANSPORT).toBe('mock');
   expect(conversationAcknowledgement({ ok: true, version: 2, conversation: snapshot() }, 'alice')).toEqual(snapshot());
   expect(() => conversationAcknowledgement({ ok: true }, 'alice')).toThrow();
-  expect(() => parseGroupList([{ conversationId: 'missing-fields' }], 'alice')).toThrow();
+  // An untrustworthy list is reported as absent, so the direct half of the same
+  // response still applies and held group rows are not mistaken for departures.
+  expect(parseGroupList([{ conversationId: 'missing-fields' }], 'alice')).toBeUndefined();
+  expect(parseGroupList({ conversationId: 'not-a-list' }, 'alice')).toBeUndefined();
 });
 
 test('REST snapshots normalize without a peerId and preserve local message/read/unread metadata', () => {

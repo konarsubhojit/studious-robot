@@ -43,6 +43,9 @@ None.
     `const known = conversationIdForPeer(...); if (conversationId && known && conversationId !== known) return;`.
     The group case is already fully handled by the `row.group` lookup directly
     above, so nothing is lost.
+  - **Resolution: Fixed.** Added `contradictsDirectConversation(peerId, conversationId)`
+    in `useMessaging.ts` and used it in both handlers, so an event is rejected
+    only when the locally known id differs, never when it is absent.
 
 ### Medium
 
@@ -57,6 +60,13 @@ None.
   - Fix: make `parseGroupList` skip-and-log invalid records (`safeParse` per
     record) rather than throwing, or parse groups outside the direct-conversation
     update path so a group failure degrades to "no group rows this round".
+  - **Resolution: Fixed.** `parseGroupList` now `safeParse`s each record and
+    returns `undefined` (logging a warning) for a non-array or any invalid
+    record, which `remoteGroupRows` already treats as "no group data this
+    round"; the direct half of the same response still applies. Covered by
+    `__tests__/messaging/groupTransportAdapter.test.ts` and the REST discovery
+    test in `__tests__/hooks/useMessaging.test.tsx` (whose expectation was
+    updated: direct rows now land instead of the whole refresh being discarded).
 
 - **[MEDIUM] `groupActions` ships preview-simulation methods to every consumer** — `mobile/src/hooks/useMessaging.ts:598-614`, `mobile/src/chat/ChatProvider.tsx:33`
   - `previewActivity(id, memberId, 'typing' | 'read' | 'message')` fabricates
@@ -70,6 +80,10 @@ None.
     `groupPreviewActions`) produced only when `groupTransport !== 'live'`, so
     the live build cannot reach it at all and the production group API stays
     four methods wide.
+  - **Resolution: Fixed.** Extracted a separate `groupPreviewActions` memo that
+    is `null` for the live transport, plumbed through `ChatProvider`/`TabShell`
+    as an optional `preview` prop on `GroupConversationScreen`; the simulate
+    controls render only when it is supplied (new test in `GroupScreens.test.tsx`).
 
 - **[MEDIUM] Received group messages bypass the seen-registry and in-app notification path** — `mobile/src/hooks/useMessaging.ts:1134-1150`
   - `handleGroupMessageReceived` returns before `markMessageSeen(...)` and
@@ -83,6 +97,9 @@ None.
     `displayMessageReceivedInApp`, or state explicitly in
     `mobile/README.md` that group notifications are deliberately out of scope
     until the server fans out group pushes.
+  - **Resolution: Fixed.** `handleGroupMessageReceived` now calls
+    `markMessageSeen` and, for non-active threads, `displayMessageReceivedInApp`
+    with a warn-only catch.
 
 - **[MEDIUM] `leave` reports failure after the departure has already happened** — `mobile/src/hooks/useMessaging.ts:582-600`
   - The final `await flushChatDb(scope)` is unguarded, unlike every other flush
@@ -93,6 +110,8 @@ None.
     `lastError: 'Left group'`.
   - Fix: wrap it like `live` does — surface a non-fatal `updateStatus` about the
     cache, and let `leave` resolve.
+  - **Resolution: Fixed.** The trailing flush is wrapped and degrades to an
+    `updateStatus` error banner; `leave` resolves so `onBack()` still runs.
 
 ### Low
 
@@ -101,6 +120,7 @@ None.
     unstyled `Text` in the shell. On the dark theme it renders near-black text
     on the dark background. Fix: use the existing themed styles (or the same
     empty-state primitive the other screens use).
+  - **Resolution: Fixed.** Replaced with the themed `EmptyState` primitive.
 
 - **[LOW] The group composer has no typing idle timer** — `mobile/src/components/GroupConversationScreen.tsx:151-154`
   - The direct composer clears its indicator after `TYPING_IDLE_MS`
@@ -109,6 +129,8 @@ None.
     with text still in the box keeps every other member's indicator alive until
     the receiver-side safety timeout fires. Fix: reuse the same idle-timer
     pattern.
+  - **Resolution: Fixed.** Added a `TYPING_IDLE_MS` idle timer cleared on send,
+    blur and unmount, with a fake-timer test.
 
 - **[LOW] `applyGroupSnapshot` — the live membership reducer — lives in `groupMockAdapter.ts`** — `mobile/src/chat/groupMockAdapter.ts:60-72`, `mobile/src/chat/groupTransportAdapter.ts:30`
   - The live transport adapter and the live `conversation.updated` socket
@@ -116,12 +138,16 @@ None.
     says "Local-only behavior". That is actively misleading for the next
     maintainer. Fix: move `applyGroupSnapshot` into `groupTransportAdapter.ts`
     (or a neutral `groupRows.ts`) and let the mock import it.
+  - **Resolution: Fixed.** `applyGroupSnapshot` moved to
+    `groupTransportAdapter.ts`; the mock adapter no longer owns it.
 
 - **[LOW] `retired` call-id set grows for the lifetime of the account scope** — `mobile/src/chat/useGroupCalls.ts:37`
   - Every superseded `callId` is retained until the scope changes. Bounded in
     practice by calls-per-session, but it is an unbounded-by-design set. Fix:
     cap it (ring buffer / `Map` with an eviction limit) the way
     `server/src/domain/conversationFanout.ts:14` caps its version cache.
+  - **Resolution: Fixed.** Capped at `RETIRED_CALL_LIMIT` (64) with
+    oldest-first eviction.
 
 ### Nit
 
@@ -129,6 +155,14 @@ None.
   - Copied from the existing `fetchHistory` signature, so it is consistent, but
     it propagates an untyped callable into new code. Worth a shared
     `AuthedFetch` alias next time either function is touched.
+  - **Resolution: Deferred.** Typing it properly means changing the pre-existing
+    `fetchHistory` signature and its callers, which is outside this diff's blast
+    radius; the new function deliberately stays consistent with its neighbour.
+
+## Resolution summary
+Fixed: 1 High, 4 Medium, 4 Low. Deferred: 1 Nit (shared `AuthedFetch` alias —
+would require touching pre-existing `fetchHistory` callers). After the fix pass,
+`npm run typecheck`, `npm run lint` and `npx jest --ci --forceExit` are green.
 
 ## Out of scope (pre-existing, not graded)
 - `mobile/src/messaging/fetchHistory.ts:22-26` already took `authedFetch: Function`

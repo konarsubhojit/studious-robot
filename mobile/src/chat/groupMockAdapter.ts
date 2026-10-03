@@ -1,5 +1,4 @@
 import { CLIENT_EVENTS, parseEventPayload, SIGNALING_VERSION } from '../../../shared';
-import type { ConversationRecord } from '../../../shared/signaling/schemas';
 import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
 import { outboxSendPayload } from '../messaging/sendPipeline';
 
@@ -58,17 +57,4 @@ export function sendMockGroup(row: ConversationSummary | undefined, item: Outbox
     senderId, recipientId: row.peerId, body: item.body ?? '', type: item.type,
     attachment: item.attachment, replyTo: item.replyTo, createdAt: item.createdAt,
   };
-}
-
-export function applyGroupSnapshot(
-  rows: ConversationSummary[], group: ConversationRecord, currentUserId: string,
-): ConversationSummary[] {
-  const existing = rows.find(row => row.conversationId === group.conversationId && row.group);
-  if (existing && existing.group!.membershipVersion >= group.membershipVersion) return rows;
-  const row: ConversationSummary = {
-    ...existing, peerId: existing?.peerId ?? group.conversationId, conversationId: group.conversationId,
-    group, localMock: false, left: !group.memberIds.includes(currentUserId),
-    unreadCount: group.memberIds.includes(currentUserId) ? existing?.unreadCount ?? 0 : 0,
-  };
-  return [row, ...rows.filter(entry => entry !== existing)];
 }

@@ -1,6 +1,6 @@
 import { SERVER_EVENTS } from '../../../shared';
 import { SERVER_EVENT_SCHEMAS } from '../../../shared/signaling/schemas';
-import { applyGroupSnapshot } from './groupMockAdapter';
+import { logWarn } from '../appLogger';
 import type { ConversationRecord } from '../../../shared/signaling/schemas';
 import type { ConversationSummary } from '../messaging/types';
 
@@ -13,11 +13,47 @@ export function conversationAcknowledgement(ack: unknown, updatedBy: string): Co
   return SERVER_EVENT_SCHEMAS[SERVER_EVENTS.CONVERSATION_UPDATED].parse({ conversation, updatedBy }).conversation;
 }
 
+/**
+ * The group half of `GET /conversations`, or `undefined` when it cannot be
+ * trusted. A malformed list is treated exactly like the omitted one: the direct
+ * conversations in the same response must still be applied, and the held group
+ * rows are kept rather than mistaken for memberships the server dropped.
+ */
 export function parseGroupList(records: unknown, userId: string): ConversationRecord[] | undefined {
   if (records === undefined) return undefined;
-  if (!Array.isArray(records)) throw new Error('Invalid group conversation list');
-  return records.map(conversation => SERVER_EVENT_SCHEMAS[SERVER_EVENTS.CONVERSATION_UPDATED]
-    .parse({ conversation, updatedBy: userId }).conversation);
+  if (!Array.isArray(records)) {
+    logWarn('[Groups] Ignored a malformed group conversation list');
+    return undefined;
+  }
+  const parsed: ConversationRecord[] = [];
+  for (const conversation of records) {
+    const result = SERVER_EVENT_SCHEMAS[SERVER_EVENTS.CONVERSATION_UPDATED]
+      .safeParse({ conversation, updatedBy: userId });
+    if (!result.success) {
+      logWarn('[Groups] Ignored a malformed group conversation list', { message: result.error.message });
+      return undefined;
+    }
+    parsed.push(result.data.conversation);
+  }
+  return parsed;
+}
+
+/**
+ * Fold one server membership snapshot into the chat list, newest first. A
+ * snapshot that is not newer than the held one is ignored, so an out-of-order
+ * socket event cannot resurrect a membership the user already left.
+ */
+export function applyGroupSnapshot(
+  rows: ConversationSummary[], group: ConversationRecord, currentUserId: string,
+): ConversationSummary[] {
+  const existing = rows.find(row => row.conversationId === group.conversationId && row.group);
+  if (existing && existing.group!.membershipVersion >= group.membershipVersion) return rows;
+  const row: ConversationSummary = {
+    ...existing, peerId: existing?.peerId ?? group.conversationId, conversationId: group.conversationId,
+    group, localMock: false, left: !group.memberIds.includes(currentUserId),
+    unreadCount: group.memberIds.includes(currentUserId) ? existing?.unreadCount ?? 0 : 0,
+  };
+  return [row, ...rows.filter(entry => entry !== existing)];
 }
 
 /** GET /conversations contains separate direct summaries and bare group snapshots. */

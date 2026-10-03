@@ -32,6 +32,7 @@ export type ChatContextValue = {
   typingByPeer: CallFlow['typingByPeer'];
   groupTyping: CallFlow['groupTyping'];
   groupActions: CallFlow['groupActions'];
+  groupPreviewActions: CallFlow['groupPreviewActions'];
   groupCalls: CallFlow['groupCalls'];
   groupCallActions: CallFlow['groupCallActions'];
   unreadTotal: CallFlow['unreadTotal'];
@@ -122,6 +123,7 @@ const selectChatSlice = (state: CallContextValue) => ({
   typingByPeer: state.callFlow.typingByPeer,
   groupTyping: state.callFlow.groupTyping,
   groupActions: state.callFlow.groupActions,
+  groupPreviewActions: state.callFlow.groupPreviewActions,
   groupCalls: state.callFlow.groupCalls,
   groupCallActions: state.callFlow.groupCallActions,
   unblockPeer: state.callFlow.unblockPeer,
@@ -215,6 +217,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       typingByPeer: callFlow.typingByPeer,
       groupTyping: callFlow.groupTyping,
       groupActions: callFlow.groupActions,
+      groupPreviewActions: callFlow.groupPreviewActions,
       groupCalls: callFlow.groupCalls,
       groupCallActions: callFlow.groupCallActions,
       unreadTotal: callFlow.unreadTotal,
@@ -275,6 +278,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.typingByPeer,
       callFlow.groupTyping,
       callFlow.groupActions,
+      callFlow.groupPreviewActions,
       callFlow.groupCalls,
       callFlow.groupCallActions,
       callFlow.unreadTotal,

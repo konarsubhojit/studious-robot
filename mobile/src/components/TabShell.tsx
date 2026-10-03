@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
 import { resolveAttachmentDownloadUrl } from '../attachmentAccess';
@@ -36,6 +36,7 @@ import CallsScreen from './CallsScreen';
 import ChatConversationScreen from './ChatConversationScreen';
 import ChatListScreen from './ChatListScreen';
 import GroupConversationScreen from './GroupConversationScreen';
+import { EmptyState } from './primitives';
 import PeerProfileScreen from './PeerProfileScreen';
 import SearchScreen from './SearchScreen';
 import SettingsScreen from './SettingsScreen';
@@ -141,6 +142,7 @@ function TabShell() {
     sendMessage,
     sendTypingIndicator,
     groupActions,
+    groupPreviewActions,
     groupCallActions,
     markConversationRead,
     setPeerMuted,
@@ -180,10 +182,15 @@ function TabShell() {
     if (!peerId) return null;
     const conversation = chat.conversations.find(row => row.peerId === peerId);
     if (isGroup || conversation?.group) {
-      if (!conversation?.group) return <View><Text>Loading group…</Text></View>;
+      // The route can restore before the group snapshot does (cold start, deep link).
+      if (!conversation?.group) {
+        return <EmptyState icon="tabChats" title="Loading group…"
+          description="This group is still being restored." testID="group-loading" />;
+      }
       return <GroupConversationScreen key={peerId} conversation={conversation}
         messages={chat.messagesByPeer[peerId] ?? []} currentUserId={chat.currentUserId}
-        typing={chat.groupTyping[peerId] ?? {}} actions={groupActions} onSearchUsers={chat.searchUsers}
+        typing={chat.groupTyping[peerId] ?? {}} actions={groupActions} preview={groupPreviewActions}
+        onSearchUsers={chat.searchUsers}
         callSnapshot={chat.groupCalls[peerId]} callActions={groupCallActions}
         onRefresh={chat.handleRefreshMessages} onLoadOlder={chat.handleLoadOlderMessages}
         isRefreshing={chat.isRefreshingMessages}
@@ -310,6 +317,7 @@ function TabShell() {
     markConversationRead,
     chat.searchUsers,
     groupActions,
+    groupPreviewActions,
     groupCallActions,
     chat.groupCalls,
     clearDraft,

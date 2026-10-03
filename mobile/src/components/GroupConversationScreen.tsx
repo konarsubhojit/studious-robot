@@ -13,14 +13,20 @@ import type { ChatMessage, ConversationSummary } from '../messaging/types';
 import type { ContactRow } from '../types/directory';
 import type { ThemeColors } from '../theme';
 
+/** Matches the direct composer: stop reporting typing after this much silence. */
+const TYPING_IDLE_MS = 3000;
+
 type Styles = ReturnType<typeof createStyles>;
 type GroupActions = ChatContextValue['groupActions'];
+type GroupPreviewActions = ChatContextValue['groupPreviewActions'];
 type Props = {
   conversation: ConversationSummary;
   messages: ChatMessage[];
   currentUserId: string;
   typing: Record<string, boolean>;
   actions: GroupActions;
+  /** Only supplied by a local-preview build; absent for the live transport. */
+  preview?: GroupPreviewActions;
   callSnapshot?: GroupCallSnapshot;
   callActions: ChatContextValue['groupCallActions'];
   onSearchUsers: (query: string) => Promise<ContactRow[]>;
@@ -70,9 +76,9 @@ function groupMessageStatus(message: ChatMessage, mock: boolean) {
   return mock ? 'Saved locally (mock)' : 'Sent';
 }
 
-function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, actions, run, busy, styles }: {
+function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, actions, preview, run, busy, styles }: {
   visible: boolean; row: ConversationSummary; currentUserId: string; onClose: () => void; onAdd: () => void;
-  onLeave: () => void;
+  onLeave: () => void; preview?: GroupPreviewActions;
   actions: GroupActions; run: (action: () => Promise<unknown>) => void; busy: boolean; styles: Styles;
 }) {
   const group = row.group!;
@@ -90,10 +96,10 @@ function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, ac
         {admin && row.localMock && id !== group.creatorId ? <Action styles={styles}
           disabled={busy} label={`Remove ${id}`} testID={`group-remove-${id}`}
           onPress={() => run(() => actions.members(row.peerId, { type: 'remove', userId: id }))} /> : null}
-        {row.localMock && !row.left && id !== currentUserId ? <View>
+        {preview && row.localMock && !row.left && id !== currentUserId ? <View>
           {(['typing', 'read', 'message'] as const).map(action => <Action key={action} styles={styles}
             disabled={busy} label={`Simulate ${id} ${action}`} testID={`group-simulate-${id}-${action}`}
-            onPress={() => run(async () => actions.previewActivity(row.peerId, id, action))} />)}
+            onPress={() => run(async () => preview.activity(row.peerId, id, action))} />)}
         </View> : null}
       </View>)}
       {admin ? <View>
@@ -111,7 +117,7 @@ function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, ac
 }
 
 export default function GroupConversationScreen({
-  conversation: row, messages, currentUserId, typing, actions, callSnapshot, callActions, onSearchUsers, onSend, onRetry,
+  conversation: row, messages, currentUserId, typing, actions, preview, callSnapshot, callActions, onSearchUsers, onSend, onRetry,
   onTyping, onRead, onBack, draft, onDraft, offline, onRefresh, onLoadOlder, isRefreshing = false,
 }: Props) {
   const styles = useThemedStyles(createStyles);
@@ -126,10 +132,21 @@ export default function GroupConversationScreen({
   const newestId = messages[0]?.messageId;
   const callbacks = useRef({ onRead, onTyping });
   callbacks.current = { onRead, onTyping };
+  const typingIdleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     if (isMember) void callbacks.current.onRead().catch(() => setError('Unable to mark group read locally'));
   }, [newestId, isMember, row.peerId]);
-  useEffect(() => () => callbacks.current.onTyping(false), [row.peerId]);
+  useEffect(() => () => {
+    clearTimeout(typingIdleTimer.current);
+    callbacks.current.onTyping(false);
+  }, [row.peerId]);
+  // A typist who stops without blurring would otherwise keep every member's
+  // indicator alive until their receive-side safety timeout fires.
+  const reportTyping = (isTyping: boolean) => {
+    clearTimeout(typingIdleTimer.current);
+    onTyping(isTyping);
+    if (isTyping) typingIdleTimer.current = setTimeout(() => callbacks.current.onTyping(false), TYPING_IDLE_MS);
+  };
   const run = async (action: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true); setError('');
@@ -139,7 +156,7 @@ export default function GroupConversationScreen({
   };
   const send = () => run(async () => {
     const result = await onSend(draft);
-    if (result) { onDraft(''); onTyping(false); }
+    if (result) { onDraft(''); reportTyping(false); }
   });
   const typists = group.memberIds.filter(id => id !== currentUserId && typing[id]);
   return <KeyboardAvoidingView style={[styles.root, { paddingTop: spacing.md + (insets?.top ?? 0) }]}
@@ -165,12 +182,12 @@ export default function GroupConversationScreen({
         styles={styles} onRetry={id => { void run(() => onRetry(id)); }} />} />
     {typists.length ? <Text style={styles.secondary} testID="group-typing">{typists.join(', ')} typing…</Text> : null}
     {error ? <Text style={styles.text} accessibilityRole="alert" testID="group-error">{error}</Text> : null}
-    <TextInput style={styles.input} value={draft} onChangeText={text => { onDraft(text); onTyping(Boolean(text.trim())); }}
-      onBlur={() => onTyping(false)} maxLength={4000} editable={isMember && !busy}
+    <TextInput style={styles.input} value={draft} onChangeText={text => { onDraft(text); reportTyping(Boolean(text.trim())); }}
+      onBlur={() => reportTyping(false)} maxLength={4000} editable={isMember && !busy}
       accessibilityLabel="Group message" placeholder="Message group" testID="group-composer" />
     <Action label={busy ? 'Sending…' : 'Send to group'} styles={styles} disabled={!isMember || busy || !draft.trim()}
       onPress={() => { void send(); }} testID="group-send" />
-    <MembersSheet visible={membersVisible} row={row} currentUserId={currentUserId} actions={actions}
+    <MembersSheet visible={membersVisible} row={row} currentUserId={currentUserId} actions={actions} preview={preview}
       onClose={() => setMembersVisible(false)} onAdd={() => { setMembersVisible(false); setAdding(true); }}
       onLeave={() => { void run(async () => { await actions.leave(row.peerId); onBack(); }); }}
       styles={styles} busy={busy} run={action => { void run(action); }} />
