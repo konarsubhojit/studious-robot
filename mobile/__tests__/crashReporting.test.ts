@@ -338,12 +338,56 @@ describe('crashReporting', () => {
 
       captureRenderError(error, componentStack);
 
-      const { redactSensitive } = require('../src/appLogger');
-      expect(redactSensitive).toHaveBeenCalledWith({ componentStack });
-      expect(sdk.captureException).toHaveBeenCalledWith(error, {
+      const [exception, hint] = sdk.captureException.mock.calls[0];
+      expect(exception).not.toBe(error);
+      expect(exception.name).toBe(error.name);
+      expect(exception.message).toBe(error.message);
+      expect(exception.stack).toBe(error.stack);
+      expect(hint).toEqual({
         mechanism: { type: 'react', handled: true },
         captureContext: { level: 'error', extra: { componentStack } },
       });
+    });
+
+    test('render captures exclude private properties and redact details without changing the local error', () => {
+      const { initCrashReporting, captureRenderError } = require('../src/crashReporting');
+      initCrashReporting(undefined, DSN);
+      const error = Object.assign(new Error('alice@example.com body: private message'), {
+        name: 'RenderError userId: alice',
+        body: 'private message',
+        attachmentKey: 'private-key',
+        cause: new Error('private cause'),
+      });
+      const originalStack = error.stack;
+      const componentStack = '\n    at Chat (alice@example.com)\n    at ErrorBoundary';
+
+      captureRenderError(error, componentStack);
+
+      const [exception, hint] = sdk.captureException.mock.calls[0];
+      expect(exception.message).toBe('[REDACTED] body=[REDACTED]');
+      expect(exception.name).toBe('RenderError userId=[REDACTED]');
+      expect(exception.stack).not.toContain('alice@example.com');
+      expect(exception.stack).not.toContain('private message');
+      expect(exception).not.toHaveProperty('body');
+      expect(exception).not.toHaveProperty('attachmentKey');
+      expect(exception).not.toHaveProperty('cause');
+      expect(hint.captureContext.extra.componentStack).toBe(
+        '\n    at Chat ([REDACTED])\n    at ErrorBoundary',
+      );
+      expect(error.message).toBe('alice@example.com body: private message');
+      expect(error.name).toBe('RenderError userId: alice');
+      expect(error.stack).toBe(originalStack);
+      expect(error.body).toBe('private message');
+    });
+
+    test('a rejected render-error capture never creates an unhandled rejection', async () => {
+      const { initCrashReporting, captureRenderError } = require('../src/crashReporting');
+      initCrashReporting(undefined, DSN);
+      sdk.captureException.mockRejectedValueOnce(new Error('async SDK failed'));
+
+      expect(() => captureRenderError(new Error('render failed'), null)).not.toThrow();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(sdk.captureException).toHaveBeenCalledTimes(1);
     });
 
     test('does not capture before initialisation or when reporting is disabled', () => {

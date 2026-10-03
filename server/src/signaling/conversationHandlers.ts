@@ -135,6 +135,109 @@ function registerConversationHandlers(
     }
   });
 
+  socket.on(CLIENT_EVENTS.CONVERSATION_MEMBER_ADD, async (payload = {}, ack) => {
+    const eventName = CLIENT_EVENTS.CONVERSATION_MEMBER_ADD;
+    if (!requireSocketSession(socket, ack, eventName)) return;
+    if (!validateSignalingVersion(socket, payload, ack, eventName)) return;
+    const parsed = parseInboundPayload(socket, ack, eventName, payload, state);
+    if (!parsed) return;
+    const actorId = socket.data.identity.userId;
+    const conversationId = normaliseId(parsed.conversationId);
+    const userIds = (parsed.userIds as unknown[]).map((id) => normaliseId(id)).filter((id): id is string => Boolean(id));
+    if (!conversationId || userIds.length !== parsed.userIds.length || userIds.length > 15 ||
+        userIds.includes(actorId) || new Set(userIds).size !== userIds.length) {
+      acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'invalid group members', state);
+      return;
+    }
+    if (userIds.some((userId) =>
+      isBlocked(state.blocks, userId, actorId) || isBlocked(state.blocks, actorId, userId)
+    )) {
+      acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'you cannot add a blocked user', state);
+      return;
+    }
+    try {
+      const result = await state.conversationStore.addMembers({ conversationId, actorId, userIds });
+      if (!result) {
+        acknowledgeError(socket, ack, eventName, ERROR_CODES.NOT_FOUND, 'group not found', state);
+        return;
+      }
+      for (const userId of userIds) {
+        state.auditLog.record({
+          event: 'conversation.membership.created',
+          actor: actorId,
+          target: userId,
+          outcome: 'success',
+          details: { conversationId, role: 'member' },
+        });
+      }
+      await fanoutConversationEvent(io, state, {
+        conversationId,
+        eventName: SERVER_EVENTS.CONVERSATION_UPDATED,
+        recipientIds: result.conversation.memberIds,
+        payload: { version: SIGNALING_VERSION, conversation: result.conversation, updatedBy: actorId },
+      });
+      acknowledgeSuccess(socket, ack, eventName, { conversation: result.conversation });
+    } catch (error) {
+      if (rejectStoreError(socket, ack, eventName, error, state)) return;
+      console.error(`[conversations] add members failed: ${error instanceof Error ? error.message : String(error)}`);
+      acknowledgeError(socket, ack, eventName, ERROR_CODES.INTERNAL_ERROR, 'could not add group members', state);
+    }
+  });
+
+  socket.on(CLIENT_EVENTS.CONVERSATION_MEMBER_REMOVE, async (payload = {}, ack) => {
+    const eventName = CLIENT_EVENTS.CONVERSATION_MEMBER_REMOVE;
+    if (!requireSocketSession(socket, ack, eventName)) return;
+    if (!validateSignalingVersion(socket, payload, ack, eventName)) return;
+    const parsed = parseInboundPayload(socket, ack, eventName, payload, state);
+    if (!parsed) return;
+    const actorId = socket.data.identity.userId;
+    const conversationId = normaliseId(parsed.conversationId);
+    const userId = normaliseId(parsed.userId);
+    if (!conversationId || !userId) {
+      acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'conversationId and userId are required', state);
+      return;
+    }
+    try {
+      const result = await state.conversationStore.removeMember({ conversationId, actorId, userId });
+      if (!result) {
+        acknowledgeError(socket, ack, eventName, ERROR_CODES.NOT_FOUND, 'group not found', state);
+        return;
+      }
+      state.auditLog.record({
+        event: 'conversation.membership.removed',
+        actor: actorId,
+        target: userId,
+        outcome: 'success',
+        details: { conversationId },
+      });
+      await fanoutConversationEvent(io, state, {
+        conversationId,
+        eventName: SERVER_EVENTS.CONVERSATION_UPDATED,
+        recipientIds: [...result.conversation.memberIds, userId],
+        payload: { version: SIGNALING_VERSION, conversation: result.conversation, updatedBy: actorId },
+      });
+      for (const callChange of result.callChanges ?? []) {
+        await fanoutConversationEvent(io, state, {
+          conversationId,
+          eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
+          recipientIds: callChange.participants.map(({ userId: participantId }) => participantId),
+          payload: {
+            version: SIGNALING_VERSION,
+            conversationId,
+            callId: callChange.call.callId,
+            call: callChange.call,
+            participants: callChange.participants,
+          },
+        });
+      }
+      acknowledgeSuccess(socket, ack, eventName, { conversation: result.conversation });
+    } catch (error) {
+      if (rejectStoreError(socket, ack, eventName, error, state)) return;
+      console.error(`[conversations] remove member failed: ${error instanceof Error ? error.message : String(error)}`);
+      acknowledgeError(socket, ack, eventName, ERROR_CODES.INTERNAL_ERROR, 'could not remove group member', state);
+    }
+  });
+
   socket.on(CLIENT_EVENTS.CONVERSATION_LEAVE, async (payload = {}, ack) => {
     const eventName = CLIENT_EVENTS.CONVERSATION_LEAVE;
     if (!requireSocketSession(socket, ack, eventName)) return;

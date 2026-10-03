@@ -115,7 +115,10 @@ function body(line: string): string {
 test('a healthy server with completion rate above 1 and a negative marking gap is OK', async () => {
   const h = createHarness();
   try {
-    const result = await h.run(healthyMetrics());
+    const metrics = healthyMetrics();
+    assert.ok(metrics.derived.call_completion_rate !== null);
+    assert.ok(metrics.derived.call_completion_rate > 1);
+    const result = await h.run(metrics);
     assert.equal(result.code, 0, result.stderr);
     assert.deepEqual(result.checks.map(body), ['OK calls=20 msgs=24']);
   } finally {
@@ -173,7 +176,7 @@ test('an idle process with all-zero counters keeps a stable restart marker', asy
   }
 });
 
-test('a counter decrease after restart is a RESET even when db queries are non-zero', async () => {
+test('a restarted all-zero call and message sample is RESET with non-zero db queries', async () => {
   const h = createHarness();
   try {
     await h.run(healthyMetrics());

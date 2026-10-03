@@ -939,7 +939,7 @@ What the erasure does, per account:
 | `users` | Row deleted, releasing the username — a provider account is bound to one username permanently, so anonymising the row would burn it forever. |
 | `messages` | The messages the user *sent* are tombstoned (body, attachment and reactions cleared, row kept). The ones they received are the peer's history and are left alone. |
 | R2 attachments | The objects those messages referenced are deleted with a signed `DELETE`; there is no bucket lifecycle rule that would collect them otherwise. |
-| R2 avatar | The account's avatar object is deleted with a signed `DELETE` too. It hangs off the profile rather than off a message, so the attachment sweep above would never reach it — and nothing else would, for the same missing-lifecycle-rule reason. |
+| R2 avatar | The account's avatar object is deleted with a signed `DELETE` too. Erasure reads the current key from Postgres when configured, not the instance's potentially stale profile cache; a failed lookup leaves the request pending for retry. It hangs off the profile rather than off a message, so the attachment sweep above would never reach it — and nothing else would, for the same missing-lifecycle-rule reason. |
 | `calls` / `call_events` | Rows naming the user are deleted; events cascade with their call. |
 | `devices` | Rows deleted, taking their push tokens — live delivery channels to a handset — with them. |
 | `blocks` | Removed in both directions. |

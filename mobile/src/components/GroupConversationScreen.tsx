@@ -83,17 +83,18 @@ function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, ac
 }) {
   const group = row.group!;
   const member = !row.left && group.memberIds.includes(currentUserId);
-  const admin = group.creatorId === currentUserId && member;
+  const ownerId = group.ownerId ?? group.creatorId;
+  const admin = ownerId === currentUserId && member;
   const [name, setName] = useState(group.name);
   useEffect(() => { setName(group.name); }, [group.name]);
   return <Sheet visible={visible} onClose={onClose} title="Group members"
-    subtitle={row.localMock ? 'Local mock — membership and simulated activity stay on this device.' : 'Member mutations await server support.'}
+    subtitle={row.localMock ? 'Local mock — membership and simulated activity stay on this device.' : 'Only group owners can add or remove members.'}
     testID="group-members-sheet">
     <ScrollView>
       {group.memberIds.map(id => <View key={id} style={styles.member}>
-        <Text style={styles.name}>{id}{id === group.creatorId ? ' (admin)' : ''}</Text>
+        <Text style={styles.name}>{id}{id === ownerId ? ' (owner)' : ''}</Text>
         <Text style={styles.secondary}>{row.readByMember?.[id] ? `Read through ${row.readByMember[id]}` : 'No read receipt'}</Text>
-        {admin && row.localMock && id !== group.creatorId ? <Action styles={styles}
+        {admin && id !== ownerId ? <Action styles={styles}
           disabled={busy} label={`Remove ${id}`} testID={`group-remove-${id}`}
           onPress={() => run(() => actions.members(row.peerId, { type: 'remove', userId: id }))} /> : null}
         {preview && row.localMock && !row.left && id !== currentUserId ? <View>
@@ -103,8 +104,8 @@ function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, ac
         </View> : null}
       </View>)}
       {admin ? <View>
-        {row.localMock ? <Action styles={styles} label="Add members" disabled={busy}
-          testID="group-add-members" onPress={onAdd} /> : null}
+        <Action styles={styles} label="Add members" disabled={busy}
+          testID="group-add-members" onPress={onAdd} />
         <TextInput style={styles.input} accessibilityLabel="Rename group" value={name}
           onChangeText={setName} maxLength={128} editable={!busy} testID="group-rename-input" />
         <Action styles={styles} label="Rename group" disabled={busy || !name.trim()} testID="group-rename"

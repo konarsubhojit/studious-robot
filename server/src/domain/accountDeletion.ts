@@ -445,7 +445,16 @@ async function eraseAccount(
 ): Promise<EraseResult> {
   const pseudonym = `deleted-${randomUUID()}`;
   // Read before `eraseIdentity` drops the row that holds it.
-  const avatarKey = state.users.get(userId)?.avatarKey ?? null;
+  let avatarKey = state.users.get(userId)?.avatarKey ?? null;
+  if (state.db) {
+    // Another instance may have replaced the avatar since startup. A failed
+    // read must leave erasure pending, not discard the only durable object key.
+    const rows = await state.db.select({ avatarKey: usersTable.avatarKey })
+      .from(usersTable)
+      .where(eq(usersTable.userId, userId))
+      .limit(1);
+    avatarKey = rows[0]?.avatarKey ?? null;
+  }
 
   const sessionsRevoked = await eraseSessions(state, userId);
   try {

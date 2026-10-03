@@ -84,8 +84,18 @@ function remoteLogBuffer(logs: string): string {
 
 function remoteErrorText(text: string): string {
   return text
-    .replace(/[^\s<>@"']+@[^\s<>@"']+\.[a-z]{2,}/gi, '[REDACTED]')
+    .replace(/[^\s<>@"'()]+@[^\s<>@"'()]+\.[a-z]{2,}/gi, '[REDACTED]')
     .replace(/\b(userId|user_id|email|body|content|text|attachmentKey|attachment_key|objectKey)\b["']?\s*[:=][^\n]*/gi, '$1=[REDACTED]');
+}
+
+function remoteException(error: unknown): Error {
+  // Avoid serialising custom error properties (which may contain chat data).
+  const exception = new Error(error instanceof Error ? remoteErrorText(error.message) : 'Unknown JavaScript error');
+  if (error instanceof Error) {
+    exception.name = remoteErrorText(error.name);
+    exception.stack = error.stack && remoteErrorText(error.stack);
+  }
+  return exception;
 }
 
 /** Best-effort exception capture; neither context nor SDK failures may escape. */
@@ -115,13 +125,7 @@ export function captureCrash(error: unknown, isFatal: boolean, getLogs?: () => s
       // A failing log callback must not suppress the exception.
     }
 
-    // Avoid serialising custom error properties (which may contain chat data).
-    const exception = new Error(error instanceof Error ? remoteErrorText(error.message) : 'Unknown JavaScript error');
-    if (error instanceof Error) {
-      exception.name = remoteErrorText(error.name);
-      exception.stack = error.stack && remoteErrorText(error.stack);
-    }
-    const result = sdk.captureException(exception, {
+    const result = sdk.captureException(remoteException(error), {
       captureContext: { level: isFatal ? 'fatal' : 'error', tags },
       mechanism: { handled: false, type: 'onerror' },
       attachments: logs ? [{ filename: 'app-logs.jsonl', data: logs, contentType: 'text/plain' }] : [],
@@ -259,12 +263,15 @@ export function initCrashReporting(
 export function captureRenderError(error: Error, componentStack: string | null | undefined): void {
   if (status !== 'enabled') return;
   try {
-    loadCrashReportingSdk()?.captureException?.(error, {
+    const result = loadCrashReportingSdk()?.captureException?.(remoteException(error), {
       mechanism: { type: 'react', handled: true },
       captureContext: {
         level: 'error',
-        extra: redactSensitive({ componentStack }) as Record<string, unknown>,
+        extra: { componentStack: componentStack && remoteErrorText(componentStack) },
       },
+    });
+    Promise.resolve(result).catch(() => {
+      // Also swallow failures from asynchronous SDK shims.
     });
   } catch {
     // Reporting must never break the fallback UI or local crash-log saving.

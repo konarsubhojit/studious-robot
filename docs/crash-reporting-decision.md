@@ -110,6 +110,10 @@ are excluded, and emails and labelled identity/content fields in error details
 are redacted. Automatic console/network breadcrumbs are dropped because they
 bypass this allowlist. Do not put message bodies or attachment keys in exception
 text.
+React render errors captured by `ErrorBoundary` use the same exception
+sanitization and redact the component stack, but are marked handled/non-fatal.
+The original error is left intact for the fallback UI and local crash file.
+Synchronous and asynchronous SDK failures cannot interrupt that fallback.
 The app's handler is the sole `ErrorUtils` capture path: Sentry's
 `ReactNativeErrorHandlers` integration uses `onerror: false` to avoid
 deduplicating away the enriched event. Its production promise-rejection tracker,
