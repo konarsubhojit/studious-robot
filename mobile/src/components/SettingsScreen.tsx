@@ -15,6 +15,7 @@ import { THIRD_PARTY_LICENSES, summarizeLicenses } from '../licenses';
 import { EMPTY_STORAGE_USAGE, formatBytes } from '../storageUsage';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing, touchSlop, typography } from '../theme';
+import { errorMessage } from '../errors';
 import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
 import AppButton from './AppButton';
 import AppearanceSettings from './AppearanceSettings';
@@ -41,6 +42,8 @@ export type SettingsScreenProps = {
   signalingUrl: string;
   /** Persist a new URL. */
   onSaveSignalingUrl: (url: string) => void;
+  /** Persist a display name and return the server-normalized value. */
+  onSaveDisplayName: (displayName: string) => Promise<string | null>;
   /** Clear the identity and return to registration. */
   onSignOut: () => void;
   /** Active devices for this account, excluding sensitive push/session tokens. */
@@ -593,6 +596,7 @@ function SettingsScreen({
   accountProviderId,
   signalingUrl,
   onSaveSignalingUrl,
+  onSaveDisplayName,
   onSignOut,
   devices = [],
   onRefreshDevices,
@@ -632,11 +636,15 @@ function SettingsScreen({
 }: SettingsScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const { name } = usePeerProfile(userId);
-  const updatePeerProfile = useUpdatePeerProfile();
+  const { name, displayName } = usePeerProfile(userId);
+  const updatePeerProfile = useUpdatePeerProfile(userId);
 
   const [url, setUrl] = useState(signalingUrl ?? '');
   const [isEditingSignalingUrl, setIsEditingSignalingUrl] = useState(false);
+  const [displayNameDraft, setDisplayNameDraft] = useState('');
+  const [isEditingDisplayName, setIsEditingDisplayName] = useState(false);
+  const [isSavingDisplayName, setIsSavingDisplayName] = useState(false);
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
   const [isShowingLicenses, setIsShowingLicenses] = useState(false);
   // Transient confirmations, per the three-level rule in `Banner.tsx`: an
   // *event* that has already happened is a toast, a *condition* that persists
@@ -677,6 +685,7 @@ function SettingsScreen({
   const activeIceTransportPolicy = normalizeIceTransportPolicy(iceTransportPolicy);
   const trimmedUrl = url.trim();
   const urlDirty = trimmedUrl.length > 0 && trimmedUrl !== (signalingUrl ?? '').trim();
+  const displayNameDirty = displayNameDraft !== (displayName ?? '');
   const accountLine = describeAccount({ email: accountEmail, providerId: accountProviderId });
 
   const openSignalingEditor = () => {
@@ -698,7 +707,7 @@ function SettingsScreen({
     try {
       const avatarKey = await onChangeAvatar();
       if (avatarKey) {
-        updatePeerProfile(userId, { avatarKey });
+        updatePeerProfile({ avatarKey });
         confirm('Profile photo updated');
       }
     } catch (error) {
@@ -709,7 +718,28 @@ function SettingsScreen({
     } finally {
       setIsChangingAvatar(false);
     }
-  }, [confirm, isChangingAvatar, onChangeAvatar, updatePeerProfile, userId]);
+  }, [confirm, isChangingAvatar, onChangeAvatar, updatePeerProfile]);
+
+  const openDisplayNameEditor = () => {
+    setDisplayNameDraft(displayName ?? '');
+    setDisplayNameError(null);
+    setIsEditingDisplayName(true);
+  };
+
+  const saveDisplayName = async () => {
+    setIsSavingDisplayName(true);
+    setDisplayNameError(null);
+    try {
+      const savedDisplayName = await onSaveDisplayName(displayNameDraft);
+      updatePeerProfile({ displayName: savedDisplayName });
+      setIsEditingDisplayName(false);
+      confirm('Display name saved');
+    } catch (error) {
+      setDisplayNameError(errorMessage(error) ?? 'Could not save display name');
+    } finally {
+      setIsSavingDisplayName(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -757,10 +787,20 @@ function SettingsScreen({
         <SectionHeader title="Account" icon="settingsUsername" />
         <ListItem
           title="Username"
-          subtitle="Other people call you by this name. It is bound to your account and can't be changed here."
+          subtitle="Your permanent, claimed identity. It is bound to your account and can't be changed."
           value={userId || 'Not set'}
           icon="settingsUsername"
           testID="settings-username-row"
+        />
+        <ListItem
+          title="Display name"
+          subtitle="A cosmetic name you can change at any time."
+          value={displayName || 'Not set'}
+          icon="settingsUsername"
+          onPress={openDisplayNameEditor}
+          accessibilityLabel="Display name"
+          accessibilityHint="Opens an editor for your cosmetic name"
+          testID="settings-display-name-row"
         />
         <ListItem
           title="Signed in with"
@@ -910,9 +950,49 @@ function SettingsScreen({
         </Text>
       </ScrollView>
 
-      {/* The one editable value on this screen gets the full width and an
-          explicit commit, instead of a list-width input that can be edited by
-          accident. */}
+      <Sheet
+        visible={isEditingDisplayName}
+        onClose={() => setIsEditingDisplayName(false)}
+        title="Display name"
+        testID="settings-display-name-sheet">
+        <Text style={styles.hint}>
+          This cosmetic name can be changed at any time. Your username remains your permanent identity.
+        </Text>
+        <TextInput
+          value={displayNameDraft}
+          onChangeText={value => {
+            setDisplayNameDraft(value);
+            setDisplayNameError(null);
+          }}
+          placeholder="How others will see you"
+          placeholderTextColor={colors.textSecondary}
+          autoCapitalize="words"
+          autoCorrect={false}
+          autoFocus
+          style={styles.input}
+          accessibilityLabel="Display name"
+          accessibilityHint="A cosmetic name that can be changed at any time"
+          testID="settings-display-name-input"
+        />
+        {displayNameError ? (
+          <Text
+            style={styles.fieldError}
+            accessibilityRole="alert"
+            testID="settings-display-name-error">
+            {displayNameError}
+          </Text>
+        ) : null}
+        <AppButton
+          title={isSavingDisplayName ? 'Saving…' : 'Save display name'}
+          onPress={saveDisplayName}
+          disabled={!displayNameDirty || isSavingDisplayName}
+          testID="settings-save-display-name"
+          style={styles.saveButton}
+        />
+      </Sheet>
+
+      {/* The signaling URL gets the full width and an explicit commit, instead
+          of a list-width input that can be edited by accident. */}
       <Sheet
         visible={isEditingSignalingUrl}
         onClose={() => setIsEditingSignalingUrl(false)}
@@ -1037,6 +1117,10 @@ const createStyles = (colors: ThemeColors) =>
       ...typography.hint,
       color: colors.textSecondary,
       marginBottom: spacing.sm,
+    },
+    fieldError: {
+      ...typography.caption,
+      color: colors.negative,
     },
     emptyText: {
       ...typography.body,
