@@ -63,8 +63,14 @@ describe('crash reporting native wiring', () => {
   });
 
   test('the Gradle bundle cache tracks the inlined Sentry configuration', () => {
-    expect(appBuildGradle).toMatch(
-      /tasks\.withType\(com\.facebook\.react\.tasks\.BundleHermesCTask\)\.configureEach \{[\s\S]*\["SENTRY_DSN", "SENTRY_RELEASE", "SENTRY_DIST"\]\.each \{ key ->\s*inputs\.property\(key, System\.getenv\(key\) \?: ""\)/,
+    const cacheInputs = appBuildGradle.match(
+      /tasks\.withType\(com\.facebook\.react\.tasks\.BundleHermesCTask\)\.configureEach \{\s*\[([^\]]*)\]\.each \{ key ->\s*inputs\.property\(key, System\.getenv\(key\) \?: ""\)/,
+    );
+    expect(cacheInputs).not.toBeNull();
+    // Other inlined values may share the list; only the Sentry identity is asserted here.
+    const trackedKeys = cacheInputs![1].split(',').map(key => key.trim().replace(/"/g, ''));
+    expect(trackedKeys).toEqual(
+      expect.arrayContaining(['SENTRY_DSN', 'SENTRY_RELEASE', 'SENTRY_DIST']),
     );
   });
 
