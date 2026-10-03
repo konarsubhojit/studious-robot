@@ -127,6 +127,13 @@
       "when": 1790960319731,
       "tag": "0017_call_quality_samples",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790995620174,
+      "tag": "0018_message_sync_and_full_text_search",
+      "breakpoints": true
     }
   ]
 }

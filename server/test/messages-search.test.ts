@@ -115,6 +115,10 @@ test('GET /messages/search returns the caller matches newest-first with a peer i
   assert.ok(res.body.results[0].conversationId);
   assert.ok(res.body.results[0].messageId);
   assert.ok(res.body.results[0].createdAt);
+  const audit = await getJson(url, '/audit-log', aliceSession);
+  assert.ok(audit.body.entries.some(
+    (entry: any) => entry.event === 'message_search' && entry.details.query === 'lunch'
+  ));
 });
 
 test('GET /messages/search never returns another pair conversation', async (t) => {
@@ -197,7 +201,7 @@ test('GET /messages/search hides a blocked peer conversation', async (t) => {
   assert.deepEqual(after.body.results, []);
 });
 
-test('GET /messages/search matches the term literally', async (t) => {
+test('GET /messages/search does not interpret query punctuation as a pattern', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);
 

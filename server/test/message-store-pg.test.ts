@@ -146,19 +146,19 @@ test('listMessages clamps the page size rather than trusting the caller', async 
 
 // ─── searchMessages ───────────────────────────────────────────────────────────
 
-test('searchMessages matches the trigram index and escapes the user term', async () => {
+test('searchMessages uses the full-text index and excludes tombstones', async () => {
   const { store, queries } = createRecordingStore([[toTuple(messageRow({ body: 'save 100%' }))]]);
 
   const hits = await store.searchMessages({ userId: 'alice', query: '  100%  ', limit: 5 });
 
   const [query] = queries;
-  // `lower(body) like …` is the expression `idx_messages_body_trgm` indexes;
-  // any other formulation (ILIKE on the raw column, a regex) cannot use it.
-  assert.match(query.text, /lower\("messages"\."body"\) like \$\d+ escape '\\'/);
+  assert.match(
+    query.text,
+    /to_tsvector\('simple', "messages"\."body"\) @@ plainto_tsquery\('simple', \$\d+\)/
+  );
+  assert.match(query.text, /"messages"\."deleted_at" is null/);
   assert.match(query.text, /"messages"\."sender_id" = \$\d+ or "messages"\."recipient_id" = \$\d+/);
-  // The `%` the user typed is escaped, so it matches a literal percent sign
-  // instead of every message the caller can see.
-  assert.deepEqual(query.params, ['alice', 'alice', '%100\\%%', 5]);
+  assert.deepEqual(query.params, ['alice', 'alice', '100%', 5]);
   assert.equal(hits.length, 1);
 });
 
@@ -169,6 +169,62 @@ test('searchMessages needs both a term and a caller before it queries', async ()
   assert.deepEqual(await store.searchMessages({ query: 'lunch' }), []);
   assert.deepEqual(await store.searchMessages(), []);
   assert.equal(queries.length, 0);
+});
+
+test('searchMessages can narrow to a conversation and exclude blocked peers before paging', async () => {
+  const { store, queries } = createRecordingStore();
+
+  await store.searchMessages({
+    userId: 'alice',
+    query: 'lunch',
+    conversationId: 'alice:bob',
+    excludedUserIds: ['carol'],
+    limit: 5,
+  });
+
+  const [query] = queries;
+  assert.match(query.text, /"messages"\."conversation_id" = \$\d+/);
+  assert.match(query.text, /not \(/);
+  assert.match(query.text, /"messages"\."recipient_id" in \(\$\d+\)/);
+});
+
+test('listMessageChanges scopes participants, blocks, cursor and stable ordering in SQL', async () => {
+  const { store, queries } = createRecordingStore();
+
+  await store.listMessageChanges?.({
+    userId: 'alice',
+    since: '2024-01-01T00:00:00.000Z',
+    afterChangedAt: '2024-01-02T00:00:00.000Z',
+    afterChangeId: '12',
+    excludedUserIds: ['carol'],
+    limit: 10,
+  });
+
+  test('listMessageChanges returns a typed delta with normalized timestamps', async () => {
+    const snapshot = messageRow({
+      createdAt: '2024-01-01 00:00:00+00',
+      readAt: null,
+    });
+    const { store } = createRecordingStore([
+      [[7, 'new', '2024-01-01 00:00:00+00', snapshot]],
+    ]);
+
+    const changes = await store.listMessageChanges?.({
+      userId: 'alice',
+      since: '2023-12-31T00:00:00.000Z',
+    });
+
+    assert.equal(changes?.[0].changeId, '7');
+    assert.equal(changes?.[0].type, 'new');
+    assert.equal(changes?.[0].changedAt, '2024-01-01T00:00:00.000Z');
+    assert.equal(changes?.[0].message.createdAt, '2024-01-01T00:00:00.000Z');
+  });
+
+  const [query] = queries;
+  assert.match(query.text, /"message_changes"\."sender_id" = \$\d+ or "message_changes"\."recipient_id" = \$\d+/);
+  assert.match(query.text, /"message_changes"\."changed_at" > \$\d+/);
+  assert.match(query.text, /"message_changes"\."change_id" > \$\d+/);
+  assert.match(query.text, /order by "message_changes"\."changed_at" asc, "message_changes"\."change_id" asc/);
 });
 
 // ─── listUserMessages ─────────────────────────────────────────────────────────
@@ -266,12 +322,12 @@ test('listConversations reads a bounded projection page and joins its message po
 
 test('saveMessage inserts once, updates the projection once, all inside one transaction', async () => {
   const stored = messageRow({ messageId: 'm-9', body: 'hi' });
-  // [begin, insert into messages, insert into conversations, unread bump, commit]
+  // [begin, insert into messages, projection upsert, unread bump, change log, commit]
   const { store, queries } = createRecordingStore([[], [toTuple(stored)]]);
 
   const saved = await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
 
-  assert.equal(queries.length, 5, 'the insert and the projection update share one transaction');
+  assert.equal(queries.length, 6, 'the message, projection, and change log share one transaction');
   assert.equal(queries[0].text, 'begin');
   assert.match(queries[1].text, /insert into "messages"/);
   assert.match(queries[1].text, /on conflict do nothing/);
@@ -290,7 +346,8 @@ test('saveMessage inserts once, updates the projection once, all inside one tran
   // Bob is the recipient and sorts after alice, so he is participant B and his
   // half of the projection is the one that is bumped.
   assert.match(queries[3].text, /update "conversations" set "unread_b" = "conversations"\."unread_b" \+ 1/);
-  assert.equal(queries[4].text, 'commit');
+  assert.match(queries[4].text, /insert into "message_changes"/);
+  assert.equal(queries[5].text, 'commit');
   assert.equal(saved.messageId, 'm-9');
   assert.equal(saved.conversationId, 'alice:bob');
 });
@@ -436,6 +493,7 @@ test('markRead returns how many messages it flipped, and zeroes the reader\'s co
 
 test('only the author can delete, and only once', async () => {
   const { store, queries } = createRecordingStore([
+    [],
     [toTuple(messageRow({ body: '', deletedAt: '2024-01-03T00:00:00.000Z' }))],
   ]);
 
@@ -444,14 +502,15 @@ test('only the author can delete, and only once', async () => {
   // Authorship and the not-already-deleted guard are both in the WHERE clause,
   // so they are enforced by the database rather than by a read-then-write two
   // instances could interleave.
-  assert.match(queries[0].text, /"messages"\."sender_id" = \$\d+/);
-  assert.match(queries[0].text, /"messages"\."deleted_at" is null/);
+  assert.match(queries[1].text, /"messages"\."sender_id" = \$\d+/);
+  assert.match(queries[1].text, /"messages"\."deleted_at" is null/);
+  assert.match(queries[2].text, /insert into "message_changes"/);
   assert.equal(tombstoned?.body, '');
   assert.equal(tombstoned?.deletedAt, '2024-01-03T00:00:00.000Z');
 });
 
 test('deleting a message that is not the caller\'s is a miss, not an error', async () => {
-  const { store } = createRecordingStore([[]]);
+  const { store } = createRecordingStore([[], []]);
 
   assert.equal(await store.deleteMessage('alice:bob', 'm-1', 'bob'), null);
 });
@@ -461,6 +520,7 @@ test('deleting a message that is not the caller\'s is a miss, not an error', asy
 test('a reaction merges into the stored map without dropping other reactors', async () => {
   const existing = messageRow({ reactions: { '👍': ['bob'] } });
   const { store, queries } = createRecordingStore([
+    [],
     [toTuple(existing)],
     [toTuple(messageRow({ reactions: { '👍': ['bob', 'alice'] } }))],
   ]);
@@ -476,12 +536,13 @@ test('a reaction merges into the stored map without dropping other reactors', as
   // The merge rule is shared with the memory store rather than reimplemented
   // as a jsonb expression, so the two backends cannot disagree about what a
   // retried reaction does.
-  assert.deepEqual(JSON.parse(String(queries[1].params[0])), { '👍': ['bob', 'alice'] });
+  assert.deepEqual(JSON.parse(String(queries[2].params[0])), { '👍': ['bob', 'alice'] });
+  assert.match(queries[3].text, /insert into "message_changes"/);
   assert.deepEqual(updated?.reactions, { '👍': ['bob', 'alice'] });
 });
 
 test('a reaction on a tombstoned or missing message is refused', async () => {
-  const { store, queries } = createRecordingStore([[]]);
+  const { store, queries } = createRecordingStore([[], []]);
 
   const result = await store.reactToMessage({
     conversationId: 'alice:bob',
@@ -493,8 +554,8 @@ test('a reaction on a tombstoned or missing message is refused', async () => {
   assert.equal(result, null);
   // The read filters on `deleted_at is null`, so a tombstoned row is invisible
   // here and no update follows.
-  assert.match(queries[0].text, /"messages"\."deleted_at" is null/);
-  assert.equal(queries.length, 1);
+  assert.match(queries[1].text, /"messages"\."deleted_at" is null/);
+  assert.equal(queries.length, 3);
 });
 
 test('an incomplete reaction request never reaches the database', async () => {

@@ -2,6 +2,7 @@ import React from 'react';
 import { Button, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { getLogsAsText } from './appLogger';
 import { saveCrashLog } from './crashReporter';
+import { captureRenderError } from './crashReporting';
 
 /**
  * Top-level React error boundary.
@@ -37,9 +38,10 @@ export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, E
   }
 
   /** @param error */
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    captureRenderError(error, errorInfo.componentStack);
     this.setState({ saving: true });
-    saveCrashLog(error, true, getLogsAsText)
+    saveCrashLog(error, false, getLogsAsText)
       .then(result => {
         this.setState({ saving: false, logPath: result.success ? result.path ?? null : null });
       })

@@ -255,6 +255,22 @@ export function initCrashReporting(
   return status;
 }
 
+/** Report a recovered React render error without marking the session as crashed. */
+export function captureRenderError(error: Error, componentStack: string | null | undefined): void {
+  if (status !== 'enabled') return;
+  try {
+    loadCrashReportingSdk()?.captureException?.(error, {
+      mechanism: { type: 'react', handled: true },
+      captureContext: {
+        level: 'error',
+        extra: redactSensitive({ componentStack }) as Record<string, unknown>,
+      },
+    });
+  } catch {
+    // Reporting must never break the fallback UI or local crash-log saving.
+  }
+}
+
 /** Reset the memoised module, status and sink registration (test hook). */
 export function _resetCrashReportingForTests() {
   unregisterSink?.();
