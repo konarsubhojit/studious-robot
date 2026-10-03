@@ -1543,9 +1543,10 @@ export default function useMessaging({
     clearTimeout(drainTimerRef.current ?? undefined);
     drainTimerRef.current = null;
     drainOutboxRef.current();
+    void backfillMessages();
     const peer = activeChatPeerIdRef.current;
     if (peer) void fetchMessagesForPeer(peer);
-  }, [fetchMessagesForPeer]);
+  }, [backfillMessages, fetchMessagesForPeer]);
 
   /** The socket went down: drive the offline banner. */
   const handleSocketDisconnected = useCallback(() => {
