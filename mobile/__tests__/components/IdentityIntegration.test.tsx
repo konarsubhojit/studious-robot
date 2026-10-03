@@ -193,6 +193,50 @@ test('history peers outside the bootstrap page resolve exactly without changing 
   expect(transport.authedFetch).toHaveBeenCalledTimes(2); // shared self read and deduplicated exact lookup
 });
 
+test.each(['network', 'denied', 'missing'])('mounted history peers recover from %s exact lookup failures after the cooldown', async failure => {
+  let exactRequests = 0;
+  let avatarRequests = 0;
+  const onOpenConversation = jest.fn();
+  const transport = makeTransport({
+    searchUsers: async () => Array.from({ length: 100 }, (_, i) => ({
+      userId: `directory-${i}`, displayName: `Name ${i}`, avatarKey: null,
+    })),
+    authedFetch: async build => {
+      const url = build('session').url;
+      if (url.endsWith('/profile')) return response(null);
+      if (url.includes('/avatar/download')) {
+        avatarRequests += 1;
+        return response({
+          userId: peerId, avatarKey: 'recovered-key', downloadUrl: 'https://media.example/recovered',
+          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        });
+      }
+      exactRequests += 1;
+      if (exactRequests === 1) {
+        if (failure === 'network') throw new Error('offline');
+        if (failure === 'denied') return { ok: false, json: async () => null } as Response;
+        return response({ users: [] });
+      }
+      return response({ users: [{ userId: peerId, displayName: 'Recovered Peer', avatarKey: 'recovered-key' }] });
+    },
+  });
+  const tree = await renderProfile(
+    <ChatListScreen conversations={[conversation]} onOpenConversation={onOpenConversation} />, transport,
+  );
+  expect(texts(tree)).toContain(peerId);
+  expect(exactRequests).toBe(1);
+  expect(avatarRequests).toBe(0);
+  await act(async () => { jest.advanceTimersByTime(59_999); });
+  expect(exactRequests).toBe(1);
+  await act(async () => { jest.advanceTimersByTime(1); });
+  expect(exactRequests).toBe(2);
+  expect(texts(tree)).toContain('Recovered Peer');
+  expect(avatarRequests).toBe(1);
+  expect(tree.root.findAll(n => n.props.source?.uri === 'https://media.example/recovered').length).toBeGreaterThan(0);
+  act(() => { button(tree, 'chat-list-row').props.onPress(); });
+  expect(onOpenConversation).toHaveBeenCalledWith(peerId);
+});
+
 test('conversation header uses the name while profile and call callbacks remain unchanged', async () => {
   const onOpenProfile = jest.fn();
   const onStartAudioCall = jest.fn();

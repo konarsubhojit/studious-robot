@@ -341,6 +341,85 @@ test('missing, denied and blocked exact lookups do not cascade retries', async (
   expect(store.get('missing').name).toBe('missing');
 });
 
+test.each(['unwatched', 'blocked', 'resolved', 'disposed'])('exact retry deadlines ignore %s peers', async state => {
+  const authedFetch = jest.fn(async () => response(null, false));
+  const { store } = setup({ authedFetch });
+  const unwatch = store.watch('peer');
+  await store.ensureProfile('peer');
+  expect(jest.getTimerCount()).toBe(1);
+  if (state === 'unwatched') unwatch();
+  if (state === 'blocked') store.setBlocked(['peer']);
+  if (state === 'resolved') store.seed('peer', { displayName: 'Resolved', avatarKey: null });
+  if (state === 'disposed') store.dispose();
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(authedFetch).toHaveBeenCalledTimes(2);
+  expect(jest.getTimerCount()).toBe(0);
+});
+
+test('an exact retry pending past its deadline does not spin timers or duplicate requests', async () => {
+  let finish!: (value: Response) => void;
+  let exactRequests = 0;
+  const { store } = setup({
+    authedFetch: async build => {
+      if (build('session').url.endsWith('/profile')) return response(null);
+      exactRequests += 1;
+      if (exactRequests === 1) return response(null, false);
+      return new Promise(resolve => { finish = resolve; });
+    },
+  });
+  store.watch('peer');
+  await store.ensureProfile('peer');
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(exactRequests).toBe(2);
+  const pending = store.ensureProfile('peer');
+  expect(store.ensureProfile('peer')).toBe(pending);
+  await jest.advanceTimersByTimeAsync(120_000);
+  expect(exactRequests).toBe(2);
+  expect(jest.getTimerCount()).toBe(0);
+  finish(response({ users: [] }));
+  await pending;
+  expect(jest.getTimerCount()).toBe(1);
+  await jest.advanceTimersByTimeAsync(1);
+  expect(exactRequests).toBe(3);
+  finish(response({ users: [{ userId: 'peer', displayName: 'Recovered', avatarKey: null }] }));
+  await store.ensureProfile('peer');
+  expect(store.get('peer').name).toBe('Recovered');
+  expect(jest.getTimerCount()).toBe(0);
+});
+
+test('scheduled exact retries retain deduplication and the two-request concurrency limit', async () => {
+  let retrying = false;
+  const resolvers: { id: string; finish: (value: Response) => void }[] = [];
+  const { store } = setup({
+    authedFetch: async build => {
+      const url = build('session').url;
+      if (url.endsWith('/profile')) return response(null);
+      if (!retrying) return response(null, false);
+      const id = url.split('userId=')[1];
+      return new Promise(resolve => { resolvers.push({ id, finish: resolve }); });
+    },
+  });
+  const ids = ['a', 'b', 'c', 'd'];
+  ids.forEach(id => store.watch(id));
+  await Promise.all(ids.map(id => store.ensureProfile(id)));
+  retrying = true;
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(resolvers).toHaveLength(2);
+  expect(jest.getTimerCount()).toBe(0);
+  const first = store.ensureProfile('a');
+  expect(store.ensureProfile('a')).toBe(first);
+  resolvers[0].finish(response({ users: [{ userId: 'a', displayName: 'Alice' }] }));
+  await first;
+  expect(resolvers).toHaveLength(3);
+  for (let i = 1; i < ids.length; i += 1) {
+    const { id, finish } = resolvers[i];
+    finish(response({ users: [{ userId: id, displayName: `Name ${id}` }] }));
+    await store.ensureProfile(id);
+    expect(resolvers).toHaveLength(Math.min(i + 3, ids.length));
+  }
+  expect(jest.getTimerCount()).toBe(0);
+});
+
 test('foreground refresh coalesces, bypasses cached names, and refreshes self', async () => {
   let name = 'Old Name';
   const searchUsers = jest.fn(async () => [{ userId: 'peer', displayName: name, avatarKey: null }]);
@@ -466,4 +545,32 @@ test('a changed avatar key rejects an old URL and loads the replacement', async 
   await pending;
   await store.ensureAvatar('peer');
   expect(store.get('peer').avatarUrl).toBe('https://media.example/new');
+});
+
+test.each(['key change', 'block/unblock'])('an obsolete avatar rejection after %s immediately starts the current download', async change => {
+  let reject!: (reason: Error) => void;
+  const currentKey = change === 'key change' ? 'new' : 'old';
+  const authedFetch = jest.fn()
+    .mockImplementationOnce(() => new Promise<Response>((_resolve, rejectRequest) => { reject = rejectRequest; }))
+    .mockResolvedValue(response(signed('https://media.example/current', 'peer', currentKey)));
+  const { store } = setup({ authedFetch });
+  store.seed('peer', { displayName: 'Ada', avatarKey: 'old' });
+  store.watch('peer');
+  const pending = store.ensureAvatar('peer');
+  if (change === 'key change') {
+    store.seed('peer', { avatarKey: 'new' });
+  } else {
+    store.setBlocked(['peer']);
+    store.setBlocked([]);
+  }
+  expect(authedFetch).toHaveBeenCalledTimes(1);
+  const now = Date.now();
+  reject(new Error('obsolete download failed'));
+  await pending;
+  expect(Date.now()).toBe(now);
+  expect(authedFetch).toHaveBeenCalledTimes(2);
+  await store.ensureAvatar('peer');
+  expect(store.get('peer').avatarKey).toBe(currentKey);
+  expect(store.get('peer').avatarUrl).toBe('https://media.example/current');
+  expect(authedFetch).toHaveBeenCalledTimes(2);
 });

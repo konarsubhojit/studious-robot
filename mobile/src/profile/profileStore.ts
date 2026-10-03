@@ -147,7 +147,10 @@ export function createProfileStore(transport: ProfileTransport) {
         });
         drainExactQueue();
       });
-    }).finally(() => { exactRequests.delete(id); });
+    }).finally(() => {
+      exactRequests.delete(id);
+      schedule();
+    });
     exactRequests.set(id, operation);
     return operation;
   };
@@ -178,6 +181,8 @@ export function createProfileStore(transport: ProfileTransport) {
     })().finally(() => { refreshRequest = undefined; });
     return refreshRequest;
   };
+  const canRetryExact = (id: string) => watchedIds.has(id)
+    && !blocked.has(id) && !knownProfiles.has(id) && !exactRequests.has(id);
   const schedule = () => {
     if (timer) clearTimeout(timer);
     timer = undefined;
@@ -185,6 +190,9 @@ export function createProfileStore(transport: ProfileTransport) {
     let nextDeadline = Number.POSITIVE_INFINITY;
     deadlines.forEach((deadline, id) => {
       if (watchedIds.has(id)) nextDeadline = Math.min(nextDeadline, deadline);
+    });
+    exactRetryAt.forEach((deadline, id) => {
+      if (canRetryExact(id)) nextDeadline = Math.min(nextDeadline, deadline);
     });
     if (!Number.isFinite(nextDeadline)) return;
     timer = setTimeout(() => {
@@ -195,6 +203,9 @@ export function createProfileStore(transport: ProfileTransport) {
           const profile = profiles.get(id);
           if (profile) profiles.set(id, { ...profile, avatarUrl: undefined });
         }
+      });
+      exactRetryAt.forEach((deadline, id) => {
+        if (canRetryExact(id) && deadline <= now) void ensureProfile(id);
       });
       emit();
       schedule();
@@ -224,7 +235,9 @@ export function createProfileStore(transport: ProfileTransport) {
       });
       deadlines.set(id, valid ? expiresAt - REFRESH_SKEW_MS : Date.now() + RETRY_MS);
     }).catch(() => {
-      if (!disposed && !blocked.has(id)) deadlines.set(id, Date.now() + RETRY_MS);
+      if (disposed || blocked.has(id) || get(id).avatarKey !== key
+        || (accessVersions.get(id) ?? 0) !== accessVersion) return;
+      deadlines.set(id, Date.now() + RETRY_MS);
     }).finally(() => {
       pending.delete(id);
       if (!disposed) {
