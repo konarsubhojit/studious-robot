@@ -57,3 +57,8 @@ export function usePeerProfile(userId: string, suppliedProfile?: PeerProfile) {
   }, [store, userId, profile]);
   return profile;
 }
+
+export function useUpdatePeerProfile(userId: string) {
+  const store = useContext(ProfileContext);
+  return useCallback((profile: PeerProfile) => store?.seed(userId, profile), [store, userId]);
+}
