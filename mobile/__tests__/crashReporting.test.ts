@@ -54,11 +54,13 @@ describe('crashReporting', () => {
     const sdk = {
       init: jest.fn(),
       addBreadcrumb: jest.fn(),
+      captureException: jest.fn(),
     };
 
     beforeEach(() => {
       sdk.init.mockReset();
       sdk.addBreadcrumb.mockReset();
+      sdk.captureException.mockReset();
       jest.doMock('@sentry/react-native', () => sdk);
     });
 
@@ -139,6 +141,48 @@ describe('crashReporting', () => {
       }, DSN);
 
       expect(() => registered?.({ level: 'info', name: 'app.startup' })).not.toThrow();
+    });
+
+    test('captures render errors with a redacted component stack as handled and non-fatal', () => {
+      const { initCrashReporting, captureRenderError } = require('../src/crashReporting');
+      initCrashReporting(undefined, DSN);
+      const error = new Error('render failed');
+      const componentStack = '\n    at ThrowingChild\n    at ErrorBoundary';
+
+      captureRenderError(error, componentStack);
+
+      const { redactSensitive } = require('../src/appLogger');
+      expect(redactSensitive).toHaveBeenCalledWith({ componentStack });
+      expect(sdk.captureException).toHaveBeenCalledWith(error, {
+        mechanism: { type: 'react', handled: true },
+        captureContext: { level: 'error', extra: { componentStack } },
+      });
+    });
+
+    test('does not capture before initialisation or when reporting is disabled', () => {
+      const { initCrashReporting, captureRenderError } = require('../src/crashReporting');
+      const error = new Error('render failed');
+      captureRenderError(error, null);
+      initCrashReporting(undefined, null);
+      captureRenderError(error, undefined);
+
+      expect(sdk.captureException).not.toHaveBeenCalled();
+    });
+
+    test('a failing or missing exception reporter does not throw', () => {
+      const { initCrashReporting, captureRenderError } = require('../src/crashReporting');
+      initCrashReporting(undefined, DSN);
+      sdk.captureException.mockImplementation(() => {
+        throw new Error('reporter unavailable');
+      });
+
+      expect(() => captureRenderError(new Error('render failed'), null)).not.toThrow();
+
+      jest.resetModules();
+      jest.doMock('@sentry/react-native', () => ({ init: jest.fn() }));
+      const reporter = require('../src/crashReporting');
+      reporter.initCrashReporting(undefined, DSN);
+      expect(() => reporter.captureRenderError(new Error('render failed'), undefined)).not.toThrow();
     });
   });
 });

@@ -27,6 +27,7 @@ export type CrashReportingSdk = {
   init?: (options: object) => void;
   addBreadcrumb?: (breadcrumb: object) => void;
   setTag?: (key: string, value: string) => void;
+  captureException?: (error: unknown, hint: object) => void;
 };
 
 /**
@@ -152,6 +153,22 @@ export function initCrashReporting(
 
   status = 'enabled';
   return status;
+}
+
+/** Report a recovered React render error without marking the session as crashed. */
+export function captureRenderError(error: Error, componentStack: string | null | undefined): void {
+  if (status !== 'enabled') return;
+  try {
+    loadCrashReportingSdk()?.captureException?.(error, {
+      mechanism: { type: 'react', handled: true },
+      captureContext: {
+        level: 'error',
+        extra: redactSensitive({ componentStack }),
+      },
+    });
+  } catch {
+    // Reporting must never break the fallback UI or local crash-log saving.
+  }
 }
 
 /** Reset the memoised module, status and sink registration (test hook). */
