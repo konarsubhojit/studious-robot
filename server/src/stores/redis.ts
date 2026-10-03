@@ -3,6 +3,7 @@ import { STORE_NAMES } from './contracts.ts';
 import { createRedisMessageBus } from '../messageBus.ts';
 import { isRedisPermissionError, reportRedisPermissionFailure } from '../lib/redisHealth.ts';
 import { timeQuery } from '../lib/queryTiming.ts';
+import { createRedisSecurity } from './security.ts';
 import {
   SHARED_SESSION_MAX_TTL_MS,
   SHARED_CALL_MAX_TTL_MS,
@@ -134,7 +135,7 @@ async function createRedisPgStores(
   }
 
   const createClient =
-    opts.createClient || ((await import('redis')).createClient.bind(null, { url }));
+    opts.createClient || ((await import('redis')).createClient.bind(null, { url, disableOfflineQueue: true }));
   const createAdapter =
     opts.createAdapter || (await import('@socket.io/redis-adapter')).createAdapter;
 
@@ -220,6 +221,7 @@ async function createRedisPgStores(
   const bundle: Record<string, any> = createHotMaps();
   bundle.messageBus = messageBus;
   bundle.stateAffinity = 'shared';
+  bundle.security = createRedisSecurity(busPub);
   bundle.instanceId = instanceId;
 
   bundle.callState = {

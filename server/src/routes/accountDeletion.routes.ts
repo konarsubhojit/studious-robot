@@ -51,7 +51,7 @@ function createAccountDeletionRouter({
       return;
     }
 
-    const rateCheck = state.accountDeletionRateLimiter.check(session.userId);
+    const rateCheck = await state.accountDeletionRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       res.status(429).json({
         error: 'too many requests',

@@ -38,7 +38,8 @@ export type AuditEntry = {
  *
  * Expired buckets are pruned once per window, independently of request volume.
  */
-function createRateLimiter({ maxRequests, windowMs }: { maxRequests: number; windowMs: number; }): import('./stores/contracts.ts').RateLimiter &
+function createRateLimiter({ maxRequests, windowMs }: { maxRequests: number; windowMs: number; }):
+{ check: (key: string, now?: number) => import('./stores/contracts.ts').RateLimitResult } &
 { reset: (key?: string) => void; size: () => number; } {
   const buckets: Map<string, { windowStart: number; count: number; }> = new Map();
 
@@ -99,6 +100,60 @@ function createRateLimiter({ maxRequests, windowMs }: { maxRequests: number; win
       return buckets.size;
     },
   };
+}
+
+export function createSharedRateLimiter(options: {
+  maxRequests: number;
+  windowMs: number;
+  namespace: string;
+  security?: import('./stores/contracts.ts').SecurityTransport;
+}): import('./stores/contracts.ts').RateLimiter {
+  const local = createRateLimiter(options);
+  if (!options.security) return local;
+  const security = options.security;
+  return {
+    async check(key, now) {
+      try {
+        return await security.check(options.namespace, key, options.maxRequests, options.windowMs);
+      } catch {
+        return local.check(key, now);
+      }
+    },
+  };
+}
+
+type PrivacyState = Pick<import('./stores/contracts.ts').Stores, 'blocks' | 'blockState' | 'stateAffinity'>;
+
+export async function isBlockedAsync(state: PrivacyState, blockerId: string, targetId: string): Promise<boolean> {
+  if (!state.blockState) return state.stateAffinity === 'shared' || isBlocked(state.blocks, blockerId, targetId);
+  try {
+    return await state.blockState.isBlocked(blockerId, targetId);
+  } catch {
+    // A stale negative cache entry must never grant access during a store outage.
+    return true;
+  }
+}
+
+export async function isDirectoryVisibleAsync(state: PrivacyState, viewerId: string, candidateId: string): Promise<boolean> {
+  return !(await isBlockedAsync(state, viewerId, candidateId)) &&
+    !(await isBlockedAsync(state, candidateId, viewerId));
+}
+
+export async function filterVisible<T>(items: T[], visible: (item: T) => Promise<boolean>): Promise<T[]> {
+  const flags = await Promise.all(items.map(visible));
+  return items.filter((_item, index) => flags[index]);
+}
+
+export async function listBlocksAsync(state: PrivacyState, userId: string, bothDirections = false): Promise<string[]> {
+  if (state.blockState) return state.blockState.list(userId, bothDirections);
+  if (state.stateAffinity === 'shared') throw new Error('shared block store unavailable');
+  const ids = new Set(listBlocks(state.blocks, userId));
+  if (bothDirections) {
+    for (const [blocker, blocked] of state.blocks) {
+      if (blocked.has(userId)) ids.add(blocker);
+    }
+  }
+  return [...ids];
 }
 
 // ─── Blocklist helpers ────────────────────────────────────────────────────────

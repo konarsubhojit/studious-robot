@@ -8,8 +8,10 @@
 import test from 'node:test';
 import { pushSenders } from '../src/push.ts';
 import assert from 'node:assert/strict';
-import { asMessageStore, closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { asMessageStore, closeTestServer, createTestSharedBlocks, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 import { createServer } from '../src/index.ts';
+import { createMemoryStores } from '../src/stores/index.ts';
+import { createMemoryMessageStore, createMessageRecord } from '../src/messageStore.ts';
 import { io as ioClient } from 'socket.io-client';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1237,6 +1239,65 @@ test('GET /messages does not leak another pair conversation', async (t) => {
 });
 
 // ─── GET /conversations ───────────────────────────────────────────────────────
+
+test('GET /conversations reads shared blocks once for many peers and fails closed', async (t) => {
+  const blockState = createTestSharedBlocks();
+  const stores = Object.assign(createMemoryStores(), {
+    stateAffinity: 'shared' as const,
+    blockState,
+  });
+  const messageStore = createMemoryMessageStore();
+  const conversations: Awaited<ReturnType<typeof messageStore.listConversations>> = [];
+  const peers = Array.from({ length: 150 }, (_, index) => `peer-${index}`);
+  for (const peer of peers) {
+    const message = await messageStore.saveMessage(createMessageRecord({
+      senderId: 'alice', recipientId: peer, body: 'hello',
+    }));
+    conversations.push({
+      conversationId: message.conversationId,
+      peerId: peer,
+      lastMessage: message,
+      unreadCount: 0,
+    });
+  }
+  // Exercise route-level filtering independently of the memory store's cap.
+  // Call-only peers added by the route are not subject to that store limit.
+  t.mock.method(messageStore, 'listConversations', async () => conversations.toReversed());
+  await blockState.add('alice', peers[0]);
+  await blockState.add(peers[1], 'alice');
+  stores.blocks.set('alice', new Set([peers[2]]));
+  const { url, teardown } = await startServer({ stores, messageStore });
+  t.after(teardown);
+  const session = await createSession(url, 'alice');
+  const list = t.mock.method(blockState, 'list');
+  const isBlocked = t.mock.method(blockState, 'isBlocked');
+  const expected = (await messageStore.listConversations('alice'))
+    .filter(conversation => !peers.slice(0, 2).includes(conversation.peerId))
+    .map(conversation => ({
+      ...conversation, lastActivity: conversation.lastMessage, online: false,
+    }));
+
+  const result = await getJson(url, '/conversations', session);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.conversations, expected);
+  assert.equal(result.body.conversations.length, 148);
+  assert.equal(list.mock.callCount(), 1);
+  assert.deepEqual(list.mock.calls[0].arguments, ['alice', true]);
+  assert.equal(isBlocked.mock.callCount(), 0);
+
+  await blockState.add(peers[2], 'alice');
+  const updated = await getJson(url, '/conversations', session);
+  assert.equal(updated.status, 200);
+  assert.deepEqual(updated.body.conversations, expected.filter(conversation => conversation.peerId !== peers[2]));
+  assert.equal(list.mock.callCount(), 2);
+
+  blockState.failure = true;
+  const unavailable = await getJson(url, '/conversations', session);
+  assert.equal(unavailable.status, 503);
+  assert.deepEqual(unavailable.body, { error: 'message store unavailable' });
+  assert.equal(list.mock.callCount(), 3);
+  assert.equal(isBlocked.mock.callCount(), 0);
+});
 
 test('GET /conversations requires a valid session', async (t) => {
   const { url, teardown } = await startServer();

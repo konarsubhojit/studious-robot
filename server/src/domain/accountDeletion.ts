@@ -350,6 +350,8 @@ async function eraseDevices(state: ServerState, userId: string): Promise<number>
 
 /** Remove blocks in both directions: the user's own, and those naming them. */
 async function eraseBlocks(state: ServerState, userId: string): Promise<number> {
+  if (state.blockState) return state.blockState.erase(userId);
+  if (state.stateAffinity === 'shared') throw new Error('shared block store unavailable');
   let removed = state.blocks.get(userId)?.size ?? 0;
   state.blocks.delete(userId);
   for (const [blockerId, blocked] of state.blocks) {

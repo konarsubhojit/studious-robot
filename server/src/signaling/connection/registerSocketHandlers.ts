@@ -1,6 +1,6 @@
 import { DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } from '../../config.ts';
 import { normaliseId, sanitizeForLog } from '../../lib/normalize.ts';
-import { isBlocked } from '../../security.ts';
+import { isBlockedAsync } from '../../security.ts';
 import { resolveSocketIdentityAsync } from '../../lib/auth.ts';
 import { ensurePresenceRecord, upsertDevice, addConnection, removeConnection, userRoom } from '../../lib/state.ts';
 import {
@@ -153,7 +153,7 @@ function registerSocketHandlers(
         return;
       }
 
-      if (isBlocked(state.blocks, calleeId, socket.data.identity.userId)) {
+      if (await isBlockedAsync(state, calleeId, socket.data.identity.userId)) {
         state.auditLog.record({
           event: 'call.blocked',
           actor: socket.data.identity.userId,
@@ -175,7 +175,7 @@ function registerSocketHandlers(
         return;
       }
 
-      const rateCheck = state.callInitRateLimiter.check(socket.data.identity.userId);
+      const rateCheck = await state.callInitRateLimiter.check(socket.data.identity.userId);
       if (!rateCheck.allowed) {
         state.auditLog.record({
           event: 'call.rate_limited',

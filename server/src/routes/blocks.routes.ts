@@ -1,5 +1,5 @@
 import express from 'express';
-import { addBlock, removeBlock, listBlocks } from '../security.ts';
+import { addBlock, removeBlock, listBlocksAsync } from '../security.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { persistBlock, deletePersistedBlock } from '../lib/persistence.ts';
@@ -40,8 +40,17 @@ function createBlocksRouter({ state, db }: { state: import('../stores/contracts.
       return;
     }
 
-    addBlock(state.blocks, session.userId, blockeeId);
-    await persistBlock(db, session.userId, blockeeId);
+    try {
+      if (state.blockState) await state.blockState.add(session.userId, blockeeId);
+      else {
+        if (state.stateAffinity === 'shared') throw new Error('shared block store unavailable');
+        addBlock(state.blocks, session.userId, blockeeId);
+        await persistBlock(db, session.userId, blockeeId);
+      }
+    } catch {
+      res.status(503).json({ error: 'block store unavailable' });
+      return;
+    }
     state.auditLog.record({
       event: 'block.added',
       actor: session.userId,
@@ -71,13 +80,22 @@ function createBlocksRouter({ state, db }: { state: import('../stores/contracts.
       return;
     }
 
-    const removed = removeBlock(state.blocks, session.userId, blockeeId);
+    let removed: boolean;
+    try {
+      if (state.blockState) removed = await state.blockState.remove(session.userId, blockeeId);
+      else {
+        if (state.stateAffinity === 'shared') throw new Error('shared block store unavailable');
+        removed = removeBlock(state.blocks, session.userId, blockeeId);
+        if (removed) await deletePersistedBlock(db, session.userId, blockeeId);
+      }
+    } catch {
+      res.status(503).json({ error: 'block store unavailable' });
+      return;
+    }
     if (!removed) {
       res.status(404).json({ error: 'block not found' });
       return;
     }
-
-    await deletePersistedBlock(db, session.userId, blockeeId);
 
     state.auditLog.record({
       event: 'block.removed',
@@ -101,7 +119,11 @@ function createBlocksRouter({ state, db }: { state: import('../stores/contracts.
     const session = await requireSession(req, res);
     if (!session) return;
 
-    res.status(200).json({ blockedUsers: listBlocks(state.blocks, session.userId) });
+    try {
+      res.status(200).json({ blockedUsers: await listBlocksAsync(state, session.userId) });
+    } catch {
+      res.status(503).json({ error: 'block store unavailable' });
+    }
   });
 
   return router;

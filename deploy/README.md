@@ -291,9 +291,20 @@ when `REDIS_URL` is configured:
   the **Pub/Sub bus** that invalidates it, so an invalidation on one VM is not
   invisible to the other for a full TTL;
 - the **Socket.IO Redis adapter**, so an event addressed to a user reaches
-  their socket whichever VM holds it.
+  their socket whichever VM holds it;
+- all **twelve security rate budgets**, using atomic Redis Lua counters with
+  TTLs and explicit namespaces on the existing bus command client. Avatar writes
+  and reads reuse the message-send and attachment-download budgets. Redis
+  disconnects, errors or commands exceeding 250 ms fall back to per-instance
+  limits, with a rate-limited warning and live `/health.rateLimit` degradation
+  and recovery reporting. Offline commands are not queued;
+- the **blocklist**, using authoritative shared PostgreSQL reads/writes when
+  shared affinity is enabled (not local Maps or a Redis cache). Startup hydration
+  never writes block snapshots back. Failures deny privacy-sensitive access;
+  block mutations/listing return 503. Account deletion removes both directions.
+  `DATABASE_URL` must point at the same database on both VMs.
 
-Without it each VM keeps a private copy of all four and the deployment is
+Without Redis the Redis-backed subsystems above remain private to each VM and the deployment is
 quietly wrong rather than loudly broken — clients read stale data, calls
 disappear, and nothing logs an error. Set `REDIS_URL` in
 `/etc/robot-signal/env` on **both** VMs, pointing at the shared data host.

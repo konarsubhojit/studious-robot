@@ -5,6 +5,7 @@ import { readCallHistory } from '../domain/callHistory.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { describeError } from '../lib/errors.ts';
 import { clampMessageLimit } from '../messageStore.ts';
+import { listBlocksAsync } from '../security.ts';
 
 type ServerState = import('../stores/contracts.ts').ServerState;
 type DeviceRecord = import('../stores/contracts.ts').DeviceRecord;
@@ -333,7 +334,7 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
       return;
     }
 
-    const rateCheck = state.accountExportRateLimiter.check(session.userId);
+    const rateCheck = await state.accountExportRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       res.status(429).json({
         error: 'too many requests',
@@ -407,7 +408,7 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
       const devices = Array.from(state.devices.values())
         .filter((device) => device.userId === session.userId)
         .map(exportDevice);
-      const blocks = Array.from(state.blocks.get(session.userId) ?? []);
+      const blocks = await listBlocksAsync(state, session.userId);
       state.auditLog.record({
         event: 'account.exported',
         actor: session.userId,
