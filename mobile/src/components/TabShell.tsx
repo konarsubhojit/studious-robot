@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
 import { resolveAttachmentDownloadUrl } from '../attachmentAccess';
+import { uploadAvatar } from '../avatarUpload';
 import { AttachmentUriProvider } from '../attachmentUri';
 import {
   describeAttachmentDownloadResult,
@@ -161,6 +162,9 @@ function TabShell() {
     revokeDevice,
     revokeAllDevices,
   } = useDevices({ signalingUrl, authedFetch, updateStatus });
+  const handleChangeAvatar = useCallback(async () => {
+    return uploadAvatar({ authedFetch, signalingUrl });
+  }, [authedFetch, signalingUrl]);
 
   const renderChatConversation = useCallback((peerId: string | null, { messageId }: { messageId?: string | null; } = {}) => {
     // A conversation route always carries its peer; without one there is
@@ -497,6 +501,7 @@ function TabShell() {
       blockedUsers={chat.blockedUsers}
       onUnblockUser={chat.unblockPeer}
       onOpenProfile={openPeerProfile}
+      onChangeAvatar={handleChangeAvatar}
     />
   ), [
     accountEmail,
@@ -515,6 +520,7 @@ function TabShell() {
     chat.unblockPeer,
     clearCachedMedia,
     handleAutoLightingToggle,
+    handleChangeAvatar,
     handleDeveloperModeToggle,
     handleExportLogs,
     handleHapticsToggle,

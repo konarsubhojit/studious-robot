@@ -1,4 +1,5 @@
 import { resolveDisplayName } from '../../shared/identity';
+import * as attachmentCache from '../src/attachmentCache';
 import { createProfileStore } from '../src/profile/profileStore';
 import { bearerAuthHeaders } from '../src/authHeaders';
 import type { ProfileStore, ProfileTransport } from '../src/profile/profileStore';
@@ -48,6 +49,17 @@ test('directory and self reads are batched, names resolved, and presence exclude
   expect(store.get('unknown').name).toBe('unknown');
   expect(authedFetch).toHaveBeenCalledTimes(1);
   expect(searchUsers).toHaveBeenCalledTimes(1);
+});
+
+test('changing an avatar key evicts the previous cached image', () => {
+  const evict = jest.spyOn(attachmentCache, 'evictCachedAttachment').mockResolvedValue(true);
+  const { store } = setup();
+
+  store.seed('self', { avatarKey: 'avatars/self/old.jpg' });
+  store.seed('self', { avatarKey: 'avatars/self/new.jpg' });
+
+  expect(evict).toHaveBeenCalledWith('avatars/self/old.jpg');
+  evict.mockRestore();
 });
 
 test('one directory request serves many identities and does not fetch their avatars', async () => {

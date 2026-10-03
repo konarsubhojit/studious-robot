@@ -19,7 +19,7 @@ import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcCo
 import AppButton from './AppButton';
 import AppearanceSettings from './AppearanceSettings';
 import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch, Toast } from './primitives';
-import { usePeerProfile } from '../profile/ProfileContext';
+import { usePeerProfile, useUpdatePeerProfile } from '../profile/ProfileContext';
 import type { StorageUsage } from '../storageUsage';
 import type { ThemeColors } from '../theme';
 import type { ToastTone } from './primitives';
@@ -116,6 +116,8 @@ export type SettingsScreenProps = {
   onUnblockUser?: (peerId: string) => void;
   /** Open the person hub; every person-shaped row routes there. */
   onOpenProfile?: (peerId: string) => void;
+  /** Pick and upload a new account avatar; returns its published key. */
+  onChangeAvatar?: () => Promise<string | null>;
 };
 
 function RelationshipRow({ peer, blocked, subtitle, onOpenProfile, onRestore, confirm, styles }: {
@@ -513,9 +515,9 @@ function StorageSettings({
       : 'Storage used on this device, unavailable';
   const clearSubtitle = storageUsage.measured && storageUsage.mediaFileCount > 0
     ? `Frees about ${formatBytes(storageUsage.mediaBytes)}. `
-      + 'Photos and voice notes download again when you open them.'
-    : 'Removes downloaded photos and voice notes. '
-      + 'They download again when you open them.';
+      + 'Photos, avatars, and voice notes download again when needed.'
+    : 'Removes downloaded photos, avatars, and voice notes. '
+      + 'They download again when needed.';
   return (
     <>
       <SectionHeader title="Storage &amp; data" icon="settingsStorage" />
@@ -626,10 +628,12 @@ function SettingsScreen({
   blockedUsers = [],
   onUnblockUser,
   onOpenProfile,
+  onChangeAvatar,
 }: SettingsScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const { name } = usePeerProfile(userId);
+  const updatePeerProfile = useUpdatePeerProfile();
 
   const [url, setUrl] = useState(signalingUrl ?? '');
   const [isEditingSignalingUrl, setIsEditingSignalingUrl] = useState(false);
@@ -641,6 +645,7 @@ function SettingsScreen({
   // someone removed a row, but clearing media or saving a server address gave
   // no sign the app had heard the tap.
   const [toast, setToast] = useState<{ message: string; tone: ToastTone; } | null>(null);
+  const [isChangingAvatar, setIsChangingAvatar] = useState(false);
   const dismissToast = useCallback(() => setToast(null), []);
   const confirm = useCallback(
     (message: string) => setToast({ message, tone: 'success' }),
@@ -687,6 +692,25 @@ function SettingsScreen({
     confirm('Signaling server saved');
   };
 
+  const changeAvatar = useCallback(async () => {
+    if (!onChangeAvatar || isChangingAvatar) return;
+    setIsChangingAvatar(true);
+    try {
+      const avatarKey = await onChangeAvatar();
+      if (avatarKey) {
+        updatePeerProfile(userId, { avatarKey });
+        confirm('Profile photo updated');
+      }
+    } catch (error) {
+      setToast({
+        message: error instanceof Error ? error.message : 'Could not update the profile photo',
+        tone: 'error',
+      });
+    } finally {
+      setIsChangingAvatar(false);
+    }
+  }, [confirm, isChangingAvatar, onChangeAvatar, updatePeerProfile, userId]);
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -717,6 +741,16 @@ function SettingsScreen({
               {accountLine}
             </Text>
           </View>
+          {onChangeAvatar ? (
+            <AppButton
+              title={isChangingAvatar ? 'Uploading…' : 'Change photo'}
+              onPress={() => { void changeAvatar(); }}
+              disabled={isChangingAvatar}
+              style={styles.inlineButton}
+              accessibilityLabel="Change profile photo"
+              testID="settings-change-avatar"
+            />
+          ) : null}
         </View>
 
         {/* ── Account ─────────────────────────────────────────────────────── */}
