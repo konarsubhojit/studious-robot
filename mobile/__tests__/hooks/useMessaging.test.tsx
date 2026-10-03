@@ -10,6 +10,7 @@ import {
 } from '../../src/messageNotification';
 import { displayMessageReceivedInApp } from '../../src/pushNotifications';
 import * as chatDb from '../../src/storage/chatDb';
+import * as resourceCache from '../../src/storage/resourceCache';
 import { triggerHapticUnlessSilent } from '../../src/haptics';
 import { evictCachedAttachmentsForMessage } from '../../src/attachmentCache';
 import { createMockGroup } from '../../src/chat/groupMockAdapter';
@@ -51,6 +52,11 @@ jest.mock('../../src/storage/chatDb', () => {
     flushChatDb: jest.fn(async () => {}),
   };
 });
+
+jest.mock('../../src/storage/resourceCache', () => ({
+  readResource: jest.fn(async () => null),
+  writeResource: jest.fn(async () => {}),
+}));
 
 function TestHook({ resultRef, params }: any) {
   resultRef.current = useMessaging(params);
@@ -105,6 +111,8 @@ beforeEach(() => {
   (chatDb as any).__snapshot.messagesByPeer = {};
   (chatDb as any).__snapshot.socketCursors = {};
   (chatDb as any).__snapshot.outbox = [];
+  (resourceCache.readResource as jest.Mock).mockResolvedValue(null);
+  (resourceCache.writeResource as jest.Mock).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -1537,6 +1545,107 @@ describe('useMessaging searchMessages', () => {
       headers: { Authorization: 'Bearer sess-1' },
       signal: controller.signal,
     });
+  });
+
+  test('returns merged local and server matches, scoped to one conversation', async () => {
+    (chatDb as any).__snapshot.messagesByPeer = {
+      bob: [{
+        messageId: 'cached-hit',
+        senderId: 'alice',
+        recipientId: 'bob',
+        body: 'needle in cache',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      }],
+    };
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [{
+          messageId: 'remote-hit',
+          peerId: 'bob',
+          body: 'needle on server',
+          createdAt: '2024-01-02T00:00:00.000Z',
+        }],
+      }),
+    });
+
+    let results: any;
+    await act(async () => {
+      await Promise.resolve();
+      results = await resultRef.current.searchMessages('needle', {
+        peerId: 'bob',
+        conversationId: 'conversation-bob',
+      });
+    });
+
+    expect(results.map((message: any) => message.messageId)).toEqual(['remote-hit', 'cached-hit']);
+    const request = params.authedFetchRef.current.mock.calls[0][0]('sess-1');
+    expect(request.url).toContain('conversationId=conversation-bob');
+  });
+
+  test('local message search reads the cache without making a request', async () => {
+    (chatDb as any).__snapshot.messagesByPeer = {
+      bob: [
+        { messageId: 'hit', senderId: 'alice', recipientId: 'bob', body: 'needle here', createdAt: '2024-01-01' },
+        { messageId: 'deleted', senderId: 'alice', recipientId: 'bob', body: 'needle gone', deletedAt: '2024-01-02' },
+      ],
+    };
+    const { resultRef, params } = setup();
+    let results: any;
+    await act(async () => {
+      await Promise.resolve();
+      results = resultRef.current.searchLocalMessages('needle', { peerId: 'bob' });
+    });
+
+    expect(results.map((message: any) => message.messageId)).toEqual(['hit']);
+    expect(params.authedFetchRef.current).not.toHaveBeenCalled();
+  });
+
+  test('backfill resumes from its stored sync cursor and persists each completed page', async () => {
+    (resourceCache.readResource as jest.Mock).mockResolvedValue({
+      value: {
+        since: '1970-01-01T00:00:00.000Z',
+        cursor: 'resume-here',
+        complete: false,
+        messagesSynced: 4,
+      },
+      updatedAt: 1,
+    });
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockImplementation(async (buildRequest: Function) => {
+      const request = buildRequest('sess-1');
+      expect(request.url).toContain('cursor=resume-here');
+      return {
+        ok: true,
+        json: async () => ({
+          changes: [{
+            type: 'new',
+            message: {
+              messageId: 'backfilled',
+              senderId: 'bob',
+              recipientId: 'alice',
+              body: 'history',
+              createdAt: '2024-01-01T00:00:00.000Z',
+            },
+          }],
+          nextCursor: null,
+          hasMore: false,
+        }),
+      };
+    });
+
+    await act(async () => {
+      await resultRef.current.backfillMessages();
+    });
+
+    expect((chatDb as any).__snapshot.messagesByPeer.bob[0].messageId).toBe('backfilled');
+    expect(resourceCache.writeResource).toHaveBeenCalledWith(
+      expect.any(String),
+      'messages:backfill',
+      expect.objectContaining({ cursor: null, complete: true, messagesSynced: 5 }),
+    );
+    expect(resultRef.current.isBackfillingMessages).toBe(false);
   });
 
   test('returns nothing for a blank term, without calling the server', async () => {

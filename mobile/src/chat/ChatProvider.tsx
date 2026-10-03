@@ -47,6 +47,10 @@ export type ChatContextValue = {
   sendTypingIndicator: CallFlow['sendTypingIndicator'];
   searchUsers: CallFlow['searchUsers'];
   searchMessages: CallFlow['searchMessages'];
+  searchLocalMessages: CallFlow['searchLocalMessages'];
+  backfillMessages: CallFlow['backfillMessages'];
+  isBackfillingMessages: CallFlow['isBackfillingMessages'];
+  backfilledMessageCount: CallFlow['backfilledMessageCount'];
   isUserBlocked: CallFlow['isUserBlocked'];
   blockedUsers: CallFlow['blockedUsers'];
   blockPeer: CallFlow['blockPeer'];
@@ -104,6 +108,9 @@ const selectChatSlice = (state: CallContextValue) => ({
   isRecordingVoiceNote: state.callFlow.isRecordingVoiceNote,
   isRegistered: state.callFlow.isRegistered,
   isUploadingAttachment: state.callFlow.isUploadingAttachment,
+  isBackfillingMessages: state.callFlow.isBackfillingMessages,
+  backfilledMessageCount: state.callFlow.backfilledMessageCount,
+  backfillMessages: state.callFlow.backfillMessages,
   isUserBlocked: state.callFlow.isUserBlocked,
   isVoiceNoteSupported: state.callFlow.isVoiceNoteSupported,
   markConversationRead: state.callFlow.markConversationRead,
@@ -114,6 +121,7 @@ const selectChatSlice = (state: CallContextValue) => ({
   retryMessage: state.callFlow.retryMessage,
   saveDraft: state.callFlow.saveDraft,
   searchMessages: state.callFlow.searchMessages,
+  searchLocalMessages: state.callFlow.searchLocalMessages,
   searchUsers: state.callFlow.searchUsers,
   sendMessage: state.callFlow.sendMessage,
   sendTypingIndicator: state.callFlow.sendTypingIndicator,
@@ -167,6 +175,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
     isRegistered: callFlow.isRegistered,
     messagesByPeer: callFlow.messagesByPeer,
     fetchConversations: callFlow.fetchConversations,
+    backfillMessages: callFlow.backfillMessages,
     setActiveChatPeerId: callFlow.setActiveChatPeerId,
     fetchMessagesForPeer: callFlow.fetchMessagesForPeer,
     markConversationRead: callFlow.markConversationRead,
@@ -232,6 +241,10 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       sendTypingIndicator: callFlow.sendTypingIndicator,
       searchUsers: callFlow.searchUsers,
       searchMessages: callFlow.searchMessages,
+      searchLocalMessages: callFlow.searchLocalMessages,
+      backfillMessages: callFlow.backfillMessages,
+      isBackfillingMessages: callFlow.isBackfillingMessages,
+      backfilledMessageCount: callFlow.backfilledMessageCount,
       isUserBlocked: callFlow.isUserBlocked,
       blockedUsers: callFlow.blockedUsers,
       blockPeer: callFlow.blockPeer,
@@ -261,6 +274,10 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.conversations,
       callFlow.isUserBlocked,
       callFlow.searchMessages,
+      callFlow.searchLocalMessages,
+      callFlow.backfillMessages,
+      callFlow.isBackfillingMessages,
+      callFlow.backfilledMessageCount,
       callFlow.unblockPeer,
       callFlow.messagesByPeer,
       callFlow.drafts,

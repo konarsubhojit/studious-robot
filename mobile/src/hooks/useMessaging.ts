@@ -46,6 +46,8 @@ import {
   upsertTimelineEntry,
 } from '../messaging/messageHistory';
 import { createMessageId } from '../messaging/messageIdentity';
+import { mergeMessageSearchResults } from '../messaging/messageSearch';
+import { resumeMessageBackfill } from '../messaging/messageBackfill';
 import {
   applyDeliveryReceipt,
   applyIncomingMessage,
@@ -206,6 +208,9 @@ export default function useMessaging({
     ({} as Record<string, ChatMessage[]>),
   );
   const [socketCursors, setSocketCursors] = useState(({} as ChatSnapshot['socketCursors']));
+  const [isBackfillingMessages, setIsBackfillingMessages] = useState(false);
+  const [backfilledMessageCount, setBackfilledMessageCount] = useState(0);
+  const backfillScopeRef = useRef<string | null>(null);
   // Keyed by peerId → the composer text (and reply target) the user has typed
   // but not sent. Held here rather than in the composer's own state so it
   // survives switching conversations, backgrounding and process death.
@@ -504,41 +509,90 @@ export default function useMessaging({
    * rather than an error.
    */
   const searchMessages = useCallback(
-    async (query: string, { limit = 20, signal }: { limit?: number; signal?: AbortSignal; } = {}) => {
+    async (query: string, {
+      limit = 20, signal, peerId, conversationId,
+    }: { limit?: number; signal?: AbortSignal; peerId?: string; conversationId?: string; } = {}) => {
       const term = (query ?? '').trim();
       const sessionId = sessionIdRef.current;
       if (!term || signal?.aborted) return [];
       const localResults = () => Object.entries(messagesByPeerRef.current)
-        .flatMap(([peerId, messages]) => messages
+        .filter(([messagePeerId]) => !peerId || messagePeerId === peerId)
+        .flatMap(([messagePeerId, messages]) => messages
           .filter(message => !message.deletedAt && message.body?.toLowerCase().includes(term.toLowerCase()))
-          .map(message => ({ ...message, peerId })))
-        .sort((a, b) => Date.parse(b.createdAt ?? '') - Date.parse(a.createdAt ?? ''))
-        .slice(0, Math.max(1, Math.min(limit, 100)));
-      if (!sessionId) return localResults();
+          .map(message => ({ ...message, peerId: messagePeerId })));
+      const cachedResults = localResults();
+      if (!sessionId) return cachedResults;
       try {
         const trimmedUrl = signalingUrl.trim();
         const response = await authedFetchRef.current?.((sid: string) => {
           const params = new URLSearchParams({ q: term, limit: String(limit) });
+          if (conversationId) params.set('conversationId', conversationId);
           return {
             url: `${trimmedUrl}${API_ROUTES.MESSAGES_SEARCH}?${params.toString()}`,
             options: { headers: bearerAuthHeaders(sid), ...(signal ? { signal } : {}) },
           };
         });
-        if (!response?.ok) return response?.status >= 400 && response.status < 500 ? [] : localResults();
+        if (!response?.ok) return cachedResults;
         const data = await response.json();
         if (scopeRef.current !== scope || signal?.aborted) return [];
-        return Array.isArray(data.results) ? data.results : [];
+        const remoteResults = Array.isArray(data.results) ? data.results.filter((message: ChatMessage) =>
+          !peerId || message.peerId === peerId) : [];
+        return mergeMessageSearchResults(cachedResults, remoteResults, limit);
       } catch (error) {
         // An aborted request is the expected outcome of a newer keystroke, not
         // a failure worth logging.
         if (!(error instanceof Error) || error.name !== 'AbortError') {
           logWarn('[Messaging] searchMessages failed', { message: errorMessage(error) });
         }
-        return scopeRef.current === scope && !signal?.aborted ? localResults() : [];
+        return scopeRef.current === scope && !signal?.aborted ? cachedResults : [];
       }
     },
     [authedFetchRef, sessionIdRef, signalingUrl, scope],
   );
+
+  const searchLocalMessages = useCallback(
+    (query: string, { limit = 20, peerId }: { limit?: number; peerId?: string; } = {}) => {
+      const term = (query ?? '').trim().toLowerCase();
+      if (!term) return [];
+      const localResults = Object.entries(messagesByPeerRef.current)
+        .filter(([messagePeerId]) => !peerId || messagePeerId === peerId)
+        .flatMap(([messagePeerId, messages]) => messages
+          .filter(message => !message.deletedAt && message.body?.toLowerCase().includes(term))
+          .map(message => ({ ...message, peerId: messagePeerId })));
+      return mergeMessageSearchResults(localResults, [], limit);
+    },
+    [],
+  );
+
+  const backfillMessages = useCallback(async () => {
+    if (!scope || !userId || !sessionIdRef.current || backfillScopeRef.current === scope) return;
+    backfillScopeRef.current = scope;
+    try {
+      await resumeMessageBackfill({
+        scope,
+        userId,
+        signalingUrl,
+        getSessionId: () => sessionIdRef.current,
+        authedFetch: authedFetchRef.current,
+        isCurrentScope: () => scopeRef.current === scope,
+        getMessages: () => messagesByPeerRef.current,
+        setMessages: next => {
+          messagesByPeerRef.current = next;
+          setMessagesByPeer(next);
+        },
+        onStart: () => setIsBackfillingMessages(true),
+        onProgress: setBackfilledMessageCount,
+        onDeleted: evictTombstonedAttachment,
+      });
+    } catch (error) {
+      logWarn('[Messaging] history backfill paused', { message: errorMessage(error) });
+    } finally {
+      if (backfillScopeRef.current === scope) {
+        backfillScopeRef.current = null;
+        setIsBackfillingMessages(false);
+      }
+    }
+  }, [authedFetchRef, scope, sessionIdRef, signalingUrl, userId]);
 
   /**
    * Update one local message in `peerId`'s history, by id.
@@ -867,11 +921,12 @@ export default function useMessaging({
       drainAttemptRef.current = 0;
       drainOutboxRef.current();
       void fetchConversations();
+      void backfillMessages();
       const peer = activeChatPeerIdRef.current;
       if (peer) void fetchMessagesForPeer(peer);
     });
     return () => subscription?.remove?.();
-  }, [fetchConversations, fetchMessagesForPeer]);
+  }, [backfillMessages, fetchConversations, fetchMessagesForPeer]);
 
   useEffect(
     () => () => {
@@ -1573,7 +1628,11 @@ export default function useMessaging({
     pendingSendCount: stateScope === scope ? pendingSendCount : 0,
     fetchConversations,
     fetchMessagesForPeer,
+    backfillMessages,
     searchMessages,
+    searchLocalMessages,
+    isBackfillingMessages,
+    backfilledMessageCount,
     recordCallActivity,
     sendMessage,
     beginAttachmentUpload,

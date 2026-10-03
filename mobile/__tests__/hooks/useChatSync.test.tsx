@@ -70,6 +70,17 @@ describe('useChatSync', () => {
     expect(params.fetchConversations).toHaveBeenCalledTimes(1);
   });
 
+  test('starts resumable message backfill after the registered conversation refresh', async () => {
+    const backfillMessages = jest.fn(async () => {});
+    const { params } = await setup({ isRegistered: true, backfillMessages });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(params.fetchConversations).toHaveBeenCalledTimes(1);
+    expect(backfillMessages).toHaveBeenCalledTimes(1);
+  });
+
   test('does not fetch conversations when not registered', async () => {
     const { params } = await setup({ isRegistered: false });
     await act(async () => {

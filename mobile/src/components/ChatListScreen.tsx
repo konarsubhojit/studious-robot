@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { describeMessagePreview } from '../../../shared';
 import { useThemedStyles } from '../ThemeContext';
 import { usePeerProfile } from '../profile/ProfileContext';
@@ -116,6 +116,8 @@ export type ChatListScreenProps = {
   currentUserId?: string;
   /** App-level status, floated over the list as a transient bar. */
   status?: CallStatus;
+  /** Account history is being reconciled from the server change log. */
+  backfillProgress?: { active: boolean; messageCount: number; };
 };
 
 function ConversationMeta({
@@ -300,6 +302,7 @@ function ChatListScreen({
   isPeerMuted,
   onSetPeerMuted,
   status,
+  backfillProgress,
 }: ChatListScreenProps) {
   const styles = useThemedStyles(createStyles);
   const [isPickerVisible, setIsPickerVisible] = useState(false);
@@ -396,6 +399,15 @@ function ChatListScreen({
         ) : null}
       </View>
 
+      {backfillProgress?.active ? (
+        <View style={styles.backfillProgress} accessibilityRole="progressbar" testID="chat-backfill-progress">
+          <ActivityIndicator size="small" color={styles.backfillText.color as string} />
+          <Text style={styles.backfillText} testID="chat-backfill-message-count">
+            Syncing message history · {backfillProgress.messageCount} updates
+          </Text>
+        </View>
+      ) : null}
+
       <FlatList
         testID="chat-list"
         data={conversations}
@@ -484,6 +496,17 @@ const createStyles = (colors: ThemeColors) =>
     },
     titleSpacer: {
       flex: 1,
+    },
+    backfillProgress: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.xs,
+    },
+    backfillText: {
+      ...typography.hint,
+      color: colors.onSurfaceVariant,
     },
     // 16dp from the right edge and from the tab bar, per Material 3.
     fab: {
