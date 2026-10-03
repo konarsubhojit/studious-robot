@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import { RTCIceCandidate, RTCSessionDescription } from 'react-native-webrtc';
 import { io } from 'socket.io-client';
 import type { Socket } from 'socket.io-client';
@@ -207,6 +208,45 @@ export default function useSignalingSocket({
     fetchBlocks,
     wakeCallHeartbeat,
   });
+  const wasBackgroundedRef = useRef(
+    AppState.currentState === 'background' || AppState.currentState === 'inactive',
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState !== 'active') {
+        wasBackgroundedRef.current = true;
+        return;
+      }
+      if (!wasBackgroundedRef.current) return;
+      wasBackgroundedRef.current = false;
+
+      const socket = socketRef.current;
+      if (!socket) return;
+      if (socket.connected) {
+        resyncCallStateRef.current?.();
+        return;
+      }
+
+      if (isInCallRef.current) {
+        setIsReconnecting(true);
+        noteRecoverySymptomRef.current?.('socket-disconnect');
+        pauseRecoveryBudgetRef.current?.('socket-offline');
+      }
+      logInfo('[CallFlow] App resumed with disconnected socket; reconnecting');
+      // Socket.IO applies its configured exponential backoff to this transport.
+      // The regular connect handler performs call-state resync after it returns.
+      socket.connect();
+    });
+    return () => subscription.remove();
+  }, [
+    isInCallRef,
+    noteRecoverySymptomRef,
+    pauseRecoveryBudgetRef,
+    resyncCallStateRef,
+    setIsReconnecting,
+    socketRef,
+  ]);
 
   useEffect(() => {
     connectSocketHandlersRef.current = {
