@@ -45,6 +45,8 @@ function createMemoryConversationStore(): ConversationStore {
       conversationId: conversation.conversationId,
       name: conversation.name,
       creatorId: conversation.creatorId,
+      ownerId: listMembers(conversation.conversationId).find(({ role }) => role === 'owner')?.userId ??
+        conversation.creatorId,
       memberIds: listMembers(conversation.conversationId).map(({ userId }) => userId),
       membershipVersion: conversation.membershipVersion,
       createdAt: conversation.createdAt,
@@ -214,10 +216,11 @@ function createMemoryConversationStore(): ConversationStore {
       if (!conversation || conversation.deletedAt !== null) {
         throw new ConversationStoreError('not_member', 'not an active member');
       }
-      requireActiveMember(conversationId, userId);
+      const member = requireActiveMember(conversationId, userId);
       return [...messages.values()]
         .filter((message) =>
           message.conversationId === conversationId &&
+          Date.parse(message.createdAt) >= Date.parse(member.joinedAt) &&
           (!before ||
             message.createdAt < before ||
             (Boolean(beforeMessageId) &&
@@ -241,6 +244,79 @@ function createMemoryConversationStore(): ConversationStore {
       conversation.updatedAt = new Date().toISOString();
       conversation.membershipVersion += 1;
       return change(conversation);
+    },
+
+    async addMembers({ conversationId, actorId, userIds }) {
+      const conversation = conversations.get(conversationId);
+      if (!conversation || conversation.deletedAt !== null) return null;
+      const actor = requireActiveMember(conversationId, actorId);
+      if (actor.role !== 'owner' && actor.role !== 'admin') {
+        throw new ConversationStoreError('forbidden', 'only owners and admins can manage group members');
+      }
+      const currentMembers = listMembers(conversationId);
+      if (
+        userIds.length === 0 ||
+        new Set(userIds).size !== userIds.length ||
+        userIds.includes(actorId) ||
+        userIds.some((userId) => members.has(memberKey(conversationId, userId)))
+      ) {
+        throw new ConversationStoreError('invalid_members', 'invalid or previously joined group member');
+      }
+      if (currentMembers.length + userIds.length > MAX_GROUP_MEMBERS) {
+        throw new ConversationStoreError('group_full', 'a group can have at most 16 members');
+      }
+      const now = new Date().toISOString();
+      for (const userId of userIds) {
+        members.set(memberKey(conversationId, userId), {
+          conversationId,
+          userId,
+          role: 'member',
+          joinedAt: now,
+          leftAt: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      conversation.updatedAt = now;
+      conversation.membershipVersion += 1;
+      return change(conversation);
+    },
+
+    async removeMember({ conversationId, actorId, userId }) {
+      const conversation = conversations.get(conversationId);
+      if (!conversation || conversation.deletedAt !== null) return null;
+      const actor = requireActiveMember(conversationId, actorId);
+      const member = requireActiveMember(conversationId, userId);
+      if (actor.role !== 'owner' && actor.role !== 'admin') {
+        throw new ConversationStoreError('forbidden', 'only owners and admins can manage group members');
+      }
+      if (member.role === 'owner' || actorId === userId) {
+        throw new ConversationStoreError('forbidden', 'the owner cannot be removed');
+      }
+      const now = new Date().toISOString();
+      member.leftAt = now;
+      member.updatedAt = now;
+      conversation.updatedAt = now;
+      conversation.membershipVersion += 1;
+      const callChanges: GroupCallChange[] = [];
+      for (const participant of callParticipants.values()) {
+        if (participant.userId !== userId || (participant.status !== 'ringing' && participant.status !== 'accepted')) continue;
+        const call = calls.get(participant.callId);
+        if (!call || call.conversationId !== conversationId || call.status === 'ended') continue;
+        participant.status = 'left';
+        participant.leftAt = now;
+        participant.updatedAt = now;
+        if (![...callParticipants.values()].some((item) =>
+          item.callId === call.callId && (item.status === 'ringing' || item.status === 'accepted')
+        )) {
+          call.status = 'ended';
+          call.endedAt = now;
+        }
+        call.updatedAt = now;
+        call.stateVersion += 1;
+        callChanges.push(callChange(call));
+      }
+      return { ...change(conversation, member), callChanges };
     },
 
     async leave({ conversationId, userId }) {
@@ -306,17 +382,18 @@ function createMemoryConversationStore(): ConversationStore {
     },
 
     async deleteMessage({ conversationId, messageId, userId }) {
-      requireActiveMember(conversationId, userId);
+      const member = requireActiveMember(conversationId, userId);
       const message = messages.get(messageKey(conversationId, messageId));
-      if (!message || message.deletedAt || message.senderId !== userId) return null;
+      if (!message || Date.parse(message.createdAt) < Date.parse(member.joinedAt) ||
+          message.deletedAt || message.senderId !== userId) return null;
       applyTombstone(message, new Date().toISOString());
       return { message, recipients: recipientsFor(conversationId) };
     },
 
     async reactToMessage({ conversationId, messageId, userId, emoji, action }) {
-      requireActiveMember(conversationId, userId);
+      const member = requireActiveMember(conversationId, userId);
       const message = messages.get(messageKey(conversationId, messageId));
-      if (!message || message.deletedAt) return null;
+      if (!message || Date.parse(message.createdAt) < Date.parse(member.joinedAt) || message.deletedAt) return null;
       message.reactions = applyReaction(message.reactions ?? {}, emoji, userId, action);
       return { message, recipients: recipientsFor(conversationId) };
     },

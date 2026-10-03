@@ -26,6 +26,7 @@ export type ConversationSnapshot = {
   conversationId: string;
   name: string;
   creatorId: string;
+  ownerId: string;
   memberIds: string[];
   membershipVersion: number;
   createdAt: string;
@@ -90,6 +91,16 @@ export type ConversationStore = {
     conversationId: string;
     actorId: string;
     name: string;
+  }) => Promise<ConversationChange | null>;
+  addMembers: (args: {
+    conversationId: string;
+    actorId: string;
+    userIds: string[];
+  }) => Promise<ConversationChange | null>;
+  removeMember: (args: {
+    conversationId: string;
+    actorId: string;
+    userId: string;
   }) => Promise<ConversationChange | null>;
   leave: (args: {
     conversationId: string;

@@ -601,7 +601,20 @@ export default function useMessaging({
         return id;
       },
       members: async (id: string, action: GroupMemberAction) => {
-        await commit(mutateMockMembers(find(id), userId, action));
+        const row = find(id);
+        if (row.localMock) {
+          await commit(mutateMockMembers(row, userId, action));
+        } else if (action.type === 'add') {
+          await live(CLIENT_EVENTS.CONVERSATION_MEMBER_ADD, {
+            conversationId: row.conversationId,
+            userIds: action.userIds,
+          });
+        } else {
+          await live(CLIENT_EVENTS.CONVERSATION_MEMBER_REMOVE, {
+            conversationId: row.conversationId,
+            userId: action.userId,
+          });
+        }
       },
       rename: async (id: string, name: string) => {
         const row = find(id);

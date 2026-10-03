@@ -146,6 +146,18 @@ test('member management offers admin add/remove/rename and routes failures witho
   expect(find(tree, 'group-directory-sheet')).toBeDefined();
 });
 
+test('live group owners can open server-backed add and remove controls', async () => {
+  const props = groupProps();
+  props.conversation.localMock = false;
+  const tree = await render(<GroupConversationScreen {...props} />);
+  act(() => find(tree, 'group-open-members').props.onPress());
+  expect(text(tree)).toContain('Only group owners can add or remove members.');
+  await act(async () => { find(tree, 'group-remove-bob').props.onPress(); });
+  expect(props.actions.members).toHaveBeenCalledWith('mock-group-1', { type: 'remove', userId: 'bob' });
+  act(() => find(tree, 'group-add-members').props.onPress());
+  expect(find(tree, 'group-directory-sheet')).toBeDefined();
+});
+
 test('non-admin members cannot mutate membership and leave navigates back', async () => {
   const props = groupProps('bob');
   const tree = await render(<GroupConversationScreen {...props} />);

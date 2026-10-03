@@ -189,8 +189,19 @@ describe('useMessaging', () => {
     const { resultRef, params } = setup({ groupTransport: 'live' });
     let group = createMockGroup('alice', 'Team', ['bob', 'carol'], 'server-group').group!;
     params.socketRef.current.emit.mockImplementation((event: string, payload: any, ack: Function) => {
-      if (event === 'conversation.update') group = { ...group, name: payload.name, membershipVersion: 2 };
-      if (event === 'conversation.leave') group = { ...group, memberIds: ['bob', 'carol'], membershipVersion: 3 };
+      if (event === 'conversation.update') group = {
+        ...group, name: payload.name, membershipVersion: group.membershipVersion + 1,
+      };
+      if (event === 'conversation.member.add') group = {
+        ...group, memberIds: [...group.memberIds, ...payload.userIds], membershipVersion: group.membershipVersion + 1,
+      };
+      if (event === 'conversation.member.remove') group = {
+        ...group, memberIds: group.memberIds.filter(memberId => memberId !== payload.userId),
+        membershipVersion: group.membershipVersion + 1,
+      };
+      if (event === 'conversation.leave') group = {
+        ...group, memberIds: ['bob', 'carol'], membershipVersion: group.membershipVersion + 1,
+      };
       if (event === 'message.send') {
         ack({ ok: true, version: 2, message: {
           messageId: payload.messageId, conversationId: group.conversationId, senderId: 'alice',
@@ -238,16 +249,19 @@ describe('useMessaging', () => {
     await act(async () => {
       await resultRef.current.drainOutbox();
       await resultRef.current.groupActions.rename(id, 'Renamed');
+      await resultRef.current.groupActions.members(id, { type: 'add', userIds: ['dave'] });
+      await resultRef.current.groupActions.members(id, { type: 'remove', userId: 'dave' });
     });
     expect(resultRef.current.conversations.find((row: any) => row.peerId === id).group.name).toBe('Renamed');
-    await expect(resultRef.current.groupActions.members(id, { type: 'add', userIds: ['dave'] })).rejects.toThrow('local preview');
     await act(async () => { await resultRef.current.groupActions.leave(id); });
     expect(resultRef.current.conversations.find((row: any) => row.peerId === id))
-      .toMatchObject({ group: { membershipVersion: 3, memberIds: ['bob', 'carol'] }, left: true });
+      .toMatchObject({ group: { membershipVersion: 5, memberIds: ['bob', 'carol'] }, left: true });
     expect(params.socketRef.current.emit.mock.calls.map(([event, payload]: any[]) => [event, payload])).toEqual([
       ['conversation.create', { version: 2, name: 'Team', inviteeIds: ['bob', 'carol'] }],
       ['message.send', { version: 2, conversationId: id, body: 'durable live send', messageId: queuedId }],
       ['conversation.update', { version: 2, conversationId: id, name: 'Renamed' }],
+      ['conversation.member.add', { version: 2, conversationId: id, userIds: ['dave'] }],
+      ['conversation.member.remove', { version: 2, conversationId: id, userId: 'dave' }],
       ['conversation.leave', { version: 2, conversationId: id }],
     ]);
   });
