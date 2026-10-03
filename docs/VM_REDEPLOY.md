@@ -479,6 +479,43 @@ sudo systemctl list-timers wetalk-backup.timer --all
 > verbatim on old `oci` would reintroduce `EnvironmentFile=` and `OnFailure=`
 > and remove that host's success-ping drop-in.
 
+### Redeploy drift observed on 2026-10-03
+
+The tracked `deploy/redeploy.sh` had never been installed on one production VM,
+despite an earlier change intended to add it. CI's bare `redeploy` command
+resolved to a different, untracked host script. That script pulled the repo,
+ran `npm i --omit=dev`, restarted the service, and checked `systemctl is-active`,
+but it did not migrate the database. The tracked script migrated, but lacked
+the active-service and application-health checks. **Each was half right, and
+neither was sufficient.**
+
+The host's `npm i --omit=dev` skipped `drizzle-kit`, which is a dev dependency,
+so the migrations could not run. Redeploy now uses `npm ci`, applies migrations
+while the migration tool is present, prunes dev dependencies, restarts, checks
+that the service is active, and polls `/health`. Install the tracked script at
+the exact path CI invokes:
+
+```bash
+sudo install -o root -g root -m 0750 \
+  /home/wetalk/repos/studious-robot/deploy/redeploy.sh \
+  /usr/local/bin/redeploy.sh
+```
+
+After deployment, a `stateAffinity` value of `sticky` was observed on that VM,
+with private in-memory state and no Redis-backed coordination. The multi-VM
+fleet requires `shared` affinity on both VMs; sticky affinity must be resolved
+before routing fleet traffic there. Whether `sticky` is valid for a standalone
+single-VM deployment has not been confirmed, so the deploy script reports it as
+a warning rather than blocking deployment.
+
+### Unattended-upgrade virtualenv failure mode
+
+An unattended distro upgrade on 2026-10-01 changed the system Python from 3.12
+to 3.14 and rebooted the VM four times between 09:25 and 09:42 UTC. The
+`/opt/oci-cli` virtualenv was tied to the old system interpreter and nightly
+backups stopped working. After any unattended-upgrade reboot, re-check every
+virtualenv pinned to a system interpreter and verify its scheduled jobs.
+
 ### The live unit
 
 `/etc/systemd/system/wetalk-backup.service` on `oci` is a `oneshot` unit with:
