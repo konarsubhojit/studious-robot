@@ -21,6 +21,8 @@ npm test           # node --test
 The server listens on `PORT` (default `4173`) and exposes:
 - `GET /health` — liveness/health probe returning JSON `{ status: "ok", ... }`. Its `fanout` block is an *active* cross-instance check (`src/lib/fanoutProbe.ts`), deliberately separate from `stateAffinity`: the latter only says runtime state is Redis-backed, which does not prove an event emitted here reaches a socket held by another instance.
 - `GET /messages` — paginated text-chat history (see [REST endpoints](#rest-endpoints))
+- `GET /messages/search` — participant-scoped full-text search
+- `GET /messages/sync` — cursor-paginated message deltas
 - Socket.IO endpoint for WebRTC signaling (see events below)
 
 ### REST endpoints
@@ -30,6 +32,8 @@ Besides the call/session/contact routes, the chat surface adds:
 | Method & path | Query | Response | Notes |
 | ------------- | ----- | -------- | ----- |
 | `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive), `include` (`calls` to merge in call records) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (`Authorization: Bearer <id>` header, or the request body for POSTs — **never the query string**, which would leak the token into access logs, proxies and `Referer`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
+| `GET /messages/search` | `q` (required), `conversationId` (optional), `limit` (1–100, default `50`), `cursor` (exclusive ISO `createdAt`), `cursorMessageId` (tie-breaker) | `200 { query, results, limit, nextCursor, hasMore }` | PostgreSQL full-text search across caller-participating conversations, newest-first; memory search requires every query token to occur. Tombstones and conversations blocked in either direction are excluded. Search terms are audit-logged; per-user rate limiting returns `429`. |
+| `GET /messages/sync` | `since` (required exclusive ISO timestamp), `cursor` (opaque `nextCursor`), `limit` (1–100, default `50`) | `200 { changes, limit, nextCursor, hasMore }` | Ordered message changes (`new`, `edited`, `deleted`, `reactions`) for the caller's conversations, after `since`; pass `nextCursor` to continue. Participants and current block rules are enforced. Change-log rows cascade with message retention. |
 | `GET /calls` | `limit` (1–100, default `20`), `offset` (default `0`), `status` (optional filter) | `200 { calls, total, limit, offset, hasMore }` | Call history for the authenticated user, **most recently active first** (`updatedAt` descending). Read from the durable `calls` table, so it survives a restart and is not bounded by the in-memory retention window (`CALL_RETENTION_MS` / `MAX_RETAINED_CALLS`); when no `DATABASE_URL` is configured — or the query fails — it degrades to the calls still resident in memory. `401` without a valid session. |
 | `GET /account/export` | `limit` (internal message page size, 1–100, default `50`), `callLimit` (internal call page size, 1–100, default `50`) | `200 { schemaVersion, exportedAt, userId, profile, messages, calls, callEvents, devices, blocks, auditLog, pagination }` | Complete streaming JSON export scoped only to the bearer session. Bounded internal reads include every message tombstone, attachment URL, participant call/event, outbound block, and audit entry involving the account. Excludes `authUid`, peer live-device ids, push tokens, session ids, and attachment bytes/metadata; attachment objects contain only `url`. Limited to one complete export per account per day by default. |
 
@@ -330,7 +334,7 @@ Both expose `saveMessage`, `listMessages({ conversationId, limit, before })`
 (`src/createServer.ts`) and hung off the shared `state` object next to
 `messageBus`/`telemetry`.
 
-The `messages` table carries seven secondary indexes, alongside its composite
+The `messages` table carries five secondary indexes, alongside its composite
 primary key `(conversation_id, message_id)`:
 
 | Index | Serves |
@@ -338,12 +342,11 @@ primary key `(conversation_id, message_id)`:
 | `idx_messages_conversation_created` | A conversation's newest-first page, including the `created_at` cursor. |
 | `idx_messages_sender_created` / `idx_messages_recipient_created` | Participant-scoped search and account-history reads. |
 | `idx_messages_unread` (partial, `read_at IS NULL`) | Unread-message reads and updates — it indexes only rows that can contribute to unread counts. |
-| `idx_messages_body_trgm` (GIN, `pg_trgm`) | The case-insensitive substring search `GET /messages/search` performs. |
-| `idx_messages_sender_body_trgm` / `idx_messages_recipient_body_trgm` (GIN, `btree_gin` + `pg_trgm`) | Participant and substring predicates in the same index, rather than probing other users' message bodies first. |
+| `idx_messages_body_fts` (partial GIN, `tsvector`) | PostgreSQL `simple`-dictionary full-text search for `GET /messages/search`, excluding tombstones. |
 
-`pg_trgm` is created by migration `0010`, which therefore needs the owner
-connection (`DATABASE_URL_DIRECT`); migration `0012` adds `btree_gin` and the
-participant-scoped GIN indexes.
+Migration `0018` adds the full-text index and the append-only `message_changes`
+table. Its composite foreign key cascades with message retention. Participant
+columns and `(changed_at, change_id)` indexes support ordered sync paging.
 
 Migration `0013_daily_gwen_stacy.sql` added the one-row-per-thread
 `conversations` projection. `idx_conversations_a` and `idx_conversations_b`

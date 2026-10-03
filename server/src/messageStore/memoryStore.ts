@@ -21,10 +21,28 @@ import {
   MAX_CONVERSATION_LIMIT,
   normaliseSearchTerm,
 } from './queries.ts';
-import type { MessageStore, StoredMessage } from './types.ts';
+import type { MessageChange, MessageStore, StoredMessage } from './types.ts';
 
 export function createMemoryMessageStore(): MessageStore {
   const messages: StoredMessage[] = [];
+  const changes: MessageChange[] = [];
+  let nextChangeId = 1;
+  const cloneMessage = (message: StoredMessage) => ({
+    ...message,
+    attachment: message.attachment ? { ...message.attachment } : null,
+    reactions: Object.fromEntries(
+      Object.entries(message.reactions).map(([emoji, userIds]) => [emoji, [...userIds]])
+    ),
+    deliveredTo: [...message.deliveredTo],
+  });
+  const recordChange = (message: StoredMessage, type: MessageChange['type'], changedAt: string) => {
+    changes.push({
+      changeId: String(nextChangeId++),
+      type,
+      changedAt,
+      message: cloneMessage(message),
+    });
+  };
   const saveMessageWithStatus: MessageStore['saveMessageWithStatus'] = async (message) => {
     const record = createMessageRecord(message);
     // Idempotent on the client-supplied `{ conversationId, messageId }` pair,
@@ -37,6 +55,7 @@ export function createMemoryMessageStore(): MessageStore {
     );
     if (existing) return { message: { ...existing }, inserted: false };
     messages.push(record);
+    recordChange(record, 'new', record.createdAt);
     return { message: { ...record }, inserted: true };
   };
 
@@ -77,12 +96,26 @@ export function createMemoryMessageStore(): MessageStore {
       return message ? { ...message } : null;
     },
 
-    async searchMessages({ userId, query, limit, before, beforeMessageId, withLookahead } = {}) {
+    async searchMessages({
+      userId,
+      query,
+      conversationId,
+      excludedUserIds = [],
+      createdAtAfter,
+      limit,
+      before,
+      beforeMessageId,
+      withLookahead,
+    } = {}) {
       const term = normaliseSearchTerm(query);
       if (!term || !userId) return [];
       const cap = withLookahead ? clampExportReadLimit(limit) : clampLimit(limit);
       return messages
         .filter((message) => message.senderId === userId || message.recipientId === userId)
+        .filter((message) => !conversationId || message.conversationId === conversationId)
+        .filter((message) => !message.deletedAt)
+        .filter((message) => !createdAtAfter || message.createdAt >= createdAtAfter)
+        .filter((message) => !excludedUserIds.includes(message.senderId === userId ? message.recipientId : message.senderId))
         .filter((message) =>
           before
             ? message.createdAt < before ||
@@ -95,6 +128,36 @@ export function createMemoryMessageStore(): MessageStore {
         .sort(byNewestFirst)
         .slice(0, cap)
         .map((message) => ({ ...message }));
+    },
+
+    async listMessageChanges({
+      userId,
+      since,
+      afterChangedAt,
+      afterChangeId,
+      excludedUserIds = [],
+      createdAtAfter,
+      limit,
+    }) {
+      return changes
+        .filter((change) => change.message.senderId === userId || change.message.recipientId === userId)
+        .filter((change) => !excludedUserIds.includes(
+          change.message.senderId === userId ? change.message.recipientId : change.message.senderId
+        ))
+        .filter((change) => !createdAtAfter || change.message.createdAt >= createdAtAfter)
+        .filter((change) => change.changedAt > since)
+        .filter((change) =>
+          !afterChangedAt || !afterChangeId ||
+          change.changedAt > afterChangedAt ||
+          (change.changedAt === afterChangedAt && BigInt(change.changeId) > BigInt(afterChangeId))
+        )
+        .sort((a, b) =>
+          a.changedAt === b.changedAt
+            ? a.changeId.localeCompare(b.changeId, undefined, { numeric: true })
+            : a.changedAt.localeCompare(b.changedAt)
+        )
+        .slice(0, clampExportReadLimit(limit))
+        .map((change) => ({ ...change, message: cloneMessage(change.message) }));
     },
 
     async listUserMessages({ userId, limit, before, beforeMessageId } = {}) {
@@ -187,7 +250,10 @@ export function createMemoryMessageStore(): MessageStore {
           !candidate.deletedAt
       );
       if (!message) return null;
-      return { ...applyTombstone(message, nextTimestamp()) };
+      const deletedAt = nextTimestamp();
+      const deleted = applyTombstone(message, deletedAt);
+      recordChange(deleted, 'deleted', deletedAt);
+      return cloneMessage(deleted);
     },
 
     async reactToMessage({ conversationId, messageId, userId, emoji, action } = {}) {
@@ -198,13 +264,17 @@ export function createMemoryMessageStore(): MessageStore {
           !candidate.deletedAt
       );
       if (!message) return null;
-      message.reactions = applyReaction(
+      const reactions = applyReaction(
         message.reactions,
         (emoji as string),
         (userId as string),
         (action as 'add'|'remove')
       );
-      return { ...message };
+      if (JSON.stringify(reactions) !== JSON.stringify(message.reactions)) {
+        message.reactions = reactions;
+        recordChange(message, 'reactions', nextTimestamp());
+      }
+      return cloneMessage(message);
     },
 
     async close() {

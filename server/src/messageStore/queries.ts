@@ -52,10 +52,11 @@ export function normaliseSearchTerm(query: unknown): string {
 }
 
 /**
- * Whether `message.body` contains `term`, case-insensitively.
+ * Whether every simple-token query term occurs in the message body.
  */
 export function bodyMatches(message: { body?: string; }, term: string): boolean {
-  return String(message?.body ?? '')
-    .toLowerCase()
-    .includes(term.toLowerCase());
+  const queryTerms = term.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
+  if (!queryTerms.length) return false;
+  const bodyTerms = new Set(String(message?.body ?? '').toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []);
+  return queryTerms.every((token) => bodyTerms.has(token));
 }

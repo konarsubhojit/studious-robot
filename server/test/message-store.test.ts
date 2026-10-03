@@ -208,6 +208,21 @@ test('searchMessages returns only the requesting user matches, newest first', as
     createdAt: '2024-01-01T00:00:02.000Z',
   });
 
+  test('searchMessages excludes deleted message tombstones', async () => {
+    const store = createMemoryMessageStore();
+    const message = await store.saveMessage({
+      messageId: 'search-deleted',
+      conversationId: deriveConversationId('alice', 'bob'),
+      senderId: 'alice',
+      recipientId: 'bob',
+      body: 'private lunch details',
+    });
+
+    await store.deleteMessage(message.conversationId, message.messageId, 'alice');
+
+    assert.deepEqual(await store.searchMessages({ userId: 'alice', query: 'lunch' }), []);
+  });
+
   const results = await store.searchMessages({ userId: 'alice', query: 'lunch' });
   assert.deepEqual(
     results.map((m) => m.body),

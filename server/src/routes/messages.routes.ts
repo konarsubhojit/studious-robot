@@ -59,13 +59,15 @@ class HistoryHttpError extends Error {
 }
 
 function parseTimelineCursor(query: express.Request['query']): TimelineCursor | null {
-  const before = normaliseOptionalString(query?.before);
+  const before = normaliseOptionalString(query?.before ?? query?.cursor);
   if (!before) return null;
   const beforeTypeRaw = normaliseOptionalString(query?.beforeType);
   const beforeType = beforeTypeRaw === 'call' || beforeTypeRaw === 'message'
     ? beforeTypeRaw
     : undefined;
-  const beforeMessageId = normaliseOptionalString(query?.beforeMessageId ?? query?.beforeId);
+  const beforeMessageId = normaliseOptionalString(
+    query?.cursorMessageId ?? query?.beforeMessageId ?? query?.beforeId
+  );
   const beforeCallId = normaliseOptionalString(query?.beforeCallId ?? query?.beforeId);
   return {
     before,
@@ -73,6 +75,38 @@ function parseTimelineCursor(query: express.Request['query']): TimelineCursor | 
     beforeMessageId: beforeType === 'call' ? undefined : beforeMessageId ?? undefined,
     beforeCallId: beforeType === 'message' ? undefined : beforeCallId ?? undefined,
   };
+}
+
+function blockedPeerIds(state: import('../stores/contracts.ts').ServerState, userId: string): string[] {
+  const blocked = new Set(state.blocks.get(userId) ?? []);
+  for (const [blocker, users] of state.blocks) {
+    if (users.has(userId)) blocked.add(blocker);
+  }
+  return [...blocked];
+}
+
+function encodeSyncCursor(change: { changedAt: string; changeId: string }): string {
+  return Buffer.from(JSON.stringify({
+    changedAt: change.changedAt,
+    changeId: change.changeId,
+  })).toString('base64url');
+}
+
+function parseSyncCursor(value: unknown): { changedAt: string; changeId: string } | null {
+  const cursor = normaliseOptionalString(value);
+  if (!cursor || cursor.length > 512) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (
+      typeof parsed?.changedAt !== 'string' ||
+      Number.isNaN(Date.parse(parsed.changedAt)) ||
+      typeof parsed?.changeId !== 'string' ||
+      !/^\d+$/.test(parsed.changeId)
+    ) return null;
+    return { changedAt: parsed.changedAt, changeId: parsed.changeId };
+  } catch {
+    return null;
+  }
 }
 
 function cursorForEntry(entry: Record<string, any> | undefined): TimelineCursor | null {
@@ -255,12 +289,12 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
   });
 
   /**
-   * GET /messages/search?q=…&limit=…&before=…
+   * GET /messages/search?q=…&conversationId=…&limit=…&cursor=…
    *
    * Full-history text search across every conversation the authenticated user
-   * participates in, newest first.  `before` is an ISO timestamp cursor with
-   * the same meaning as on `GET /messages`: pass the `createdAt` of the oldest
-   * result you already hold to fetch the next page.
+   * participates in, newest first. `conversationId` optionally narrows the
+   * result; `cursor` is an exclusive ISO timestamp and `cursorMessageId` breaks
+   * ties.
    *
    * The scoping is enforced server-side twice: the store only ever matches
    * documents where the caller is the sender or the recipient, and the result
@@ -272,7 +306,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
    * `messageId`, `createdAt`) for the client to deep-link into the
    * conversation at that message.
    *
-   * Response 200: { query, results: Array<message & { peerId }>, limit }
+   * Response 200: { query, results: Array<message & { peerId }>, limit, nextCursor, hasMore }
    *   where `limit` is the page size that was applied, so a client can tell a
    *   full page (there may be more) from a partial one (there is not).
    */
@@ -280,14 +314,24 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     const session = await requireSession(req, res);
     if (!session) return;
 
-    // Search is the most expensive read the API serves (it fans out across
-    // every conversation the user is part of), so it is rate limited per user.
+    const query = normaliseOptionalString(req.query?.q);
+    if (!query) {
+      res.status(400).json({ error: 'q is required' });
+      return;
+    }
+    if (query.length > 256) {
+      res.status(400).json({ error: 'q must be at most 256 characters' });
+      return;
+    }
+
+    const conversationId = normaliseOptionalString(req.query?.conversationId);
     const rateCheck = state.messageSearchRateLimiter.check(session.userId);
     if (!rateCheck.allowed) {
       state.auditLog.record({
         event: 'message_search.rate_limited',
         actor: session.userId,
         outcome: 'rejected',
+        details: { query, conversationId },
       });
       res.status(429).json({
         error: 'too many requests',
@@ -295,14 +339,17 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       });
       return;
     }
-
-    const query = normaliseOptionalString(req.query?.q);
-    if (!query) {
-      res.status(400).json({ error: 'q is required' });
-      return;
-    }
+    state.auditLog.record({
+      event: 'message_search',
+      actor: session.userId,
+      outcome: 'accepted',
+      details: { query, conversationId },
+    });
 
     const limit = clampMessageLimit(req.query?.limit);
+    const createdAtAfter = state.messageRetentionMs > 0
+      ? new Date(Date.now() - state.messageRetentionMs).toISOString()
+      : undefined;
     const cursor = parseTimelineCursor(req.query);
     if (cursor && Number.isNaN(Date.parse(cursor.before))) {
       res.status(400).json({ error: 'before cursor must be an ISO timestamp' });
@@ -314,6 +361,9 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       matches = await state.messageStore.searchMessages({
         userId: session.userId,
         query,
+        conversationId: conversationId ?? undefined,
+        excludedUserIds: blockedPeerIds(state, session.userId),
+        createdAtAfter,
         limit: limit + 1,
         before: cursor?.before,
         beforeMessageId: cursor?.beforeMessageId,
@@ -355,6 +405,99 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       : null;
 
     res.status(200).json({ query, results, limit: results.length, nextCursor, hasMore: Boolean(nextCursor) });
+  });
+
+  /**
+   * GET /messages/sync?since=…&cursor=…&limit=…
+   *
+   * Ordered change-log page after an exclusive ISO timestamp. `cursor` is the
+   * opaque nextCursor returned by the previous page and preserves ordering for
+   * changes sharing a timestamp. Changes are scoped to the bearer session and
+   * to currently visible (unblocked) conversations.
+   */
+  router.get(API_ROUTES.MESSAGES_SYNC, async (req, res) => {
+    const session = await requireSession(req, res);
+    if (!session) return;
+
+    const since = normaliseOptionalString(req.query?.since);
+    if (!since || Number.isNaN(Date.parse(since))) {
+      res.status(400).json({ error: 'since must be an ISO timestamp' });
+      return;
+    }
+    const cursor = parseSyncCursor(req.query?.cursor);
+    if (req.query?.cursor && !cursor) {
+      res.status(400).json({ error: 'cursor is invalid' });
+      return;
+    }
+    if (cursor && Date.parse(cursor.changedAt) < Date.parse(since)) {
+      res.status(400).json({ error: 'cursor precedes since' });
+      return;
+    }
+
+    const rateCheck = state.messageSyncRateLimiter.check(session.userId);
+    if (!rateCheck.allowed) {
+      state.auditLog.record({
+        event: 'message_sync.rate_limited',
+        actor: session.userId,
+        outcome: 'rejected',
+      });
+      res.status(429).json({
+        error: 'too many requests',
+        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
+      });
+      return;
+    }
+    const limit = clampMessageLimit(req.query?.limit);
+    const createdAtAfter = state.messageRetentionMs > 0
+      ? new Date(Date.now() - state.messageRetentionMs).toISOString()
+      : undefined;
+    let changes: import('../messageStore/types.ts').MessageChange[];
+    try {
+      if (!state.messageStore.listMessageChanges) throw new Error('message sync unavailable');
+      changes = await state.messageStore.listMessageChanges({
+        userId: session.userId,
+        since,
+        afterChangedAt: cursor?.changedAt,
+        afterChangeId: cursor?.changeId,
+        excludedUserIds: blockedPeerIds(state, session.userId),
+        createdAtAfter,
+        limit: limit + 1,
+      });
+    } catch (error) {
+      console.error(`[messages] sync failed: ${describeError(error)}`);
+      res.status(503).json({ error: 'message store unavailable' });
+      return;
+    }
+
+    const participantChanges = changes.filter(
+      (change) =>
+        (change.message.senderId === session.userId ||
+          change.message.recipientId === session.userId) &&
+        !isBlocked(
+          state.blocks,
+          session.userId,
+          change.message.senderId === session.userId
+            ? change.message.recipientId
+            : change.message.senderId
+        ) &&
+        !isBlocked(
+          state.blocks,
+          change.message.senderId === session.userId
+            ? change.message.recipientId
+            : change.message.senderId,
+          session.userId
+        )
+    );
+    const page = participantChanges.slice(0, limit);
+    const hasMore = participantChanges.length > limit;
+    res.status(200).json({
+      changes: page,
+      limit: page.length,
+      nextCursor: hasMore
+        ? encodeSyncCursor(page[page.length - 1])
+        : null,
+      hasMore,
+    });
   });
 
   /**
