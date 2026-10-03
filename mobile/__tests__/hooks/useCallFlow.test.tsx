@@ -12,6 +12,11 @@ import useCompactCallView from '../../src/hooks/useCompactCallView';
 import { registerCrashContext } from '../../src/crashReporting';
 import { startScreenCapture } from '../../src/screenShare';
 import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
+import { fetchPeerProfile } from '../../src/profile/fetchPeerProfile';
+
+jest.mock('../../src/profile/fetchPeerProfile', () => ({
+  fetchPeerProfile: jest.fn(async () => null),
+}));
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -1495,6 +1500,66 @@ describe('useCallFlow incoming-call ringing', () => {
       callerId: 'bob',
       hasVideo: true,
     });
+  });
+
+  test('socket incoming calls resolve the stored display name for the system UI', async () => {
+    const { resultRef } = await renderWithSocket();
+    (fetchPeerProfile as jest.Mock).mockResolvedValueOnce({ displayName: 'Robert Chen' });
+    await act(async () => {
+      getSocketHandler('call.incoming')({ call: { callId: 'named-socket-call', callerId: 'bob' } });
+    });
+    await flushAsyncEffects();
+    expect(require('../../src/callKeep').displayIncomingCall).toHaveBeenCalledWith({
+      callId: 'named-socket-call', callerId: 'bob', callerDisplayName: 'Robert Chen', hasVideo: true,
+    });
+    expect(resultRef.current.status.message).toBe('Incoming call from Robert Chen');
+  });
+
+  test('a slow profile lookup cannot delay ringing indefinitely', async () => {
+    await renderWithSocket();
+    (fetchPeerProfile as jest.Mock).mockReturnValueOnce(new Promise(() => {}));
+    await act(async () => {
+      getSocketHandler('call.incoming')({ call: { callId: 'slow-profile-call', callerId: 'bob' } });
+    });
+    expect(require('../../src/callKeep').displayIncomingCall).not.toHaveBeenCalled();
+    await act(async () => { jest.advanceTimersByTime(750); });
+    await flushAsyncEffects();
+    expect(require('../../src/callKeep').displayIncomingCall).toHaveBeenCalledWith({
+      callId: 'slow-profile-call', callerId: 'bob', hasVideo: true,
+    });
+    expect((fetchPeerProfile as jest.Mock).mock.calls.at(-1)[0].signal.aborted).toBe(true);
+  });
+
+  test('a profile lookup completing after an account change cannot show the old caller', async () => {
+    const { resultRef } = await renderWithSocket();
+    let finishLookup!: (profile: { displayName: string }) => void;
+    (fetchPeerProfile as jest.Mock).mockReturnValueOnce(new Promise(resolve => { finishLookup = resolve; }));
+    await act(async () => {
+      getSocketHandler('call.incoming')({ call: { callId: 'old-account-lookup', callerId: 'bob' } });
+    });
+    await act(async () => {
+      resultRef.current.setUserId('carol');
+      finishLookup({ displayName: 'Robert Chen' });
+    });
+    await flushAsyncEffects();
+    expect(require('../../src/callKeep').displayIncomingCall).not.toHaveBeenCalled();
+  });
+
+  test('a profile lookup completing after cancellation cannot resurrect the call UI', async () => {
+    await renderWithSocket();
+    let finishLookup!: (profile: { displayName: string }) => void;
+    (fetchPeerProfile as jest.Mock).mockReturnValueOnce(new Promise(resolve => { finishLookup = resolve; }));
+    await act(async () => {
+      getSocketHandler('call.incoming')({ call: { callId: 'cancelled-lookup', callerId: 'bob' } });
+    });
+    await act(async () => {
+      await getSocketHandler('call.state_changed')({
+        status: 'ended', call: { callId: 'cancelled-lookup', callerId: 'bob' }, reason: 'ended',
+      });
+      finishLookup({ displayName: 'Robert Chen' });
+    });
+    await flushAsyncEffects();
+    expect(require('../../src/callKeep').displayIncomingCall).not.toHaveBeenCalled();
   });
 
   test('rerendered messaging handlers do not recreate the presence socket', async () => {

@@ -19,6 +19,7 @@ import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcCo
 import AppButton from './AppButton';
 import AppearanceSettings from './AppearanceSettings';
 import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch, Toast } from './primitives';
+import { usePeerProfile } from '../profile/ProfileContext';
 import type { StorageUsage } from '../storageUsage';
 import type { ThemeColors } from '../theme';
 import type { ToastTone } from './primitives';
@@ -117,6 +118,53 @@ export type SettingsScreenProps = {
   onOpenProfile?: (peerId: string) => void;
 };
 
+function RelationshipRow({ peer, blocked, subtitle, onOpenProfile, onRestore, confirm, styles }: {
+  peer: string;
+  blocked?: boolean;
+  subtitle: string;
+  onOpenProfile?: (peerId: string) => void;
+  onRestore?: (peerId: string) => void;
+  confirm: (message: string) => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const { name } = usePeerProfile(peer);
+  const action = blocked ? 'Unblock' : 'Unmute';
+  const handleRestore = () => {
+    onRestore?.(peer);
+    confirm(`${name} ${blocked ? 'unblocked' : 'unmuted'}`);
+  };
+  return (
+    <ListItem
+      title={name}
+      subtitle={subtitle}
+      leading={<Avatar id={peer} size="sm" />}
+      onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
+      accessibilityLabel={`${name}, ${blocked ? 'blocked' : 'muted'}`}
+      accessibilityHint={onOpenProfile ? `Opens ${name}'s profile` : undefined}
+      trailing={onRestore ? blocked ? (
+        <AppButton
+          title={action}
+          onPress={handleRestore}
+          style={styles.inlineButton}
+          accessibilityLabel={`${action} ${name}`}
+          accessibilityHint="Lets them call and message you again"
+          testID="settings-unblock"
+        />
+      ) : (
+        <IconAction
+          icon="unmuteNotifications"
+          accessibilityLabel={`${action} ${name}`}
+          accessibilityHint="Lets their messages notify you again"
+          onPress={handleRestore}
+          size={40}
+          testID="settings-unmute"
+        />
+      ) : null}
+      testID={blocked ? 'settings-blocked-row' : 'settings-muted-row'}
+    />
+  );
+}
+
 function MutedPeopleSettings({
   mutedPeers,
   mutedPeerExpirations = {},
@@ -145,30 +193,14 @@ function MutedPeopleSettings({
     <View testID="settings-muted-people">
       <Text style={styles.groupCaption}>Muted people</Text>
       {mutedPeers.map(peer => (
-        <ListItem
+        <RelationshipRow
           key={peer}
-          title={peer}
+          peer={peer}
           subtitle={describeMutedPeer(peer, mutedPeerExpirations)}
-          leading={<Avatar id={peer} size="sm" />}
-          onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
-          accessibilityLabel={`${peer}, muted`}
-          accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
-          trailing={
-            onUnmutePeer ? (
-              <IconAction
-                icon="unmuteNotifications"
-                accessibilityLabel={`Unmute ${peer}`}
-                accessibilityHint="Lets their messages notify you again"
-                onPress={() => {
-                  onUnmutePeer(peer);
-                  confirm(`${peer} unmuted`);
-                }}
-                size={40}
-                testID="settings-unmute"
-              />
-            ) : null
-          }
-          testID="settings-muted-row"
+          onOpenProfile={onOpenProfile}
+          onRestore={onUnmutePeer}
+          confirm={confirm}
+          styles={styles}
         />
       ))}
     </View>
@@ -317,30 +349,15 @@ function BlockedPeopleSettings({
     <View testID="settings-blocked-people">
       <Text style={styles.groupCaption}>Blocked people</Text>
       {blockedUsers.map(peer => (
-        <ListItem
+        <RelationshipRow
           key={peer}
-          title={peer}
+          peer={peer}
+          blocked
           subtitle="Can't call or message you"
-          leading={<Avatar id={peer} size="sm" />}
-          onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
-          accessibilityLabel={`${peer}, blocked`}
-          accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
-          trailing={
-            onUnblockUser ? (
-              <AppButton
-                title="Unblock"
-                onPress={() => {
-                  onUnblockUser(peer);
-                  confirm(`${peer} unblocked`);
-                }}
-                style={styles.inlineButton}
-                accessibilityLabel={`Unblock ${peer}`}
-                accessibilityHint="Lets them call and message you again"
-                testID="settings-unblock"
-              />
-            ) : null
-          }
-          testID="settings-blocked-row"
+          onOpenProfile={onOpenProfile}
+          onRestore={onUnblockUser}
+          confirm={confirm}
+          styles={styles}
         />
       ))}
     </View>
@@ -612,6 +629,7 @@ function SettingsScreen({
 }: SettingsScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const { name } = usePeerProfile(userId);
 
   const [url, setUrl] = useState(signalingUrl ?? '');
   const [isEditingSignalingUrl, setIsEditingSignalingUrl] = useState(false);
@@ -693,7 +711,7 @@ function SettingsScreen({
           <Avatar id={userId} size="lg" />
           <View style={styles.identityText}>
             <Text style={styles.identityName} numberOfLines={1}>
-              {userId || 'Not signed in'}
+              {name || 'Not signed in'}
             </Text>
             <Text style={styles.identityAccount} numberOfLines={2} testID="settings-account">
               {accountLine}

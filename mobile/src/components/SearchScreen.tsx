@@ -9,7 +9,8 @@ import {
   View,
 } from 'react-native';
 import ErrorState from './ErrorState';
-import { Banner, Icon } from './primitives';
+import { Avatar, Banner, Icon } from './primitives';
+import { usePeerProfile } from '../profile/ProfileContext';
 import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../connectivityUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
@@ -137,6 +138,68 @@ export type SearchScreenProps = {
   onRecordRecentSearch?: (term: string) => void;
   onClearRecentSearches?: () => void;
 };
+
+function searchRowDetails(category: SearchSection['key'], item: any, name: string) {
+  switch (category) {
+    case 'contacts':
+      return { label: `Open ${name} profile`, subtitle: item.online ? 'Online' : 'Offline', testID: 'search-contact-row' };
+    case 'conversations':
+      return {
+        label: `Open conversation with ${name}`,
+        subtitle: item.lastActivity?.body ?? item.lastMessage?.body ?? '',
+        testID: 'search-conversation-row',
+      };
+    case 'messages':
+      return { label: `Open message from ${name}`, subtitle: item.body, testID: 'search-message-row' };
+    case 'calls':
+      return { label: `Open ${name} profile`, subtitle: describeCall(item), testID: 'search-call-row' };
+  }
+}
+
+function SearchIdentityRow({
+  item, section, currentUserId, term, styles, rememberTerm,
+  onOpenProfile, onOpenConversation, onOpenMessage,
+}: Pick<SearchScreenProps, 'currentUserId' | 'onOpenProfile' | 'onOpenConversation' | 'onOpenMessage'> & {
+  item: any;
+  section: SearchSection;
+  term: string;
+  styles: ReturnType<typeof createStyles>;
+  rememberTerm: () => void;
+}) {
+  const category = section.key;
+  const peerId = category === 'contacts' ? item.userId
+    : category === 'calls' ? callPeerOf(item, currentUserId) : item.peerId;
+  const suppliedProfile = category === 'contacts' ? item : undefined;
+  const { name } = usePeerProfile(peerId, suppliedProfile);
+  const { label, subtitle, testID } = searchRowDetails(category, item, name);
+  const onPress = () => {
+    rememberTerm();
+    if (category === 'conversations') onOpenConversation?.(peerId);
+    else if (category === 'messages') onOpenMessage?.({ peerId, messageId: item.messageId });
+    else onOpenProfile?.(peerId);
+  };
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      testID={testID}>
+      <Avatar id={peerId} profile={suppliedProfile} size="sm" />
+      <View style={styles.rowText}>
+        <HighlightedText text={name} term={term} style={styles.rowTitle} />
+        {category === 'messages' ? (
+          <HighlightedText text={subtitle} term={term} style={styles.rowSubtitle} numberOfLines={2} />
+        ) : (
+          <Text style={styles.rowSubtitle} numberOfLines={1}>{subtitle}</Text>
+        )}
+      </View>
+      {category === 'calls' || category === 'messages' ? (
+        <Text style={styles.rowMeta}>{formatTimestamp(item.createdAt)}</Text>
+      ) : null}
+    </Pressable>
+  );
+}
 
 /**
  * Unified search: one ranked list across contacts, conversations, messages and
@@ -275,89 +338,18 @@ function SearchScreen({
 
   const renderItem = useCallback(
     ({ item, section }: { item: any; section: SearchSection; }) => {
-      if (section.key === 'contacts') {
-        return (
-          <Pressable
-            onPress={() => {
-              rememberTerm();
-              onOpenProfile?.(item.userId);
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Open ${item.userId} profile`}
-            style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            testID="search-contact-row">
-            <View style={styles.rowText}>
-              <HighlightedText text={item.userId} term={term} style={styles.rowTitle} />
-              <Text style={styles.rowSubtitle}>{item.online ? 'Online' : 'Offline'}</Text>
-            </View>
-          </Pressable>
-        );
-      }
-
-      if (section.key === 'conversations') {
-        const preview = item.lastActivity?.body ?? item.lastMessage?.body ?? '';
-        return (
-          <Pressable
-            onPress={() => {
-              rememberTerm();
-              onOpenConversation?.(item.peerId);
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Open conversation with ${item.peerId}`}
-            style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            testID="search-conversation-row">
-            <View style={styles.rowText}>
-              <HighlightedText text={item.peerId} term={term} style={styles.rowTitle} />
-              <Text style={styles.rowSubtitle} numberOfLines={1}>
-                {preview}
-              </Text>
-            </View>
-          </Pressable>
-        );
-      }
-
-      if (section.key === 'messages') {
-        return (
-          <Pressable
-            onPress={() => {
-              rememberTerm();
-              onOpenMessage?.({ peerId: item.peerId, messageId: item.messageId });
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Open message from ${item.peerId}`}
-            style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            testID="search-message-row">
-            <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{item.peerId}</Text>
-              <HighlightedText
-                text={item.body}
-                term={term}
-                style={styles.rowSubtitle}
-                numberOfLines={2}
-              />
-            </View>
-            <Text style={styles.rowMeta}>{formatTimestamp(item.createdAt)}</Text>
-          </Pressable>
-        );
-      }
-
-      const peerId = callPeerOf(item, currentUserId);
       return (
-        <Pressable
-          onPress={() => {
-            rememberTerm();
-            onOpenProfile?.(peerId);
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${peerId} profile`}
-          style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-          testID="search-call-row">
-          <View style={styles.rowText}>
-            <HighlightedText text={peerId} term={term} style={styles.rowTitle} />
-            <Text style={styles.rowSubtitle}>{describeCall(item)}</Text>
-          </View>
-          <Text style={styles.rowMeta}>{formatTimestamp(item.createdAt)}</Text>
-        </Pressable>
+        <SearchIdentityRow
+          item={item}
+          section={section}
+          currentUserId={currentUserId}
+          term={term}
+          styles={styles}
+          rememberTerm={rememberTerm}
+          onOpenProfile={onOpenProfile}
+          onOpenConversation={onOpenConversation}
+          onOpenMessage={onOpenMessage}
+        />
       );
     },
     [currentUserId, onOpenConversation, onOpenMessage, onOpenProfile, rememberTerm, styles, term],

@@ -5,6 +5,7 @@ import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import IconButton from './IconButton';
 import RingingAvatar from './RingingAvatar';
+import { usePeerProfile } from '../profile/ProfileContext';
 import StatusBanner from './StatusBanner';
 import type { CallDelivery } from '../hooks/useCallFlow';
 import type { CallRecord } from '../../../shared/signaling/schemas';
@@ -59,7 +60,8 @@ export default function OutgoingCallScreen({ calleeId, activeCall, delivery = nu
   const styles = useThemedStyles(createStyles);
 
   const ringTimeoutAt = activeCall?.ringTimeoutAt ?? null;
-  const initials = deriveInitials(calleeId);
+  const profile = usePeerProfile(calleeId || activeCall?.calleeId || 'Unknown');
+  const initials = deriveInitials(profile.name);
   const deliveryLabel = describeDelivery(delivery);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
@@ -104,13 +106,13 @@ export default function OutgoingCallScreen({ calleeId, activeCall, delivery = nu
 
       {/* ── Callee info ───────────────────────────────────────────────────── */}
       <View style={styles.calleeSection}>
-        <RingingAvatar initials={initials} tone="accent" testID="outgoing-avatar" />
+        <RingingAvatar initials={initials} avatarUrl={profile.avatarUrl} tone="accent" testID="outgoing-avatar" />
 
         <Text
           style={styles.calleeId}
-          accessibilityLabel={`Calling ${calleeId || 'unknown contact'}`}
+          accessibilityLabel={`Calling ${profile.name}`}
           testID="outgoing-callee-id">
-          {calleeId || 'Unknown'}
+          {profile.name}
         </Text>
 
         {ringTimeoutAt ? (

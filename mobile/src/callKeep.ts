@@ -6,6 +6,7 @@ import {
 } from './incomingCallNotification';
 import { startIncomingRingtone, stopIncomingRingtone } from './ringtone';
 import { errorMessage } from './errors';
+import { resolveDisplayName } from '../../shared/identity';
 
 /**
  * System-level incoming-call UI for the WeTalk mobile app.
@@ -111,6 +112,7 @@ const displayedCallIds = new Set<string>();
  * stacking on top of it.
  */
 const displayedCallerIds = new Map<string, string>();
+const displayedCallerNames = new Map<string, string>();
 const displayedVideoModes = new Map<string, boolean>();
 
 /**
@@ -181,6 +183,7 @@ export function _resetCallKeepCache() {
   isConfigured = false;
   displayedCallIds.clear();
   displayedCallerIds.clear();
+  displayedCallerNames.clear();
   displayedVideoModes.clear();
   activeCallActionHandlers = null;
   pendingAnswerCallId = null;
@@ -193,6 +196,7 @@ export function _resetCallKeepCache() {
 export function clearDisplayedCall(callId: string) {
   displayedCallIds.delete(callId);
   displayedCallerIds.delete(callId);
+  displayedCallerNames.delete(callId);
   displayedVideoModes.delete(callId);
 }
 
@@ -333,7 +337,7 @@ function dismissStaleCallsFromCaller(callId: string, callerId: string | null | u
  * Duplicate calls for the same `callId` are ignored, so it is safe to invoke
  * this from the socket, foreground-push and background-push paths at once.
  */
-export async function displayIncomingCall({ callId, callerId, hasVideo = true }: { callId?: string; callerId?: string | null; hasVideo?: boolean; } = {}): Promise<{ shown: true; } | { shown: false; reason: string; message?: string; }> {
+export async function displayIncomingCall({ callId, callerId, callerDisplayName, hasVideo = true }: { callId?: string; callerId?: string | null; callerDisplayName?: string | null; hasVideo?: boolean; } = {}): Promise<{ shown: true; } | { shown: false; reason: string; message?: string; }> {
   if (!callId) return { shown: false, reason: 'missing_call_id' };
   if (displayedCallIds.has(callId)) {
     logInfo('[CallKeep] Incoming call already displayed; ignoring duplicate', { callId });
@@ -365,16 +369,18 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true }:
       return { shown: false, reason: 'phone_account_disabled_by_user' };
     }
     const handle = callerId || callId;
-    const name = callerId || 'Incoming call';
+    const name = resolveDisplayName(callerId || 'Incoming call', callerDisplayName);
     displayedCallIds.add(callId);
     displayedVideoModes.set(callId, hasVideo);
     if (callerId) displayedCallerIds.set(callId, callerId);
+    if (callerDisplayName?.trim()) displayedCallerNames.set(callId, name);
     callKeep.displayIncomingCall?.(callId, handle, name, 'generic', hasVideo);
     logInfo('[CallKeep] Displayed incoming call', { callId, callerId: callerId ?? null });
     return { shown: true };
   } catch (error) {
     displayedCallIds.delete(callId);
     displayedCallerIds.delete(callId);
+    displayedCallerNames.delete(callId);
     displayedVideoModes.delete(callId);
     logError('[CallKeep] displayIncomingCall failed', error);
     return { shown: false, reason: 'telecom_threw', message: errorMessage(error) };
@@ -432,6 +438,7 @@ export function endCall(callId: string): boolean {
   // Allow the call id to be displayed again if it ever rings anew.
   displayedCallIds.delete(callId);
   displayedCallerIds.delete(callId);
+  displayedCallerNames.delete(callId);
   displayedVideoModes.delete(callId);
   // Idempotent no-ops when nothing was ever shown/started for this call.
   dismissIncomingCallNotification(callId);
@@ -452,6 +459,7 @@ export function endAllCalls() {
   for (const callId of displayedCallIds) dismissIncomingCallNotification(callId);
   displayedCallIds.clear();
   displayedCallerIds.clear();
+  displayedCallerNames.clear();
   displayedVideoModes.clear();
   stopIncomingRingtone();
   const callKeep = loadCallKeep();
@@ -581,7 +589,7 @@ export function registerShowIncomingCallUiListener(): (() => void) & { registere
     logInfo('[CallKeep] showIncomingCallUi', { callUUID });
     const shown = await showIncomingCallNotification({
       callId: callUUID,
-      callerId: name || handle,
+      callerId: displayedCallerNames.get(callUUID) || name || handle,
       hasVideo: displayedVideoModes.get(callUUID) ?? true,
     }).catch(error => {
       logError('[CallKeep] showIncomingCallNotification threw', error);

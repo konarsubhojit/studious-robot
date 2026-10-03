@@ -18,6 +18,7 @@ import { formatCallDuration } from '../callUx';
 import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../connectivityUx';
 import { announceForAccessibility } from '../accessibilityAnnouncer';
 import { useTheme, useThemedStyles } from '../ThemeContext';
+import { usePeerProfile } from '../profile/ProfileContext';
 import { spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
 import SwipeableRow from './SwipeableRow';
@@ -84,6 +85,7 @@ function CallHistoryTrailing({
   onRedial: (entry: CallHistoryEntry) => void;
 }) {
   const modality = callMediaType(item);
+  const { name } = usePeerProfile(peerId);
   return (
     <View style={styles.trailing}>
       <Icon
@@ -95,7 +97,7 @@ function CallHistoryTrailing({
       {canCall && peerId ? (
         <IconAction
           icon={modality === 'audio' ? 'callTypeAudio' : 'callTypeVideo'}
-          accessibilityLabel={`Call ${peerId} back`}
+          accessibilityLabel={`Call ${name} back`}
           accessibilityHint={modality === 'audio' ? 'Starts an audio call' : 'Starts a video call'}
           onPress={() => onRedial(item)}
           size={40}
@@ -124,6 +126,7 @@ function CallHistoryRow({
   onRedial: (entry: CallHistoryEntry) => void;
 }) {
   const peerId = callPeerId(item);
+  const { name } = usePeerProfile(peerId);
   const missed = isMissedCall(item);
   const durationLabel =
     item.durationSeconds != null ? formatCallDuration(item.durationSeconds) : '';
@@ -134,7 +137,7 @@ function CallHistoryRow({
     ? [{
         key: 'message',
         label: 'Message',
-        accessibilityLabel: `Message ${peerId}`,
+        accessibilityLabel: `Message ${name}`,
         testID: 'call-history-message',
         onPress: () => onMessage(peerId),
       }]
@@ -143,13 +146,13 @@ function CallHistoryRow({
   return (
     <SwipeableRow actions={actions}>
       <ListItem
-        title={peerId || 'Unknown contact'}
+        title={name || 'Unknown contact'}
         subtitle={[describeCallOutcome(item), timeLabel, durationLabel].filter(Boolean).join(' · ')}
         destructive={missed}
         leading={<Avatar id={peerId} size="md" />}
         onPress={onOpenProfile && peerId ? () => onOpenProfile(peerId) : undefined}
-        accessibilityLabel={describeCallEntryForA11y(item, durationLabel)}
-        accessibilityHint={peerId ? `Opens ${peerId}'s details` : undefined}
+        accessibilityLabel={describeCallEntryForA11y(item, durationLabel, name)}
+        accessibilityHint={peerId ? `Opens ${name}'s details` : undefined}
         trailing={
           <CallHistoryTrailing
             item={item}
@@ -288,6 +291,7 @@ export default function CallsScreen({
   const [isPickerVisible, setIsPickerVisible] = useState(false);
   // Peer chosen in the picker, awaiting an audio/video decision.
   const [pendingPeerId, setPendingPeerId] = useState((null as string | null));
+  const pendingProfile = usePeerProfile(pendingPeerId ?? '');
   const fetchHistoryOnMountRef = useRef(onFetchCallHistory);
 
   useEffect(() => {
@@ -447,21 +451,21 @@ export default function CallsScreen({
       <Sheet
         visible={Boolean(pendingPeerId)}
         onClose={() => setPendingPeerId(null)}
-        title={pendingPeerId ? `Call ${pendingPeerId}` : 'Call'}
+        title={pendingPeerId ? `Call ${pendingProfile.name}` : 'Call'}
         subtitle="Choose how to connect"
         testID="calls-modality-sheet">
         <ListItem
           title="Audio call"
           icon="callTypeAudio"
           onPress={() => startPendingCall('audio')}
-          accessibilityLabel={`Audio call ${pendingPeerId ?? ''}`}
+          accessibilityLabel={`Audio call ${pendingProfile.name}`}
           testID="calls-modality-audio"
         />
         <ListItem
           title="Video call"
           icon="callTypeVideo"
           onPress={() => startPendingCall('video')}
-          accessibilityLabel={`Video call ${pendingPeerId ?? ''}`}
+          accessibilityLabel={`Video call ${pendingProfile.name}`}
           testID="calls-modality-video"
         />
       </Sheet>

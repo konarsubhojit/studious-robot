@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Image, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import useReducedMotion from '../hooks/useReducedMotion';
 import { fontScaleCaps } from '../theme';
@@ -33,16 +33,19 @@ export type RingingAvatarTone = 'accent' | 'success';
  */
 export default function RingingAvatar({
   initials,
+  avatarUrl,
   tone = 'accent',
   testID,
 }: {
   initials: string;
+  avatarUrl?: string;
   tone?: RingingAvatarTone;
   testID?: string;
 }) {
   const styles = useThemedStyles(createStyles);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const reduceMotion = useReducedMotion();
+  const [failedUrl, setFailedUrl] = useState<string>();
 
   // A never-ending pulse is exactly the kind of motion "reduce motion" is asked
   // to stop, and it is decorative: the ring conveys nothing the peer's name,
@@ -86,9 +89,19 @@ export default function RingingAvatar({
         style={styles.avatar}
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants">
-        <Text style={styles.avatarText} maxFontSizeMultiplier={fontScaleCaps.badge}>
-          {initials}
-        </Text>
+        {avatarUrl && avatarUrl !== failedUrl ? (
+          <Image
+            source={{ uri: avatarUrl }}
+            style={styles.avatarImage}
+            onError={() => setFailedUrl(avatarUrl)}
+            accessible={false}
+            testID={testID ? `${testID}-image` : undefined}
+          />
+        ) : (
+          <Text style={styles.avatarText} maxFontSizeMultiplier={fontScaleCaps.badge}>
+            {initials}
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -134,5 +147,10 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 36,
       fontWeight: '700',
       color: colors.textPrimary,
+    },
+    avatarImage: {
+      width: AVATAR_SIZE - 4,
+      height: AVATAR_SIZE - 4,
+      borderRadius: AVATAR_SIZE / 2,
     },
   });

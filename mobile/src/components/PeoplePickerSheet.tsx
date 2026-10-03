@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
+import { usePeerProfile } from '../profile/ProfileContext';
 import { radius, spacing, typography } from '../theme';
 import {
   Avatar,
@@ -19,6 +20,22 @@ const SEARCH_DEBOUNCE_MS = 300;
 
 /** How many recent conversations to offer before the user types anything. */
 const MAX_RECENT = 8;
+
+function PersonRow({ row, onSelect, testID }: {
+  row: ContactRow; onSelect: (userId: string) => void; testID: string;
+}) {
+  const { name } = usePeerProfile(row.userId, row);
+  return (
+    <ListItem
+      title={name}
+      subtitle={row.online ? 'Online' : 'Offline'}
+      leading={<Avatar id={row.userId} profile={row} size="md" online={row.online} />}
+      onPress={() => onSelect(row.userId)}
+      accessibilityLabel={`${name}, ${row.online ? 'online' : 'offline'}`}
+      testID={testID}
+    />
+  );
+}
 
 export type PeoplePickerSheetProps = {
   visible: boolean;
@@ -229,16 +246,9 @@ export default function PeoplePickerSheet({
             item.type === 'header' ? (
               <SectionHeader title={item.title} variant="group" />
             ) : (
-              <ListItem
-                title={item.row.userId}
-                subtitle={item.row.online ? 'Online' : 'Offline'}
-                leading={
-                  <Avatar id={item.row.userId} size="md" online={Boolean(item.row.online)} />
-                }
-                onPress={() => handleSelect(item.row.userId)}
-                accessibilityLabel={`${item.row.userId}, ${
-                  item.row.online ? 'online' : 'offline'
-                }`}
+              <PersonRow
+                row={item.row}
+                onSelect={handleSelect}
                 testID={`${testID}-row`}
               />
             )

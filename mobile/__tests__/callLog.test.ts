@@ -200,6 +200,15 @@ describe('groupCallsByDay', () => {
 });
 
 describe('describeCallEntryForA11y', () => {
+  test.each([
+    ['  Ada Lovelace  ', 'with Ada Lovelace'],
+    ['   ', 'with bob'],
+    ['', 'with bob'],
+    [null, 'with bob'],
+  ])('resolves display name %p through the shared fallback', (displayName, expected) => {
+    expect(describeCallEntryForA11y(entry(), '', displayName)).toContain(expected);
+  });
+
   test('reads as one sentence covering modality, outcome, peer, time and duration', () => {
     const sentence = describeCallEntryForA11y(
       entry({ direction: 'incoming', status: 'missed', endReason: 'timeout', mediaType: 'audio' }),

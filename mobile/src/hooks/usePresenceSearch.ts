@@ -152,11 +152,15 @@ export default function usePresenceSearch({
    *
    * Pass a `signal` to cancel an in-flight request — the unified search screen
    * aborts the previous lookup on every keystroke.
+   * `forceRefresh` bypasses fresh disk entries when identity names need a
+   * foreground refresh; authorization and scope fences still apply.
    *
    * @param query optional substring filter
    */
   const searchUsers = useCallback(
-    async (query: string = '', { limit = 20, signal }: { limit?: number; signal?: AbortSignal; } = {}) => {
+    async (query: string = '', { limit = 20, signal, forceRefresh = false }: {
+      limit?: number; signal?: AbortSignal; forceRefresh?: boolean;
+    } = {}) => {
       const sessionId = sessionIdRef.current;
       const trimmedUrl = (signalingUrl ?? '').trim();
       if (!sessionId || !trimmedUrl) return [];
@@ -167,11 +171,13 @@ export default function usePresenceSearch({
       const cached = await readResource<ContactRow[]>(scope, key).catch(() => null);
       if (!isCurrent()) return [];
       // Presence is deliberately absent in stored rows; it is never a durable fact.
-      if (cached && isRecent(cached.updatedAt, 60_000)) return cached.value;
+      if (!forceRefresh && cached && isRecent(cached.updatedAt, 60_000)) return cached.value;
       try {
         const users = await fetchDirectory(authedFetchRef.current, trimmedUrl, trimmedQuery, limit, signal);
         if (!isCurrent()) return [];
-        await writeResource(scope, key, users.map(({ userId: id }) => ({ userId: id })), version)
+        await writeResource(scope, key, users.map(({ userId: id, displayName, avatarKey }) => ({
+          userId: id, displayName, avatarKey,
+        })), version)
           .catch(() => logWarn('[PresenceSearch] Failed to cache directory'));
         return users;
       } catch (error) {

@@ -212,6 +212,10 @@ referencing the returned `reference`.
 
 ## Avatars
 
+`GET /users?userId=<identifier>` resolves one exact peer's profile without
+substring matches or page limits hiding that peer. It applies the same
+self-exclusion and bidirectional block checks as directory search.
+
 Avatars share the private R2 bucket with chat media and nothing else about it.
 Chat downloads are authorised by recomputing the object's expected
 *conversation* scope from the caller's identity; an avatar has no conversation
@@ -232,6 +236,11 @@ own key namespace and its own rule (`src/avatars.ts`).
 connection — both incoming calls (`sendIncomingCallPush`) and text messages
 (`sendMessagePush`). Gating is per **device**, not per user: a user who is online
 on their phone still receives a push on their offline tablet.
+
+Call previews and message titles resolve names from stored profiles using
+`shared/identity.ts`, falling back to the raw user ID. Call data includes
+`callerDisplayName` for cold-start system UI; `callerId` and `senderId` remain
+unchanged for routing.
 
 ### Provider chain
 

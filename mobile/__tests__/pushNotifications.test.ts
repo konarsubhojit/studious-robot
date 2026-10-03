@@ -503,6 +503,40 @@ describe('background push handler', () => {
     });
   });
 
+  test.each([
+      ['background', handleBackgroundPushMessage],
+      ['foreground', handleForegroundPushMessage],
+    ])('%s call pushes carry display names to the lock-screen UI', async (_path, handlePush) => {
+      const displayIncomingCall = jest
+        .spyOn(callKeep, 'displayIncomingCall')
+        .mockResolvedValue({ shown: true });
+      const incoming = await handlePush({
+        data: {
+          type: 'call.incoming',
+          callId: 'named-call',
+          callerId: 'alice',
+          callerDisplayName: ' Alice Chen ',
+          mediaType: 'audio',
+        },
+      });
+      expect(incoming).toEqual(expect.objectContaining({
+        callerId: 'alice', callerDisplayName: 'Alice Chen',
+      }));
+      expect(displayIncomingCall).toHaveBeenCalledWith({
+        callId: 'named-call',
+        callerId: 'alice',
+        callerDisplayName: 'Alice Chen',
+        hasVideo: false,
+      });
+      displayIncomingCall.mockRestore();
+    });
+
+  test.each([null, 42, '   '])('ignores invalid or empty caller display name %p', callerDisplayName => {
+      expect(_extractIncomingCallFromMessage({
+        data: { callId: 'call-1', callerId: 'alice', callerDisplayName },
+      })).not.toHaveProperty('callerDisplayName');
+  });
+
   test('rings a verbatim server call.incoming data block', async () => {
     // Exact `data` map both server transports send (server/src/push.js
     // `buildDataBlock`); FCM v1 stringifies every value. The server-side
@@ -1072,7 +1106,7 @@ describe('message push handling', () => {
 
     await setNotificationPreviewMode('sender');
     expect(formatMessageNotificationPreview(message)).toEqual({
-      title: 'alice',
+      title: 'Alice',
       body: 'Sent you a message',
     });
 
@@ -1120,7 +1154,7 @@ describe('message push handling', () => {
     expect(enqueueInAppMessageNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         messageId: 'message-sender',
-        title: 'alice',
+        title: 'Alice',
         body: 'Sent you a message',
       }),
     );

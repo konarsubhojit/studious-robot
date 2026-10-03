@@ -82,6 +82,33 @@ test('directory cache avoids duplicate network reads and never persists live pre
   expect(authedFetchRef.current).toHaveBeenCalledTimes(1);
 });
 
+test('directory cache preserves public profile fields but not transient presence or signed URLs', async () => {
+  const peer = {
+    userId: 'bob', displayName: 'Bob Name', avatarKey: 'avatar-key',
+    online: true, status: 'online', lastSeen: 'now', downloadUrl: 'https://private.example/signed',
+  };
+  authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ users: [peer] }) });
+  await act(async () => { tree = renderer.create(<Directory />); });
+  expect(await directory.searchUsers('bo')).toEqual([peer]);
+  const persisted = [{ userId: 'bob', displayName: 'Bob Name', avatarKey: 'avatar-key' }];
+  expect(await directory.searchUsers('bo')).toEqual(persisted);
+  expect((await cache.readResource(alice, 'directory:["bo",20]'))?.value).toEqual(persisted);
+  expect(await cache.readResource(bob, 'directory:["bo",20]')).toBeNull();
+  expect(authedFetchRef.current).toHaveBeenCalledTimes(1);
+});
+
+test('foreground profile refresh bypasses a fresh directory cache and persists new names', async () => {
+  await cache.writeResource(alice, 'directory:["bo",20]', [{ userId: 'bob', displayName: 'Old Name', avatarKey: null }]);
+  const updated = [{ userId: 'bob', displayName: 'New Name', avatarKey: null, online: true }];
+  authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ users: updated }) });
+  await act(async () => { tree = renderer.create(<Directory />); });
+  expect(await directory.searchUsers('bo', { forceRefresh: true })).toEqual(updated);
+  expect((await cache.readResource(alice, 'directory:["bo",20]'))?.value).toEqual([
+    { userId: 'bob', displayName: 'New Name', avatarKey: null },
+  ]);
+  expect(authedFetchRef.current).toHaveBeenCalledTimes(1);
+});
+
 test('expired directory cache is an offline fallback but never overrides an authorization denial', async () => {
   const key = 'directory:["bo",20]';
   await cache.writeResource(alice, key, [{ userId: 'bob' }]);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Linking, StatusBar, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { resolveDisplayName } from '../../shared/identity';
 import {
   announceForAccessibility,
   describeCallEnd,
@@ -12,6 +13,7 @@ import { CALL_STATES } from './call/callStateMachine';
 import { useCall, useCallSelector } from './call/CallProvider';
 import useCallElapsedSeconds from './hooks/useCallElapsedSeconds';
 import usePermissionsPrimer from './hooks/usePermissionsPrimer';
+import { usePeerProfile } from './profile/ProfileContext';
 import CallEndSummary from './components/CallEndSummary';
 import CallScreen from './components/CallScreen';
 import { Banner } from './components/primitives';
@@ -31,6 +33,19 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import type { CallContextValue } from './call/CallProvider';
 import type { CallEndSummary as CallEndSummaryData } from './hooks/useCallFlow';
 import type { ThemeColors } from './theme';
+
+function remoteParticipantId({ activeCall, userId }: CallContextValue['callFlow']) {
+  // Partial call snapshots cannot reliably identify the remote party.
+  if (!activeCall?.callerId || !activeCall?.calleeId) return null;
+  return activeCall.callerId === userId ? activeCall.calleeId : activeCall.callerId;
+}
+
+function useParticipantLabel(participantId: string | null, fallback: string | null) {
+  const profile = usePeerProfile(participantId ?? '');
+  return participantId && profile.displayName?.trim()
+    ? `Call with ${resolveDisplayName(participantId, profile.displayName)}`
+    : fallback;
+}
 
 /**
  * What the screen router itself reads: registration, the state machine's phase
@@ -296,16 +311,18 @@ export default function AppShell() {
  */
 function useCallStateAnnouncements(callState: string, callerId: string | null | undefined, calleeId: string | null | undefined) {
   const previousStateRef = useRef((null as string | null));
+  const callerProfile = usePeerProfile(callerId ?? '');
+  const calleeProfile = usePeerProfile(calleeId ?? '');
+  const callerName = callerId ? resolveDisplayName(callerId, callerProfile.displayName) : callerId;
+  const calleeName = calleeId ? resolveDisplayName(calleeId, calleeProfile.displayName) : calleeId;
 
   useEffect(() => {
     if (previousStateRef.current === callState) return;
     previousStateRef.current = callState;
-    const message = describeCallState(callState, { callerId, calleeId });
+    const message = describeCallState(callState, { callerId: callerName, calleeId: calleeName });
     if (message) announceForAccessibility(message);
-    // The peer ids are read at announcement time only: a peer changing while
-    // the state stays put must not re-announce the same transition.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callState]);
+    // Profile updates can refresh visible labels without repeating a transition.
+  }, [callState, callerName, calleeName]);
 }
 
 /** No recovery in progress, and nothing yet announced about one. */
@@ -380,6 +397,8 @@ function ActiveCallScreen() {
     minimizeCall,
     endCall,
   } = useCall();
+  const participantId = remoteParticipantId(callFlow);
+  const displayLabel = useParticipantLabel(participantId, participantLabel);
   // Ticked here rather than in the call flow, so the per-second update
   // re-renders only this screen instead of every mounted screen in the app.
   const elapsedCallSeconds = useCallElapsedSeconds(callFlow.callConnectedAtMs);
@@ -397,7 +416,8 @@ function ActiveCallScreen() {
     <CallScreen
       elapsedCallSeconds={elapsedCallSeconds}
       connectionQuality={callFlow.connectionQuality}
-      participantLabel={participantLabel}
+      participantLabel={displayLabel}
+      participantId={participantId}
       isReconnecting={callFlow.isReconnecting}
       recoveryStatus={callFlow.recoveryStatus}
       isConnectionLost={callFlow.isConnectionLost}
@@ -466,6 +486,7 @@ const selectBannerSlice = (state: CallContextValue) => ({
   isMuted: state.callFlow.isMuted,
   handleMuteToggle: state.callFlow.handleMuteToggle,
   participantLabel: state.participantLabel,
+  participantId: remoteParticipantId(state.callFlow),
   expandCall: state.expandCall,
   endCall: state.endCall,
 });
@@ -510,13 +531,14 @@ const selectCallElsewhereSlice = (state: CallContextValue) => ({
  */
 function CallElsewhereBanner({ isVisible, style }: { isVisible: boolean; style: StyleProp<ViewStyle>; }) {
   const { callElsewhere, callState } = useCallSelector(selectCallElsewhereSlice);
+  const profile = usePeerProfile(callElsewhere?.peerId ?? '');
   if (!isVisible || !callElsewhere || callState !== CALL_STATES.IDLE) return null;
 
   return (
     <Banner
       tone="accent"
       icon="callActive"
-      message={`In a call with ${callElsewhere.peerId} on another device`}
+      message={`In a call with ${resolveDisplayName(callElsewhere.peerId, profile.displayName)} on another device`}
       accessibilityRole="alert"
       style={style}
       testID="call-elsewhere-banner"
@@ -526,13 +548,15 @@ function CallElsewhereBanner({ isVisible, style }: { isVisible: boolean; style: 
 
 /** Banner shown above the tab shell while a call is minimized. */
 function MinimizedCallBanner() {
-  const { callConnectedAtMs, isMuted, handleMuteToggle, participantLabel, expandCall, endCall } =
+  const { callConnectedAtMs, isMuted, handleMuteToggle, participantLabel, participantId, expandCall, endCall } =
     useCallSelector(selectBannerSlice);
+  const displayLabel = useParticipantLabel(participantId, participantLabel);
   const elapsedCallSeconds = useCallElapsedSeconds(callConnectedAtMs);
 
   return (
     <InCallBanner
-      participantLabel={participantLabel}
+      participantLabel={displayLabel}
+      participantId={participantId}
       elapsedCallSeconds={elapsedCallSeconds}
       onExpand={expandCall}
       isMuted={isMuted}
@@ -551,15 +575,18 @@ function MinimizedCallBubble() {
     handleMuteToggle,
     handleScreenShareToggle,
     participantLabel,
+    participantId,
     expandCall,
     endCall,
     dismissBubble,
   } = useCallSelector(selectBubbleSlice);
+  const displayLabel = useParticipantLabel(participantId, participantLabel);
   const elapsedCallSeconds = useCallElapsedSeconds(callConnectedAtMs);
 
   return (
     <FloatingCallBubble
-      participantLabel={participantLabel}
+      participantLabel={displayLabel}
+      participantId={participantId}
       elapsedCallSeconds={elapsedCallSeconds}
       isMuted={isMuted}
       isScreenSharing={isScreenSharing}
