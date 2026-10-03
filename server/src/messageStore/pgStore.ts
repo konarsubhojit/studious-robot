@@ -91,6 +91,16 @@ function toStoredMessage(row: MessageRow): StoredMessage {
   };
 }
 
+function toSyncMessage(value: unknown): StoredMessage {
+  const message = value as StoredMessage;
+  return {
+    ...message,
+    createdAt: normalizeTimestamp(message.createdAt) as string,
+    deletedAt: normalizeTimestamp(message.deletedAt ?? null),
+    readAt: normalizeTimestamp(message.readAt ?? null),
+  };
+}
+
 /** The values written by an insert, derived from the domain record. */
 function toInsertValues(record: StoredMessage): typeof messagesTable.$inferInsert {
   return {
@@ -412,7 +422,7 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
         changeId: String(row.changeId),
         type: row.changeType as MessageChange['type'],
         changedAt: normalizeTimestamp(row.changedAt) as string,
-        message: row.message as StoredMessage,
+        message: toSyncMessage(row.message),
       }));
     },
 

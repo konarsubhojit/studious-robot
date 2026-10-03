@@ -381,7 +381,10 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     // conversation the caller has — so an unexpected document is dropped from
     // the page (and logged) rather than taking search down for everything else.
     const participantMatches = matches.filter(
-      (message) => message.senderId === session.userId || message.recipientId === session.userId
+      (message) =>
+        !message.deletedAt &&
+        (!conversationId || message.conversationId === conversationId) &&
+        (message.senderId === session.userId || message.recipientId === session.userId)
     );
     if (participantMatches.length !== matches.length) {
       console.error(

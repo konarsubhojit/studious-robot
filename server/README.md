@@ -345,8 +345,9 @@ primary key `(conversation_id, message_id)`:
 | `idx_messages_body_fts` (partial GIN, `tsvector`) | PostgreSQL `simple`-dictionary full-text search for `GET /messages/search`, excluding tombstones. |
 
 Migration `0018` adds the full-text index and the append-only `message_changes`
-table. Its composite foreign key cascades with message retention. Participant
-columns and `(changed_at, change_id)` indexes support ordered sync paging.
+table, backfilling existing messages as their initial sync delta. Its composite
+foreign key cascades with message retention. Participant columns and
+`(changed_at, change_id)` indexes support ordered sync paging.
 
 Migration `0013_daily_gwen_stacy.sql` added the one-row-per-thread
 `conversations` projection. `idx_conversations_a` and `idx_conversations_b`
