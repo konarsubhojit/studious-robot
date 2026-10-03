@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
+import { AppState } from 'react-native';
 import useSignalingSocket from '../../src/hooks/useSignalingSocket';
 
 jest.mock('react-native-webrtc', () => ({
@@ -91,6 +92,7 @@ function TestHook({ params, resultRef }: any) {
 
 function makeSocket() {
   return {
+    connected: false,
     connect: jest.fn(),
     disconnect: jest.fn(),
     id: 'socket-1',
@@ -240,6 +242,44 @@ describe('useSignalingSocket', () => {
 
     expect(socket.io.off).toHaveBeenCalledWith('ping', expect.any(Function));
     expect(socket.io.off).toHaveBeenCalledWith('reconnect_failed', expect.any(Function));
+  });
+
+  test('resyncs call state when the app resumes with a connected socket', () => {
+    const { params, socket } = setup();
+    socket.connected = true;
+    const listener = (AppState.addEventListener as jest.Mock).mock.calls
+      .filter(([event]) => event === 'change')
+      .map(([, callback]) => callback)
+      .at(-1);
+
+    act(() => {
+      listener?.('background');
+      listener?.('active');
+    });
+
+    expect(params.resyncCallStateRef.current).toHaveBeenCalledTimes(1);
+    expect(socket.connect).not.toHaveBeenCalled();
+  });
+
+  test('reconnects and pauses call recovery when the app resumes offline', () => {
+    const { params, socket } = setup({
+      isInCallRef: { current: true },
+    });
+    const listener = (AppState.addEventListener as jest.Mock).mock.calls
+      .filter(([event]) => event === 'change')
+      .map(([, callback]) => callback)
+      .at(-1);
+
+    act(() => {
+      listener?.('background');
+      listener?.('active');
+    });
+
+    expect(socket.connect).toHaveBeenCalledTimes(1);
+    expect(params.setIsReconnecting).toHaveBeenCalledWith(true);
+    expect(params.noteRecoverySymptomRef.current).toHaveBeenCalledWith('socket-disconnect');
+    expect(params.pauseRecoveryBudgetRef.current).toHaveBeenCalledWith('socket-offline');
+    expect(params.resyncCallStateRef.current).not.toHaveBeenCalled();
   });
 
   test('acknowledges incoming calls and publishes local incoming-call state', () => {
