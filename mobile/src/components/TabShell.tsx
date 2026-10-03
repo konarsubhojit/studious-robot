@@ -230,6 +230,8 @@ function TabShell() {
         }>
       <ChatConversationScreen
         peerId={peerId}
+        conversationId={conversation?.conversationId}
+        onSearchMessages={chat.searchMessages}
         messages={chat.messagesByPeer[peerId] ?? []}
         highlightMessageId={messageId ?? null}
         onOpenProfile={() => openPeerProfile(peerId)}
@@ -336,6 +338,7 @@ function TabShell() {
     chat.drafts,
     chat.messagesByPeer,
     chat.peerPresence,
+    chat.searchMessages,
     chat.typingByPeer,
     chat.groupTyping,
     markConversationRead,
@@ -394,6 +397,10 @@ function TabShell() {
       onStartChat={openChatConversation}
       currentUserId={chat.currentUserId}
       drafts={chat.drafts}
+      backfillProgress={{
+        active: chat.isBackfillingMessages,
+        messageCount: chat.backfilledMessageCount,
+      }}
       isPeerMuted={isPeerMuted}
       onSetPeerMuted={setPeerMuted}
       status={chatAlert}
@@ -401,6 +408,8 @@ function TabShell() {
   ), [
     chat.currentUserId,
     chat.conversations,
+    chat.isBackfillingMessages,
+    chat.backfilledMessageCount,
     groupActions,
     handleOpenConversation,
     chat.drafts,
@@ -418,6 +427,7 @@ function TabShell() {
     <SearchScreen
       onSearchContacts={chat.searchUsers}
       onSearchMessages={chat.searchMessages}
+      onSearchLocalMessages={chat.searchLocalMessages}
       conversations={chat.conversations}
       callHistory={callHistory}
       currentUserId={chat.currentUserId}
@@ -435,6 +445,7 @@ function TabShell() {
     chat.conversations,
     chat.currentUserId,
     chat.searchMessages,
+    chat.searchLocalMessages,
     chat.searchUsers,
     handleOpenConversation,
     clearSearches,

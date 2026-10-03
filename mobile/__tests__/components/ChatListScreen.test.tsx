@@ -73,6 +73,18 @@ describe('ChatListScreen', () => {
     expect(findByTestId(tree, 'chat-list-empty')).toBeNull();
   });
 
+  test('shows resumable history backfill progress on the conversation list', () => {
+    const tree = render({
+      conversations: [],
+      onOpenConversation: jest.fn(),
+      backfillProgress: { active: true, messageCount: 25 },
+    });
+
+    expect(findByTestId(tree, 'chat-backfill-progress').props.accessibilityRole).toBe('progressbar');
+    expect(findByTestId(tree, 'chat-backfill-message-count').props.children)
+      .toEqual(['Syncing message history · ', 25, ' updates']);
+  });
+
   test('updates the row preview and ordering when a call becomes last activity', () => {
     let tree = render({
       conversations: [

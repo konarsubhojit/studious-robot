@@ -1534,6 +1534,50 @@ describe('ChatConversationScreen deep-linked message', () => {
     expect(findAllByTestId(tree, 'chat-message-highlighted')).toHaveLength(0);
   });
 
+  test('searches this conversation, navigates server-only hits, and highlights the active message', async () => {
+    const onSearchMessages = jest.fn().mockResolvedValue([
+      makeMessage({
+        messageId: 'older-match',
+        peerId: 'user-bob',
+        body: 'needle in older history',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      }),
+      makeMessage({
+        messageId: 'newer-match',
+        peerId: 'user-bob',
+        body: 'needle in recent history',
+        createdAt: '2024-01-02T00:00:00.000Z',
+      }),
+    ]);
+    const tree = render({
+      peerId: 'user-bob',
+      conversationId: 'conversation-bob',
+      messages: [makeMessage({ messageId: 'local', body: 'nothing here' })],
+      onSearchMessages,
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    act(() => findByTestId(tree, 'chat-search-open').props.onPress());
+    act(() => findByTestId(tree, 'chat-search-input').props.onChangeText('needle'));
+    await act(async () => {
+      jest.advanceTimersByTime(250);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSearchMessages).toHaveBeenCalledWith('needle', expect.objectContaining({
+      peerId: 'user-bob',
+      conversationId: 'conversation-bob',
+    }));
+    expect(findByTestId(tree, 'chat-search-count').props.children).toBe('1 of 2');
+    expect(findAllByTestId(tree, 'chat-message-highlighted')).toHaveLength(1);
+
+    act(() => findByTestId(tree, 'chat-search-next').props.onPress());
+    expect(findByTestId(tree, 'chat-search-count').props.children).toBe('2 of 2');
+    expect(findAllByTestId(tree, 'chat-message-highlighted')).toHaveLength(1);
+  });
+
   test('opens the peer profile from the header', () => {
     const onOpenProfile = jest.fn();
     const tree = render({

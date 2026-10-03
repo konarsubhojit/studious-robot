@@ -22,6 +22,7 @@ export type UseChatSyncParams = {
   isRegistered: boolean;
   messagesByPeer: Record<string, Array<{ createdAt?: string; messageId?: string; callId?: string; type?: string; }>>;
   fetchConversations: () => Promise<void>;
+  backfillMessages?: () => Promise<void>;
   setActiveChatPeerId: (peerId: string | null) => void;
   fetchMessagesForPeer: (peerId: string, options?: { before?: string; cursor?: import('../messaging/types').TimelineCursor | null; }) => Promise<unknown>;
   markConversationRead: (peerId: string) => Promise<void>;
@@ -48,6 +49,7 @@ export default function useChatSync({
   isRegistered,
   messagesByPeer,
   fetchConversations,
+  backfillMessages,
   setActiveChatPeerId,
   fetchMessagesForPeer,
   markConversationRead,
@@ -74,16 +76,16 @@ export default function useChatSync({
     // leaving the skeleton up behind an unhandled rejection.
     Promise.resolve(fetchConversations())
       .catch(() => {})
+      .then(() => {
+        if (!cancelled) void backfillMessages?.();
+      })
       .finally(() => {
         if (!cancelled) setIsLoadingConversations(false);
       });
     return () => {
       cancelled = true;
     };
-    // Only re-run when registration status flips; fetchConversations is
-    // stable for a given signalingUrl.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRegistered]);
+  }, [backfillMessages, fetchConversations, isRegistered]);
 
   // Keep the hook's activeChatPeerId mirror in sync with the locally open
   // conversation, and load history + mark it read whenever one is opened.

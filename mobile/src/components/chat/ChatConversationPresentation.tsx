@@ -30,13 +30,15 @@ import AudioAttachmentPlayer from '../AudioAttachmentPlayer';
 import CallTimelineRow from '../CallTimelineRow';
 import IconButton from '../IconButton';
 import MediaViewer from '../MediaViewer';
-import { Avatar, Banner, Chip, FAB, Icon, Skeleton } from '../primitives';
+import { Avatar, Banner, Chip, FAB, Icon, IconAction, Skeleton } from '../primitives';
 import { usePeerProfile } from '../../profile/ProfileContext';
 import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../../connectivityUx';
 import { announceForAccessibility, describeMessageDelivery } from '../../accessibilityAnnouncer';
 import SwipeableRow from '../SwipeableRow';
 import useVoiceNoteAutoAdvance from '../../hooks/useVoiceNoteAutoAdvance';
 import { describeAttachmentDownloadResult, isAttachmentDownloadRetryable } from '../../attachmentDownload';
+import { dedupeAndSort } from '../../messaging/messageHistory';
+import { mergeMessageSearchResults } from '../../messaging/messageSearch';
 
 import type { CallActivity, ChatMessage } from '../../hooks/useMessaging';
 import type { ReactElement, ReactNode } from 'react';
@@ -1436,6 +1438,10 @@ function MessageSkeleton() {
 
 export type ChatConversationScreenProps = {
   peerId: string;
+  conversationId?: string;
+  onSearchMessages?: (query: string, options?: {
+    limit?: number; signal?: AbortSignal; peerId?: string; conversationId?: string;
+  }) => Promise<Array<ChatMessage & { peerId: string }>>;
   /** newest-first, as delivered by the hook. Entries tagged `type: 'call'` are rendered as call records inline in the timeline; everything else is a text message. */
   messages?: TimelineEntry[];
   onSendMessage: (body: string, options?: { replyTo?: string | null }) => void;
@@ -1521,10 +1527,12 @@ function ConversationHeader({
   onStartAudioCall,
   onStartVideoCall,
   isStartingCall,
+  onOpenSearch,
   colors,
   styles,
 }: Pick<ChatConversationScreenProps, 'peerId' | 'peerPresence' | 'isPeerTyping' | 'onBack' |
   'onOpenProfile' | 'onStartAudioCall' | 'onStartVideoCall' | 'isStartingCall'> & {
+  onOpenSearch: () => void;
   colors: ThemeColors;
   styles: ChatStyles;
 }) {
@@ -1597,6 +1605,13 @@ function ConversationHeader({
           testID="chat-call-video"
         />
       ) : null}
+      <IconAction
+        icon="search"
+        accessibilityLabel="Search this conversation"
+        onPress={onOpenSearch}
+        size={40}
+        testID="chat-search-open"
+      />
     </View>
   );
 }
@@ -1897,6 +1912,8 @@ function ConversationOverlays({
  */
 function ChatConversationScreen({
   peerId,
+  conversationId,
+  onSearchMessages,
   messages = [],
   highlightMessageId = null,
   onOpenProfile,
@@ -1959,6 +1976,11 @@ function ChatConversationScreen({
   const [quotedHighlightId, setQuotedHighlightId] = useState(
     (null as string | null),
   );
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [remoteSearchResults, setRemoteSearchResults] =
+    useState<Array<ChatMessage & { peerId: string }>>([]);
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [isAttachSheetOpen, setIsAttachSheetOpen] = useState(false);
   const [showAttachmentsUnavailable, setShowAttachmentsUnavailable] = useState(false);
@@ -1995,7 +2017,12 @@ function ChatConversationScreen({
   // Frozen on mount: opening the conversation marks it read, so reading the
   // live count would make the divider vanish the moment it appeared.
   const initialUnreadCountRef = useRef(unreadCount);
-  const orderedEntries = messages;
+  const orderedEntries = useMemo(
+    () => remoteSearchResults.length
+      ? dedupeAndSort([...messages, ...remoteSearchResults] as ChatMessage[]) as TimelineEntry[]
+      : messages,
+    [messages, remoteSearchResults],
+  );
   const unreadAnchorKey = useMemo(
     () =>
       findUnreadAnchorKey(orderedEntries, initialUnreadCountRef.current, currentUserId),
@@ -2043,7 +2070,20 @@ function ChatConversationScreen({
     }, []);
   }, [messages]);
 
-  const activeHighlightId = quotedHighlightId ?? highlightMessageId;
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const localSearchResults = useMemo(() => {
+    if (!normalizedSearchQuery) return [];
+    return messages
+      .filter((entry): entry is ChatMessage => !isCallEntry(entry) && !entry.deletedAt &&
+        Boolean(entry.body?.toLowerCase().includes(normalizedSearchQuery)))
+      .map(entry => ({ ...entry, peerId }));
+  }, [messages, normalizedSearchQuery, peerId]);
+  const searchResults = useMemo(
+    () => mergeMessageSearchResults(localSearchResults, remoteSearchResults, 100),
+    [localSearchResults, remoteSearchResults],
+  );
+  const activeSearchMessageId = searchResults[activeSearchIndex]?.messageId ?? null;
+  const activeHighlightId = quotedHighlightId ?? activeSearchMessageId ?? highlightMessageId;
 
   // The conversation's voice notes, oldest first, as auto-advance walks them.
   // Only voice notes: an audio *attachment* the user opened deliberately ends
@@ -2072,6 +2112,50 @@ function ChatConversationScreen({
   }, []);
 
   useVoiceNoteAutoAdvance(voiceNotes, { onAdvance: handleAutoAdvance });
+
+  useEffect(() => {
+    setActiveSearchIndex(0);
+    setRemoteSearchResults([]);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!isSearchOpen || !normalizedSearchQuery || !onSearchMessages) {
+      setRemoteSearchResults([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void onSearchMessages(normalizedSearchQuery, {
+        limit: 100,
+        peerId,
+        conversationId,
+        signal: controller.signal,
+      }).then(results => {
+        if (cancelled || controller.signal.aborted) return;
+        setRemoteSearchResults(Array.isArray(results) ? results : []);
+      }).catch(() => {
+        if (!cancelled && !controller.signal.aborted) setRemoteSearchResults([]);
+      });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [conversationId, isSearchOpen, normalizedSearchQuery, onSearchMessages, peerId]);
+
+  const openConversationSearch = useCallback(() => {
+    setSearchQuery('');
+    setRemoteSearchResults([]);
+    setActiveSearchIndex(0);
+    setIsSearchOpen(true);
+  }, []);
+  const closeConversationSearch = useCallback(() => {
+    setIsSearchOpen(false);
+    setSearchQuery('');
+    setRemoteSearchResults([]);
+  }, []);
 
   const stopFollowingLatest = useCallback(() => {
     shouldFollowLatestRef.current = false;
@@ -2665,9 +2749,53 @@ function ChatConversationScreen({
           onStartAudioCall={onStartAudioCall}
           onStartVideoCall={onStartVideoCall}
           isStartingCall={isStartingCall}
+          onOpenSearch={openConversationSearch}
           colors={colors}
           styles={styles}
         />
+        {isSearchOpen ? (
+          <View style={styles.searchRow} testID="chat-search-controls">
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              placeholder="Search this conversation"
+              placeholderTextColor={colors.textSecondary}
+              accessibilityLabel="Search this conversation"
+              style={styles.searchInput}
+              testID="chat-search-input"
+            />
+            <Text style={styles.searchCount} testID="chat-search-count">
+              {searchResults.length ? `${activeSearchIndex + 1} of ${searchResults.length}` : '0 results'}
+            </Text>
+            <Pressable
+              onPress={() => setActiveSearchIndex(index =>
+                searchResults.length ? (index - 1 + searchResults.length) % searchResults.length : 0)}
+              accessibilityRole="button"
+              accessibilityLabel="Previous search result"
+              testID="chat-search-previous">
+              <Text style={styles.searchControl}>‹</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setActiveSearchIndex(index =>
+                searchResults.length ? (index + 1) % searchResults.length : 0)}
+              accessibilityRole="button"
+              accessibilityLabel="Next search result"
+              testID="chat-search-next">
+              <Text style={styles.searchControl}>›</Text>
+            </Pressable>
+            <Pressable
+              onPress={closeConversationSearch}
+              accessibilityRole="button"
+              accessibilityLabel="Close conversation search"
+              testID="chat-search-close">
+              <Text style={styles.searchControl}>×</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <ConversationTimeline
           listRef={listRef}
           listItems={listItems}
@@ -2768,6 +2896,35 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textSecondary,
       fontSize: 12,
       marginTop: 1,
+    },
+    searchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    searchInput: {
+      flex: 1,
+      minWidth: 0,
+      color: colors.textPrimary,
+      backgroundColor: colors.surface,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    searchCount: {
+      ...typography.caption,
+      color: colors.textSecondary,
+    },
+    searchControl: {
+      color: colors.onSurface,
+      fontSize: 24,
+      paddingHorizontal: spacing.xs,
     },
     presenceRow: {
       flexDirection: 'row',

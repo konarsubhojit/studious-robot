@@ -124,6 +124,7 @@ function formatTimestamp(isoString: string | null | undefined): string {
 export type SearchScreenProps = {
   onSearchContacts?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<ContactRow[]>;
   onSearchMessages?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<MessageResult[]>;
+  onSearchLocalMessages?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => MessageResult[] | Promise<MessageResult[]>;
   conversations?: ConversationRow[];
   callHistory?: CallRow[];
   currentUserId?: string | null;
@@ -207,10 +208,9 @@ function SearchIdentityRow({
  * Unified search: one ranked list across contacts, conversations, messages and
  * calls, each in its own labelled section.
  *
- * Contacts and messages come from the server (`GET /users`,
- * `GET /messages/search`); conversations and calls are matched locally against
- * the lists the app already holds, so the two local sections keep working when
- * the server is unreachable.
+ * Contacts come from the server, while message matches start with the device
+ * cache and merge in full-history server results. Conversations and calls are
+ * also matched locally, so cached results remain available offline.
  *
  * Requests are debounced ({@link SEARCH_DEBOUNCE_MS}) and the previous ones are
  * aborted on every new keystroke, so a fast typist issues one request and can
@@ -219,6 +219,7 @@ function SearchIdentityRow({
 function SearchScreen({
   onSearchContacts,
   onSearchMessages,
+  onSearchLocalMessages,
   conversations = [],
   callHistory = [],
   currentUserId = null,
@@ -268,15 +269,20 @@ function SearchScreen({
     abortRef.current = controller;
 
     const timer = setTimeout(async () => {
-      // Contacts come from the network and can genuinely fail; messages are
-      // read from the local store, so only the former gets a failure state.
+      const options = { signal: controller.signal };
+      const cachedMessages = await Promise.resolve(onSearchLocalMessages?.(term, options)).catch(() => []);
+      if (cancelled || controller.signal.aborted) return;
+      if (Array.isArray(cachedMessages)) setMessages(cachedMessages);
+
+      // Contacts and the merged message search can genuinely require the
+      // network; cached message matches are already visible while they run.
       let contactsRejected = false;
       const [foundContacts, foundMessages] = await Promise.all([
-        Promise.resolve(onSearchContacts?.(term, { signal: controller.signal })).catch(() => {
+        Promise.resolve(onSearchContacts?.(term, options)).catch(() => {
           contactsRejected = true;
           return [];
         }),
-        Promise.resolve(onSearchMessages?.(term, { signal: controller.signal })).catch(() => []),
+        Promise.resolve(onSearchMessages?.(term, options)).catch(() => []),
       ]);
       if (cancelled || controller.signal.aborted) return;
       setContacts(Array.isArray(foundContacts) ? foundContacts : []);
@@ -291,7 +297,7 @@ function SearchScreen({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [term, onSearchContacts, onSearchMessages, retryToken]);
+  }, [term, onSearchContacts, onSearchLocalMessages, onSearchMessages, retryToken]);
 
   // A term is only worth remembering once the user acts on one of its results:
   // recording every debounced query instead would fill the (short) history with

@@ -114,6 +114,25 @@ describe('SearchScreen', () => {
     expect(onSearchMessages).toHaveBeenCalledTimes(1);
   });
 
+  test('shows cached message hits while the merged server search is still pending', async () => {
+    const onSearchLocalMessages = jest.fn().mockResolvedValue([
+      { messageId: 'cached-1', peerId: 'user-bob', body: 'cached bob match' },
+    ]);
+    const onSearchMessages = jest.fn(() => new Promise(() => {}));
+    const tree = render({
+      onSearchContacts: jest.fn().mockResolvedValue([]),
+      onSearchLocalMessages,
+      onSearchMessages,
+    });
+
+    type(tree, 'bob');
+    await advanceDebounce();
+
+    expect(onSearchLocalMessages).toHaveBeenCalledWith('bob', expect.anything());
+    expect(onSearchMessages).toHaveBeenCalledTimes(1);
+    expect(findAllByTestId(tree, 'search-message-row')).toHaveLength(1);
+  });
+
   test('aborts the in-flight request when the query changes', async () => {
     const signals: any = [];
     const onSearchContacts = jest.fn((query, { signal }) => {
