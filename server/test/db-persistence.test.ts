@@ -9,6 +9,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
+import { createAvatarKey } from '../src/avatars.ts';
+import { createMemoryMessageStore } from '../src/messageStore.ts';
+import { createConversationStore } from '../src/conversationStore.ts';
 import { createCallRecord, appendCallEvent } from '../src/domain/calls.ts';
 import { pruneDeadDevice, pruneStaleDevices } from '../src/lib/persistence.ts';
 import { upsertDevice, resolveReachableChannels, summarizeDeviceFanout } from '../src/lib/state.ts';
@@ -235,6 +238,88 @@ test('POST /session persists the device even without a push token', async () => 
   } finally {
     await teardown();
   }
+});
+
+test('PATCH /profile persists only display-name columns, preserving avatar and identity', async (t) => {
+  const db = buildMockDb();
+  const { url, teardown } = await startServer({ db, messageStore: createMemoryMessageStore() });
+  t.after(teardown);
+  const session = await postJson(url, '/session', { userId: 'profile-owner', deviceId: 'profile-device' });
+  assert.equal(session.status, 201);
+  db.inserts.length = 0;
+  db.updates.length = 0;
+
+  const response = await fetch(`${url}/profile`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + session.body.sessionId },
+    body: JSON.stringify({ displayName: 'Study Buddy' }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(db.inserts.filter(entry => entry.table === schema.users).length, 0,
+    'a profile edit must not upsert an identity');
+  assert.equal(db.updates.length, 1);
+  assert.equal(db.updates[0].table, schema.users);
+  assert.deepEqual(Object.keys(db.updates[0].set).sort(), ['displayName', 'updatedAt']);
+  assert.equal(db.updates[0].set.displayName, 'Study Buddy');
+  assert.ok(db.updates[0].set.updatedAt instanceof Date);
+  assert.ok(db.updates[0].condition, 'the write must be scoped to the caller');
+});
+
+test('account erasure reads the durable avatar key and retries when that read fails', async (t) => {
+  const env = {
+    R2_BUCKET: 'chat',
+    R2_ACCESS_KEY_ID: 'test-key',
+    R2_SECRET_ACCESS_KEY: 'test-secret',
+    R2_ENDPOINT: 'https://storage.example',
+  };
+  for (const [key, value] of Object.entries(env)) {
+    const previous = process.env[key];
+    process.env[key] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    });
+  }
+  const userId = 'avatar-erasure-owner';
+  const durableKey = createAvatarKey({ userId, mimeType: 'image/png' });
+  const rows = new Map([[schema.users, [{ avatarKey: durableKey }]]]);
+  const db = buildMockDb({ selectRowsByTable: rows });
+  const stores = createStores();
+  const requests: { url: string; method: string; }[] = [];
+  const { url, runAccountDeletionSweep, teardown } = await startServer({
+    db,
+    stores,
+    messageStore: createMemoryMessageStore(),
+    conversationStore: createConversationStore(),
+    accountDeletionGraceMs: 0,
+    attachmentFetch: (async (input: any, init: any) => {
+      requests.push({ url: String(input), method: String(init?.method) });
+      return new Response(null, { status: 204 });
+    }) as typeof fetch,
+  });
+  t.after(teardown);
+  const session = await postJson(url, '/session', { userId, deviceId: 'avatar-erasure-device' });
+  assert.equal(session.status, 201);
+  const owner = stores.users.get(userId)!;
+  owner.avatarKey = createAvatarKey({ userId, mimeType: 'image/png' });
+  assert.equal((await postJson(url, '/account/delete', {}, session.body.sessionId)).status, 202);
+
+  const select = db.select;
+  db.select = () => { throw new Error('database unavailable'); };
+  assert.equal(await runAccountDeletionSweep(), 0);
+  assert.equal(stores.users.has(userId), true, 'failed lookup must preserve the identity for retry');
+  assert.equal(stores.sessions.has(session.body.sessionId), true);
+  assert.equal(stores.accountDeletions.get(userId)?.status, 'pending');
+  assert.equal(db.deletes.length, 0);
+  assert.equal(requests.length, 0);
+
+  db.select = select;
+  assert.equal(await runAccountDeletionSweep(), 1);
+  assert.equal(stores.users.has(userId), false);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, 'DELETE');
+  assert.ok(requests[0].url.startsWith(`https://storage.example/chat/${durableKey}?`));
+  assert.ok(requests[0].url.includes('X-Amz-Signature='));
 });
 
 // ─── POST /devices/register – device push token persisted to DB ──────────────

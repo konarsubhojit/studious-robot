@@ -1,5 +1,7 @@
 import express from 'express';
+import { eq } from 'drizzle-orm';
 import { API_ROUTES } from '../../../shared/index.ts';
+import { users as usersTable } from '../../db/schema.ts';
 import { conversationsCachePrefix, invalidateCache } from '../cache.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import {
@@ -10,7 +12,6 @@ import {
 import { describeError } from '../lib/errors.ts';
 import { hasOwnProp, isPlainObject, sanitizeForLog } from '../lib/normalize.ts';
 import { listKnownUsers } from '../lib/state.ts';
-import { persistUser } from '../lib/persistence.ts';
 import type { Database } from '../../db/client.ts';
 
 type ServerState = import('../stores/contracts.ts').ServerState;
@@ -175,7 +176,13 @@ function createProfileRouter({ state, db }: { state: ServerState; db: Database |
     user.displayName = displayName;
     user.updatedAt = new Date().toISOString();
     try {
-      await persistUser(db, user);
+      // Other instances may have changed the avatar; never persist the stale
+      // profile or immutable identity columns as part of a display-name edit.
+      if (db) {
+        await db.update(usersTable)
+          .set({ displayName, updatedAt: new Date(user.updatedAt) })
+          .where(eq(usersTable.userId, session.userId));
+      }
     } catch {
       user.displayName = previous.displayName;
       user.updatedAt = previous.updatedAt;
