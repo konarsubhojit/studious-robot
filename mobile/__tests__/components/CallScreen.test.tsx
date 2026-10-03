@@ -83,6 +83,17 @@ describe('CallScreen', () => {
     jest.useRealTimers();
   });
 
+  test.each([false, true])('keeps the participant ID separate from the label in compact=%s mode', isCompact => {
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps({
+        isCompact, participantId: 'user-bob', participantLabel: 'Call with Bob',
+      })} />);
+    });
+    const stage = tree.root.findByType('CallStage');
+    expect(stage.props.participantId).toBe('user-bob');
+    expect(stage.props.participantLabel).toBe('Call with Bob');
+  });
+
   test('renders full in-call chrome when not compact', () => {
     act(() => {
       tree = renderer.create(<CallScreen {...createProps()} />);

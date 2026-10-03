@@ -3,6 +3,7 @@ import { describeCallOutcome } from '../callUx';
 import { spacing } from '../theme';
 import { formatCallDuration } from './CallTimelineRow';
 import { Banner } from './primitives';
+import { usePeerProfile } from '../profile/ProfileContext';
 import type { CallEndSummary as CallEndSummaryData } from '../hooks/useCallFlow';
 
 /**
@@ -27,7 +28,8 @@ export default function CallEndSummary({
   const isFailure = summary.endReason === 'media_failed' || summary.endReason === 'failed';
   const duration = formatCallDuration(summary.durationSeconds);
   const outcome = describeCallOutcome(summary);
-  const peer = summary.peerId ? ` with ${summary.peerId}` : '';
+  const { name } = usePeerProfile(summary.peerId ?? '');
+  const peer = summary.peerId ? ` with ${name}` : '';
 
   return (
     <Banner

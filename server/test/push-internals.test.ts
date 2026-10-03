@@ -30,7 +30,50 @@ test('a call envelope carries the ids the client needs to ring', () => {
 
   assert.equal(envelope.type, 'call.incoming');
   assert.equal(envelope.deepLink, 'wetalk://call/call-1');
-  assert.deepEqual(envelope.data, { callId: 'call-1', callerId: 'alice', mediaType: 'video' });
+  assert.equal(envelope.body, 'Call from alice');
+  assert.deepEqual(envelope.data, {
+    callId: 'call-1', callerId: 'alice', callerDisplayName: 'alice', mediaType: 'video',
+  });
+});
+
+test('push envelopes trim display names without changing routing ids', () => {
+  const call = buildCallEnvelope({
+    callId: 'call-1', callerId: 'alice', callerDisplayName: '  Alice Example  ', mediaType: 'audio',
+  });
+  assert.equal(call.body, 'Call from Alice Example');
+  assert.deepEqual(call.data, {
+    callId: 'call-1', callerId: 'alice', callerDisplayName: 'Alice Example', mediaType: 'audio',
+  });
+  assert.equal(call.deepLink, 'wetalk://call/call-1');
+
+  const message = buildMessageEnvelope({
+    messageId: 'm-1', conversationId: 'alice:bob', senderId: 'alice',
+    senderDisplayName: '  Alice Example  ', preview: null,
+  });
+  assert.equal(message.title, 'Alice Example');
+  assert.equal(message.body, 'Sent you a message');
+  assert.equal(message.deepLink, 'wetalk://chat/alice:bob');
+  assert.deepEqual(message.data, {
+    messageId: 'm-1', conversationId: 'alice:bob', senderId: 'alice',
+  });
+});
+
+test('push envelopes fall back to raw ids for missing or blank display names', () => {
+  for (const displayName of [undefined, null, '', ' \t\n ']) {
+    const call = buildCallEnvelope({
+      callId: 'call-1', callerId: 'alice', callerDisplayName: displayName,
+    });
+    assert.equal(call.body, 'Call from alice');
+    assert.equal(call.data.callerDisplayName, 'alice');
+    assert.equal(call.data.callerId, 'alice');
+    const message = buildMessageEnvelope({
+      messageId: 'm-1', conversationId: 'alice:bob', senderId: 'alice',
+      senderDisplayName: displayName,
+    });
+    assert.equal(message.title, 'alice');
+    assert.equal(message.body, 'Sent you a message');
+    assert.equal(message.data.senderId, 'alice');
+  }
 });
 
 test('a call TTL tracks the time left in the ring window', () => {

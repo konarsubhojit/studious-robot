@@ -15,7 +15,12 @@ export type PeerPresence = {
 };
 
 /** Contact returned by the server-side user search. */
-export type ContactRow = { userId: string; online?: boolean };
+export type PeerProfile = {
+  displayName?: string | null;
+  avatarKey?: string | null;
+};
+
+export type ContactRow = PeerProfile & { userId: string; online?: boolean };
 
 /** Conversation row, as held by the chat provider. */
 export type ConversationRow = ConversationSummary & { online?: boolean };

@@ -172,6 +172,7 @@ function attemptIncomingCallPush(state: ServerState, call: CallRecord, channel: 
       callId: call.callId,
       mediaType: call.mediaType ?? 'video',
       callerId: call.callerId,
+      callerDisplayName: state.users.get(call.callerId)?.displayName,
       ringTimeoutAt: call.ringTimeoutAt ?? null,
     })
     .then((outcome) => handleDeadTokenOutcome(state, outcome))

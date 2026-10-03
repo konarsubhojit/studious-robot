@@ -8,6 +8,7 @@ import {
   subscribeInAppMessageNotifications,
 } from '../inAppMessageNotifications';
 import { useThemedStyles } from '../ThemeContext';
+import { usePeerProfile } from '../profile/ProfileContext';
 import { fontScaleCaps, spacing, typography } from '../theme';
 import IconButton from './IconButton';
 import type { ThemeColors } from '../theme';
@@ -21,6 +22,12 @@ export default function InAppMessageBanner() {
     getInAppMessageNotificationSnapshot,
     getInAppMessageNotificationSnapshot,
   );
+  // The suppressed preview can itself be a valid username; its generic pair must stay private.
+  const isPrivatePreview = notification?.title === 'New WeTalk message'
+    && notification.body === 'Open WeTalk to view it.';
+  const profileId = !isPrivatePreview && notification?.senderId && notification.title === notification.senderId
+    ? notification.senderId : '';
+  const profile = usePeerProfile(profileId);
   const styles = useThemedStyles(createStyles);
   const notificationRef = useRef(notification);
   notificationRef.current = notification;
@@ -52,7 +59,8 @@ export default function InAppMessageBanner() {
 
   if (!notification) return null;
 
-  const accessibilityLabel = `${notification.title}. ${notification.body}`;
+  const title = profileId ? profile.name : notification.title;
+  const accessibilityLabel = `${title}. ${notification.body}`;
   const dismiss = () => dismissInAppMessageNotification(notification.messageId);
   const openConversation = () => {
     dismiss();
@@ -77,7 +85,7 @@ export default function InAppMessageBanner() {
         style={({ pressed }) => [styles.banner, pressed && styles.pressed]}>
         <View style={styles.copy}>
           <Text style={styles.title} numberOfLines={1} maxFontSizeMultiplier={fontScaleCaps.meta}>
-            {notification.title}
+            {title}
           </Text>
           <Text style={styles.body} numberOfLines={2} maxFontSizeMultiplier={fontScaleCaps.meta}>
             {notification.body}

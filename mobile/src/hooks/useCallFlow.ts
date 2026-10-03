@@ -9,6 +9,8 @@ import {
 import * as Telemetry from '../telemetry';
 import { emitEvent } from '../observability';
 import { registerCrashContext } from '../crashReporting';
+import { fetchPeerProfile } from '../profile/fetchPeerProfile';
+import { resolveDisplayName } from '../../../shared/identity';
 import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useCallAudioRouting from './useCallAudioRouting';
@@ -489,6 +491,8 @@ export default function useCallFlow({
   // orchestration that ties them into one coherent call experience.
   const identity = useIdentity(updateStatus);
   const { userId, unregisterUser: identityUnregisterUser } = identity;
+  const callUiScopeRef = useRef({ userId, signalingUrl });
+  callUiScopeRef.current = { userId, signalingUrl };
   // The tie-break compares userIds inside callbacks that must not be rebuilt
   // whenever the identity re-renders.
   const userIdRef = useRef(userId);
@@ -941,9 +945,39 @@ export default function useCallFlow({
         callerId: call.callerId ?? null,
       });
 
+      const scope = callUiScopeRef.current;
+      const controller = new AbortController();
+      let lookupTimer: ReturnType<typeof setTimeout> | undefined;
+      const profile = await Promise.race([
+        fetchPeerProfile({
+          signalingUrl: scope.signalingUrl,
+          userId: call.callerId ?? '',
+          authedFetch: authedFetchRef.current,
+          signal: controller.signal,
+        }),
+        new Promise<null>(resolve => {
+          lookupTimer = setTimeout(() => {
+            controller.abort();
+            resolve(null);
+          }, 750);
+        }),
+      ]).finally(() => {
+        if (lookupTimer) clearTimeout(lookupTimer);
+        controller.abort();
+      });
+      if (
+        incomingCallRef.current?.callId !== call.callId ||
+        callUiScopeRef.current.userId !== scope.userId ||
+        callUiScopeRef.current.signalingUrl !== scope.signalingUrl
+      ) return;
+      if (profile?.displayName) {
+        updateStatus(`Incoming call from ${resolveDisplayName(call.callerId ?? '', profile.displayName)}`);
+      }
+
       const displayResult = await displayIncomingCall({
         callId: call.callId,
         callerId: call.callerId,
+        ...(profile?.displayName ? { callerDisplayName: profile.displayName } : {}),
         hasVideo: call.mediaType !== 'audio',
       }).catch(error => {
         logWarn('[CallFlow] displayIncomingCall failed', {
@@ -964,7 +998,7 @@ export default function useCallFlow({
         await startIncomingRingtone();
       }
     },
-    [],
+    [authedFetchRef, updateStatus],
   );
 
   // ─── Call teardown ────────────────────────────────────────────────────────

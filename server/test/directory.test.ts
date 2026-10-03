@@ -103,6 +103,33 @@ test('GET /users honours limit and caps total separately', async () => {
   }
 });
 
+test('GET /users resolves an exact peer independently of substring matches and pagination', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const session = await createSession(url, 'alice');
+    await createSession(url, 'bob');
+    const peerSession = await createSession(url, 'bobby');
+    const update = await fetch(`${url}/profile`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + peerSession },
+      body: JSON.stringify({ displayName: 'Robert' }),
+    });
+    assert.equal(update.status, 200);
+
+    const result = await getJson(url, '/users?userId=bobby&limit=1', session);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.total, 1);
+    assert.deepEqual(result.body.users.map((user: any) => ({
+      userId: user.userId, displayName: user.displayName, avatarKey: user.avatarKey,
+    })), [{ userId: 'bobby', displayName: 'Robert', avatarKey: null }]);
+    assert.deepEqual((await getJson(url, '/users?userId=unknown', session)).body.users, []);
+    assert.deepEqual((await getJson(url, '/users?userId=alice', session)).body.users, []);
+    assert.equal((await getJson(url, '/users?userId=', session)).status, 400);
+  } finally {
+    await teardown();
+  }
+});
+
 test('GET /users hides users in either direction of a block', async () => {
   const { url, teardown } = await startServer();
   try {
@@ -124,6 +151,11 @@ test('GET /users hides users in either direction of a block', async () => {
       res.body.users.map((u: { userId: string; }) => u.userId),
       []
     );
+    for (const peer of ['bob', 'carol']) {
+      const exact = await getJson(url, `/users?userId=${peer}`, aliceSession);
+      assert.equal(exact.status, 200);
+      assert.deepEqual(exact.body.users, []);
+    }
   } finally {
     await teardown();
   }

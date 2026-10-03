@@ -184,6 +184,7 @@ export default function CallScreen({
   elapsedCallSeconds,
   connectionQuality,
   participantLabel = null,
+  participantId = null,
   iceTransportPolicy,
   callSecurity = null,
   onConfirmCallSecurity,
@@ -347,6 +348,7 @@ export default function CallScreen({
         isScreenSharing={isScreenSharing}
         isRemoteScreenSharing={isRemoteScreenSharing}
         participantLabel={participantLabel}
+        participantId={participantId}
         isAudioOnly={isAudioOnly}
         audioStatusLabel={audioStatusLabel}
       />

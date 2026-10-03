@@ -1,4 +1,5 @@
 import { CALL_END_REASON_LABELS, DEFAULT_CALL_MEDIA_TYPE } from './callUx';
+import { resolveDisplayName } from '../../shared/identity';
 import type { CallHistoryEntry } from './hooks/useCallHistory';
 import type { CallMediaType } from './settingsStorage';
 
@@ -175,8 +176,8 @@ export function groupCallsByDay(
  * The visual row splits the same information across a glyph, two lines and a
  * trailing button; a screen reader needs it as one utterance.
  */
-export function describeCallEntryForA11y(entry: CallHistoryEntry, durationLabel: string): string {
-  const peer = callPeerId(entry) || 'Unknown contact';
+export function describeCallEntryForA11y(entry: CallHistoryEntry, durationLabel: string, displayName?: string | null): string {
+  const peer = resolveDisplayName(callPeerId(entry) || 'Unknown contact', displayName);
   const modality = callMediaType(entry) === 'audio' ? 'Audio' : 'Video';
   const outcome = describeCallOutcome(entry);
   const time = formatCallTimeOfDay(entry?.createdAt);

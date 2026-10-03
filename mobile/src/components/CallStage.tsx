@@ -29,6 +29,8 @@ export type CallStageProps = {
   isRemoteScreenSharing?: boolean;
   /** Remote participant name/id, used in the "they are presenting" banner. */
   participantLabel?: string | null;
+  /** Raw remote user ID for profile/avatar lookup, never a formatted label. */
+  participantId?: string | null;
   /**
    * No video will ever appear on this stage — an audio call, or a peer whose
    * camera is off. Draws the ambient canvas instead of a black rectangle.
@@ -48,14 +50,15 @@ function StageMedia({
   isCompact,
   isRemoteScreenSharing,
   participantLabel,
+  participantId,
   audioStatusLabel,
   styles,
 }: Pick<CallStageProps, 'hasMainStream' | 'mainStreamUrl' | 'mirrorMain' | 'isAudioOnly' |
-  'isCompact' | 'isRemoteScreenSharing' | 'participantLabel' | 'audioStatusLabel'> & { styles: CallStageStyles }) {
+  'isCompact' | 'isRemoteScreenSharing' | 'participantLabel' | 'participantId' | 'audioStatusLabel'> & { styles: CallStageStyles }) {
   if (isAudioOnly) {
     return (
       <View style={styles.ambientStage} testID="call-stage-ambient">
-        <Avatar id={participantLabel || ''} size={isCompact ? 'lg' : 'xl'} />
+        <Avatar id={participantId || ''} size={isCompact ? 'lg' : 'xl'} />
         {/* Reflow, not a cap: the ambient canvas is `flex: 1` and centred, so
             it has a whole screen of room. Its entire job is to say who you
             are talking to, and "Alexandr…" is the one truncation that would
@@ -182,6 +185,7 @@ export default function CallStage({
   isScreenSharing = false,
   isRemoteScreenSharing = false,
   participantLabel = null,
+  participantId = null,
   isAudioOnly = false,
   audioStatusLabel = null,
 }: CallStageProps) {
@@ -211,6 +215,7 @@ export default function CallStage({
         isCompact={isCompact}
         isRemoteScreenSharing={isRemoteScreenSharing}
         participantLabel={participantLabel}
+        participantId={participantId}
         audioStatusLabel={audioStatusLabel}
         styles={styles}
       />

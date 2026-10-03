@@ -5,6 +5,7 @@ import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import IconButton from './IconButton';
 import RingingAvatar from './RingingAvatar';
+import { usePeerProfile } from '../profile/ProfileContext';
 import StatusBanner from './StatusBanner';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from './StatusBanner';
@@ -48,7 +49,8 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
   const ringTimeoutAt = isAnswering ? null : incomingCall?.ringTimeoutAt ?? null;
   const callerId = incomingCall?.callerId ?? 'Unknown';
-  const initials = deriveInitials(callerId);
+  const profile = usePeerProfile(callerId);
+  const initials = deriveInitials(profile.name);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
   const intervalRef: MutableRefObject<ReturnType<typeof setInterval> | null> = useRef(null);
@@ -92,13 +94,13 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
       {/* ── Caller info ───────────────────────────────────────────────────── */}
       <View style={styles.callerSection}>
-        <RingingAvatar initials={initials} tone="success" testID="incoming-avatar" />
+        <RingingAvatar initials={initials} avatarUrl={profile.avatarUrl} tone="success" testID="incoming-avatar" />
 
         <Text
           style={styles.callerId}
-          accessibilityLabel={`Incoming call from ${callerId}`}
+          accessibilityLabel={`Incoming call from ${profile.name}`}
           testID="incoming-caller-id">
-          {callerId}
+          {profile.name}
         </Text>
 
         {ringTimeoutAt ? (
@@ -125,7 +127,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
               loading
               variant="success"
               size={72}
-              accessibilityLabel={`Connecting to ${callerId}`}
+              accessibilityLabel={`Connecting to ${profile.name}`}
               testID="incoming-connecting"
             />
             {/* Media negotiation can stall (no network, a peer that never

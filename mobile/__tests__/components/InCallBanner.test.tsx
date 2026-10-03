@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import InCallBanner from '../../src/components/InCallBanner';
+import { Avatar } from '../../src/components/primitives';
 import { fontScaleCaps } from '../../src/theme';
 
 function findByTestId(tree: any, testID: any) {
@@ -33,6 +34,19 @@ function render(props?: any): any {
 }
 
 describe('InCallBanner', () => {
+  test('keeps the raw avatar ID separate from its display and accessible labels', () => {
+    const tree = render({ participantId: 'user-bob', participantLabel: 'Call with Bob' });
+    expect(tree.root.findByType(Avatar).props.id).toBe('user-bob');
+    expect(findByTestId(tree, 'in-call-banner').props.accessibilityLabel).toBe('Return to call: Call with Bob');
+    act(() => tree.unmount());
+  });
+
+  test('never looks up a profile using a formatted label when the ID is absent', () => {
+    const tree = render();
+    expect(tree.root.findByType(Avatar).props.id).toBe('');
+    act(() => tree.unmount());
+  });
+
   test('renders the participant label and formatted duration', () => {
     const tree = render();
     const label = tree.root.findAll((n: any) => n.props?.children === 'Call with user-bob');
