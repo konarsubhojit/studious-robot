@@ -134,6 +134,13 @@
       "when": 1790995620174,
       "tag": "0018_message_sync_and_full_text_search",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790999487311,
+      "tag": "0019_group_conversations_and_calls",
+      "breakpoints": true
     }
   ]
 }

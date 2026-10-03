@@ -8,6 +8,7 @@ export type CreateServerOptions = {
   stores?: import('../stores/contracts.ts').Stores;
   db?: import('../../db/client.ts').Database | null;
   messageStore?: import('../messageStore.ts').MessageStore;
+  conversationStore?: import('../conversationStore.ts').ConversationStore;
   cache?: import('../cache.ts').Cache;
   messageBus?: import('../messageBus.ts').MessageBus | null;
   sessionTtlMs?: number;

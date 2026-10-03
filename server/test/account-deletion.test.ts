@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { API_ROUTES } from '../../shared/index.ts';
 import { createServer } from '../src/index.ts';
 import { createMemoryMessageStore } from '../src/messageStore.ts';
+import { createConversationStore } from '../src/conversationStore.ts';
 import { createMemoryStores } from '../src/stores/index.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
@@ -185,6 +186,74 @@ test('the sweep erases the account across every store that named it', async (t) 
   const receivedAfter = await messageStore.getMessage(received.conversationId, received.messageId);
   assert.equal(receivedAfter?.deletedAt, null);
   assert.equal(receivedAfter?.body, 'looks nice');
+});
+
+test('group history is exported and account erasure pseudonymises group state', async (t) => {
+  const conversationStore = createConversationStore();
+  const { conversation } = await conversationStore.create({
+    name: 'Erasure group',
+    creatorId: 'delete-group-user',
+    inviteeIds: ['group-peer'],
+  });
+  const message = await conversationStore.saveMessage({
+    messageId: 'group-owned-message',
+    conversationId: conversation.conversationId,
+    senderId: 'delete-group-user',
+    recipientId: conversation.conversationId,
+    body: 'group history',
+    type: 'text',
+    attachment: null,
+    replyTo: null,
+    reactions: {},
+    deletedAt: null,
+    createdAt: new Date().toISOString(),
+    deliveredTo: [],
+    readAt: null,
+  });
+  assert.ok(message);
+  const call = await conversationStore.startCall({
+    conversationId: conversation.conversationId,
+    initiatorId: 'delete-group-user',
+    mediaType: 'audio',
+    ringTimeoutMs: 60_000,
+  });
+  assert.ok(call);
+
+  const { url, runAccountDeletionSweep, teardown } = await startServer({
+    conversationStore,
+    accountDeletionGraceMs: 0,
+  });
+  t.after(teardown);
+  const sessionId = await createSession(url, 'delete-group-user');
+
+  const archive = await getJson(url, API_ROUTES.ACCOUNT_EXPORT, sessionId);
+  assert.equal(archive.status, 200);
+  assert.equal(archive.body.groupConversations[0].conversationId, conversation.conversationId);
+  assert.equal(archive.body.groupMessages[0].body, 'group history');
+
+  assert.equal((await postJson(url, API_ROUTES.ACCOUNT_DELETE, {}, sessionId)).status, 202);
+  assert.equal(await runAccountDeletionSweep(), 1);
+  const erasedMessage = await conversationStore.getMessage(
+    conversation.conversationId,
+    message.message.messageId
+  );
+  assert.equal(erasedMessage?.body, '');
+  assert.ok(erasedMessage?.deletedAt);
+  assert.match(erasedMessage?.senderId ?? '', /^deleted-/);
+  assert.equal(await conversationStore.getMember(conversation.conversationId, 'delete-group-user'), null);
+  const survivingGroup = await conversationStore.listForUser('group-peer');
+  assert.match(survivingGroup[0].creatorId, /^deleted-/);
+
+  const accepted = await conversationStore.transitionCall({
+    callId: call.call.callId,
+    userId: 'group-peer',
+    action: 'accept',
+  });
+  assert.equal(accepted?.call.status, 'active');
+  assert.equal(
+    accepted?.participants.find(({ userId }) => userId.startsWith('deleted-'))?.status,
+    'left'
+  );
 });
 
 test('erasure pseudonymises the audit trail instead of dropping it', async (t) => {

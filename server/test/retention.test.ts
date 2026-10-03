@@ -98,7 +98,7 @@ function buildDeleteRecorder({
   return db;
 }
 
-test('the retention sweep prunes calls and the audit log, and reports what it deleted', async () => {
+test('the retention sweep prunes direct and group calls plus the audit log', async () => {
   const db = buildDeleteRecorder({
     deleted: new Map<unknown, number>([
       [schema.calls, 3],
@@ -114,10 +114,17 @@ test('the retention sweep prunes calls and the audit log, and reports what it de
     messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 3, callQualitySamples: 0, auditLog: 7, messages: 0 });
+  assert.deepEqual(result, {
+    calls: 3,
+    groupCalls: 0,
+    callQualitySamples: 0,
+    auditLog: 7,
+    messages: 0,
+    groupMessages: 0,
+  });
   assert.deepEqual(
     db.calls.map((entry) => entry.table),
-    [schema.calls, schema.auditLog],
+    [schema.calls, schema.groupCalls, schema.auditLog],
     'both append-only tables are swept'
   );
 });
@@ -150,7 +157,14 @@ test('a retention of 0 disables that table\'s sweep without disabling the other'
     messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 0, callQualitySamples: 0, auditLog: 2, messages: 0 });
+  assert.deepEqual(result, {
+    calls: 0,
+    groupCalls: 0,
+    callQualitySamples: 0,
+    auditLog: 2,
+    messages: 0,
+    groupMessages: 0,
+  });
   assert.deepEqual(db.calls.map((entry) => entry.table), [schema.auditLog]);
 });
 
@@ -181,7 +195,14 @@ test('the sweep is a no-op without Postgres', async () => {
     messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 0, callQualitySamples: 0, auditLog: 0, messages: 0 });
+  assert.deepEqual(result, {
+    calls: 0,
+    groupCalls: 0,
+    callQualitySamples: 0,
+    auditLog: 0,
+    messages: 0,
+    groupMessages: 0,
+  });
 });
 
 test('call-quality samples are deleted in bounded retention batches', async () => {
@@ -197,7 +218,14 @@ test('call-quality samples are deleted in bounded retention batches', async () =
     batchSize: 25,
   });
 
-  assert.deepEqual(result, { calls: 0, callQualitySamples: 4, auditLog: 0, messages: 0 });
+  assert.deepEqual(result, {
+    calls: 0,
+    groupCalls: 0,
+    callQualitySamples: 4,
+    auditLog: 0,
+    messages: 0,
+    groupMessages: 0,
+  });
   assert.deepEqual(
     db.selects,
     [{ table: schema.callQualitySamples, limit: 25 }],
@@ -242,7 +270,33 @@ test('an explicit message retention window prunes expired messages', async () =>
   assert.equal(result.messages, 2, 'the delete reports the rows it removed');
   // The bounded message delete and projection refresh run in one transaction,
   // so a conversation cannot point at a message the retention sweep removed.
-  assert.deepEqual(db.calls.map((entry) => entry.table), [schema.messages, schema.conversations]);
+  assert.deepEqual(db.calls.map((entry) => entry.table), [
+    schema.messages,
+    schema.conversations,
+    schema.groupMessages,
+  ]);
+});
+
+test('group messages and ended group calls use the existing retention windows', async () => {
+  const db = buildDeleteRecorder({
+    deleted: new Map<unknown, number>([
+      [schema.groupCalls, 2],
+      [schema.groupMessages, 3],
+    ]),
+  });
+
+  const result = await runRetentionSweep(asDatabase(db), {
+    now: NOW,
+    callRetentionMs: 90 * DAY_MS,
+    callQualityRetentionMs: 0,
+    auditRetentionMs: 0,
+    messageRetentionMs: 30 * DAY_MS,
+  });
+
+  assert.equal(result.groupCalls, 2);
+  assert.equal(result.groupMessages, 3);
+  assert.ok(db.calls.some(({ table }) => table === schema.groupCalls));
+  assert.ok(db.calls.some(({ table }) => table === schema.groupMessages));
 });
 
 test('a message sweep that matches nothing reports nothing pruned', async () => {

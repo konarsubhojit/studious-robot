@@ -9,6 +9,7 @@ import { ATTACHMENT_RECORD_FIELDS, CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS } f
 import { describeError } from '../../lib/errors.ts';
 import { runDetached } from '../../lib/queryTiming.ts';
 import { deliverMessage } from './delivery.ts';
+import { fanoutConversationEvent } from '../../domain/conversationFanout.ts';
 import {
   isAttachmentMessageType,
   parseClientMessageId,
@@ -247,7 +248,10 @@ function validateMessagePayload(
   senderId: string,
   parsed: Record<string, any>
 ): SendValidationResult {
-  const recipient = validateRecipient(senderId, parsed);
+  const conversationId = normaliseId(parsed.conversationId);
+  const recipient = conversationId
+    ? { ok: true as const, recipientId: conversationId }
+    : validateRecipient(senderId, parsed);
   if (!recipient.ok) return recipient;
 
   const typed = validateMessageType(parsed.type);
@@ -302,6 +306,74 @@ function ensureNotBlocked(
   return { ok: true };
 }
 
+async function handleGroupMessageSend(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  context: MessageSendContext,
+  senderId: string,
+  conversationId: string,
+  validated: Extract<SendValidationResult, { ok: true }>
+): Promise<void> {
+  const { io, state } = context;
+  const message = createMessageRecord({
+    conversationId,
+    senderId,
+    recipientId: conversationId,
+    body: validated.body,
+    type: validated.messageType,
+    attachment: validated.attachment,
+    replyTo: validated.replyTo,
+    messageId: validated.clientMessageId,
+  });
+  try {
+    const saved = await state.conversationStore.saveMessage(message);
+    if (!saved) {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
+      return;
+    }
+    const mismatchedField = differingAcceptedSendField(saved.message, message);
+    if (mismatchedField) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_SEND,
+        ERROR_CODES.BAD_REQUEST,
+        `messageId already belongs to a different message (${mismatchedField})`,
+        state
+      );
+      return;
+    }
+    if (saved.inserted) {
+      await fanoutConversationEvent(io, state, {
+        conversationId,
+        eventName: SERVER_EVENTS.MESSAGE_RECEIVED,
+        recipientIds: saved.recipients.filter((userId) => userId !== senderId),
+        payload: {
+          version: SIGNALING_VERSION,
+          conversationId,
+          message: saved.message,
+        },
+      });
+    }
+    acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, { message: saved.message });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'not_member') {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
+      return;
+    }
+    state.telemetry.recordMessagePersistenceFailure();
+    console.error(`[messages] failed to persist group message: ${describeError(error)}`);
+    acknowledgeError(
+      socket,
+      ack,
+      CLIENT_EVENTS.MESSAGE_SEND,
+      ERROR_CODES.INTERNAL_ERROR,
+      'message could not be saved',
+      state
+    );
+  }
+}
+
 async function handleMessageSend(
   socket: import('socket.io').Socket,
   payload: unknown,
@@ -322,6 +394,12 @@ async function handleMessageSend(
       validated.message,
       state
     );
+    return;
+  }
+
+  const groupConversationId = normaliseId(parsed.conversationId);
+  if (groupConversationId) {
+    await handleGroupMessageSend(socket, ack, { io, state }, senderId, groupConversationId, validated);
     return;
   }
 

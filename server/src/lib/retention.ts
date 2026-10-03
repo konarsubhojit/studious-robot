@@ -1,9 +1,11 @@
-import { and, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import {
   auditLog as auditLogTable,
   calls as callsTable,
   callQualitySamples as callQualitySamplesTable,
   conversations as conversationsTable,
+  groupCalls as groupCallsTable,
+  groupMessages as groupMessagesTable,
   messages as messagesTable,
 } from '../../db/schema.ts';
 import { TERMINAL_CALL_STATES, DB_RETENTION_DELETE_BATCH, DEFAULT_CALL_QUALITY_RETENTION_MS } from '../config.ts';
@@ -42,9 +44,11 @@ const TERMINAL_STATUS_LIST = [...TERMINAL_CALL_STATES];
 /** Outcome of one sweep, for logging and tests. */
 type RetentionSweepResult = {
   calls: number;
+  groupCalls: number;
   callQualitySamples: number;
   auditLog: number;
   messages: number;
+  groupMessages: number;
 };
 
 type RetentionOptions = {
@@ -55,6 +59,15 @@ type RetentionOptions = {
   messageRetentionMs: number;
   batchSize?: number;
 };
+
+async function runSweep(label: string, sweep: () => Promise<number>): Promise<number> {
+  try {
+    return await sweep();
+  } catch (error) {
+    console.error(`[retention] ${label} sweep failed: ${describeError(error)}`);
+    return 0;
+  }
+}
 
 /**
  * Delete at most `batchSize` expired terminal calls.
@@ -78,6 +91,33 @@ async function pruneExpiredCalls(db: Database, cutoff: Date, batchSize: number):
     .where(inArray(callsTable.callId, doomed))
     .returning({ callId: callsTable.callId });
 
+  return deleted.length;
+}
+
+async function pruneExpiredGroupCalls(db: Database, cutoff: Date, batchSize: number): Promise<number> {
+  const doomed = db
+    .select({ callId: groupCallsTable.callId })
+    .from(groupCallsTable)
+    .where(and(eq(groupCallsTable.status, 'ended'), lt(groupCallsTable.updatedAt, cutoff)))
+    .limit(batchSize);
+  const deleted = await db
+    .delete(groupCallsTable)
+    .where(inArray(groupCallsTable.callId, doomed))
+    .returning({ callId: groupCallsTable.callId });
+  return deleted.length;
+}
+
+async function pruneExpiredGroupMessages(
+  db: Database,
+  cutoff: Date,
+  batchSize: number
+): Promise<number> {
+  const deleted = await db
+    .delete(groupMessagesTable)
+    .where(
+      sql`ctid in (select ctid from ${groupMessagesTable} where ${lt(groupMessagesTable.createdAt, cutoff.toISOString())} limit ${batchSize})`
+    )
+    .returning({ messageId: groupMessagesTable.messageId });
   return deleted.length;
 }
 
@@ -229,54 +269,60 @@ async function runRetentionSweep(
     batchSize = DB_RETENTION_DELETE_BATCH,
   }: RetentionOptions
 ): Promise<RetentionSweepResult> {
-  const result: RetentionSweepResult = { calls: 0, callQualitySamples: 0, auditLog: 0, messages: 0 };
+  const result: RetentionSweepResult = {
+    calls: 0,
+    groupCalls: 0,
+    callQualitySamples: 0,
+    auditLog: 0,
+    messages: 0,
+    groupMessages: 0,
+  };
   if (!db) return result;
 
   if (callQualityRetentionMs > 0) {
-    try {
-      result.callQualitySamples = await pruneExpiredCallQualitySamples(
-        db,
-        new Date(now - callQualityRetentionMs),
-        batchSize
-      );
-    } catch (error) {
-      console.error(`[retention] call-quality sweep failed: ${describeError(error)}`);
-    }
+    result.callQualitySamples = await runSweep('call-quality', () =>
+      pruneExpiredCallQualitySamples(db, new Date(now - callQualityRetentionMs), batchSize)
+    );
   }
 
   if (callRetentionMs > 0) {
-    try {
-      result.calls = await pruneExpiredCalls(db, new Date(now - callRetentionMs), batchSize);
-    } catch (error) {
-      console.error(`[retention] call sweep failed: ${describeError(error)}`);
-    }
+    result.calls = await runSweep('call', () =>
+      pruneExpiredCalls(db, new Date(now - callRetentionMs), batchSize)
+    );
+    result.groupCalls = await runSweep('group-call', () =>
+      pruneExpiredGroupCalls(db, new Date(now - callRetentionMs), batchSize)
+    );
   }
 
   if (auditRetentionMs > 0) {
-    try {
-      result.auditLog = await pruneExpiredAuditLog(db, new Date(now - auditRetentionMs), batchSize);
-    } catch (error) {
-      console.error(`[retention] audit-log sweep failed: ${describeError(error)}`);
-    }
+    result.auditLog = await runSweep('audit-log', () =>
+      pruneExpiredAuditLog(db, new Date(now - auditRetentionMs), batchSize)
+    );
   }
 
   if (messageRetentionMs > 0) {
-    try {
-      result.messages = await pruneExpiredMessages(
-        db,
-        new Date(now - messageRetentionMs),
-        batchSize
-      );
-    } catch (error) {
-      console.error(`[retention] message sweep failed: ${describeError(error)}`);
-    }
+    result.messages = await runSweep('message', () =>
+      pruneExpiredMessages(db, new Date(now - messageRetentionMs), batchSize)
+    );
+    result.groupMessages = await runSweep('group-message', () =>
+      pruneExpiredGroupMessages(db, new Date(now - messageRetentionMs), batchSize)
+    );
   }
 
-  if (result.calls > 0 || result.callQualitySamples > 0 || result.auditLog > 0 || result.messages > 0) {
+  if (
+    result.calls > 0 ||
+    result.groupCalls > 0 ||
+    result.callQualitySamples > 0 ||
+    result.auditLog > 0 ||
+    result.messages > 0 ||
+    result.groupMessages > 0
+  ) {
     console.log(
-      `[retention] pruned calls=${result.calls} callQualitySamples=${result.callQualitySamples}` +
+      `[retention] pruned calls=${result.calls} groupCalls=${result.groupCalls}` +
+        ` callQualitySamples=${result.callQualitySamples}` +
         ` auditLog=${result.auditLog}` +
-        ` messages=${result.messages} (call events cascade with their call)`
+        ` messages=${result.messages} groupMessages=${result.groupMessages}` +
+        ` (call events cascade with their call)`
     );
   }
 

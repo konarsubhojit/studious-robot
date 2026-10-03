@@ -181,6 +181,7 @@ export type ServerState = Stores & {
   profileUpdateRateLimiter: RateLimiter;
   telemetry: import('../telemetry.ts').Telemetry;
   messageStore: import('../messageStore.ts').MessageStore;
+  conversationStore: import('../conversationStore.ts').ConversationStore;
   cache: import('../cache.ts').Cache;
   messageBus: import('../messageBus.ts').MessageBus | null;
   draining: boolean;

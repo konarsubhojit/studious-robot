@@ -330,6 +330,108 @@ const conversations = pgTable(
   ],
 );
 
+const groupConversations = pgTable(
+  'group_conversations',
+  {
+    conversationId: uuid('conversation_id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    creatorId: text('creator_id').notNull(),
+    membershipVersion: integer('membership_version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('idx_group_conversations_updated').on(desc(t.updatedAt)),
+  ],
+);
+
+const groupConversationMembers = pgTable(
+  'group_conversation_members',
+  {
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => groupConversations.conversationId, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    role: text('role').notNull(),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
+    leftAt: timestamp('left_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.conversationId, t.userId] }),
+    index('idx_group_members_user').on(t.userId, t.conversationId),
+    index('idx_group_members_active').on(t.conversationId, t.leftAt),
+  ],
+);
+
+const groupMessages = pgTable(
+  'group_messages',
+  {
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => groupConversations.conversationId, { onDelete: 'cascade' }),
+    messageId: text('message_id').notNull(),
+    senderId: text('sender_id').notNull(),
+    body: text('body').notNull(),
+    type: text('type').notNull(),
+    attachment: jsonb('attachment'),
+    replyTo: text('reply_to'),
+    reactions: jsonb('reactions').notNull().default({}),
+    deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.conversationId, t.messageId] }),
+    index('idx_group_messages_created').on(t.conversationId, desc(t.createdAt), desc(t.messageId)),
+  ],
+);
+
+const groupCalls = pgTable(
+  'group_calls',
+  {
+    callId: uuid('call_id').primaryKey().defaultRandom(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => groupConversations.conversationId, { onDelete: 'cascade' }),
+    initiatorId: text('initiator_id').notNull(),
+    mediaType: text('media_type').notNull().default('video'),
+    status: text('status').notNull(),
+    stateVersion: integer('state_version').notNull().default(1),
+    ringTimeoutAt: timestamp('ring_timeout_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('idx_group_calls_conversation').on(t.conversationId, desc(t.createdAt)),
+    index('idx_group_calls_retention').on(t.status, t.updatedAt),
+    index('idx_group_calls_ringing_timeout')
+      .on(t.ringTimeoutAt)
+      .where(sql`${t.status} = 'ringing'`),
+  ],
+);
+
+const groupCallParticipants = pgTable(
+  'group_call_participants',
+  {
+    callId: uuid('call_id')
+      .notNull()
+      .references(() => groupCalls.callId, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    status: text('status').notNull(),
+    invitedAt: timestamp('invited_at', { withTimezone: true }).defaultNow().notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    leftAt: timestamp('left_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.callId, t.userId] }),
+    index('idx_group_call_participant_user').on(t.userId, t.status),
+  ],
+);
+
 /**
  * Queued account erasures (right to erasure).
  *
@@ -356,4 +458,21 @@ const accountDeletions = pgTable(
   (t) => [index('idx_account_deletions_due').on(t.status, t.scheduledFor)],
 );
 
-export { users, calls, callEvents, callQualitySamples, devices, auditLog, blocks, messages, messageChanges, conversations, accountDeletions };
+export {
+  users,
+  calls,
+  callEvents,
+  callQualitySamples,
+  devices,
+  auditLog,
+  blocks,
+  messages,
+  conversations,
+  groupConversations,
+  groupConversationMembers,
+  groupMessages,
+  groupCalls,
+  groupCallParticipants,
+  accountDeletions,
+  messageChanges,
+};

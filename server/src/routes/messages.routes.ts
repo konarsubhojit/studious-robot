@@ -288,6 +288,40 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     }
   });
 
+  router.get(`${API_ROUTES.CONVERSATIONS}/:conversationId/messages`, async (req, res) => {
+    const session = await requireSession(req, res);
+    if (!session) return;
+    const conversationId = normaliseId(req.params.conversationId);
+    if (!conversationId) {
+      res.status(400).json({ error: 'conversationId is required' });
+      return;
+    }
+    const cursor = parseTimelineCursor(req.query);
+    if (cursor && Number.isNaN(Date.parse(cursor.before))) {
+      res.status(400).json({ error: 'before cursor must be an ISO timestamp' });
+      return;
+    }
+
+    const limit = clampMessageLimit(req.query?.limit);
+    try {
+      const messages = await state.conversationStore.listMessages({
+        conversationId,
+        userId: session.userId,
+        limit: limit + 1,
+        before: cursor?.before,
+        beforeMessageId: cursor?.beforeMessageId,
+      });
+      res.status(200).json(pageResponse(conversationId, messages, limit));
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'not_member') {
+        res.status(403).json({ error: 'not a member of this conversation' });
+        return;
+      }
+      console.error(`[messages] group history lookup failed: ${describeError(error)}`);
+      res.status(503).json({ error: 'message store unavailable' });
+    }
+  });
+
   /**
    * GET /messages/search?q=…&conversationId=…&limit=…&cursor=…
    *
@@ -550,7 +584,19 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
         online: getPresenceSnapshot(state, conversation.peerId).online,
       }));
 
-    res.status(200).json({ conversations: visible });
+    let groupConversations: Awaited<
+      ReturnType<typeof state.conversationStore.listForUser>
+    > | undefined;
+    try {
+      groupConversations = await state.conversationStore.listForUser(session.userId);
+    } catch (error) {
+      console.error(`[messages] group conversation lookup failed: ${describeError(error)}`);
+    }
+
+    res.status(200).json({
+      conversations: visible,
+      ...(groupConversations ? { groupConversations } : {}),
+    });
   });
 
   /**
