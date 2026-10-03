@@ -173,6 +173,8 @@ export type ServerState = Stores & {
   turnCredentialsRateLimiter: RateLimiter;
   messageSendRateLimiter: RateLimiter;
   messageSearchRateLimiter: RateLimiter;
+  messageSyncRateLimiter: RateLimiter;
+  messageRetentionMs: number;
   attachmentDownloadRateLimiter: RateLimiter;
   accountExportRateLimiter: RateLimiter;
   accountDeletionRateLimiter: RateLimiter;

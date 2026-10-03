@@ -131,29 +131,15 @@
     {
       "idx": 18,
       "version": "7",
-      "when": 1790995704542,
-      "tag": "0018_add_group_conversations",
+      "when": 1790995620174,
+      "tag": "0018_message_sync_and_full_text_search",
       "breakpoints": true
     },
     {
       "idx": 19,
       "version": "7",
-      "when": 1790996022159,
-      "tag": "0019_add_group_calls",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "7",
-      "when": 1790997186573,
-      "tag": "0020_add_group_call_state_version",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "7",
-      "when": 1790997695943,
-      "tag": "0021_group_call_expiry_index",
+      "when": 1790999487311,
+      "tag": "0019_group_conversations_and_calls",
       "breakpoints": true
     }
   ]

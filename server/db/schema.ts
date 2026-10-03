@@ -19,7 +19,7 @@
  *   - conversations  projection of one row per 1:1 message conversation
  */
 
-import { pgTable, uuid, integer, real, text, timestamp, jsonb, index, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, integer, real, text, timestamp, jsonb, index, primaryKey, uniqueIndex, bigserial, foreignKey } from 'drizzle-orm/pg-core';
 import { desc, sql } from 'drizzle-orm';
 
 /**
@@ -268,20 +268,31 @@ const messages = pgTable(
     index('idx_messages_unread')
       .on(t.recipientId, t.conversationId)
       .where(sql`${t.readAt} is null`),
-    // Search is a literal, case-insensitive *substring* match — the semantics
-    // the memory store implements and the API has always had. A btree cannot
-    // serve an unanchored `LIKE '%term%'`, so this is a trigram GIN index over
-    // the folded body; see migration 0010 for the extension it requires.
-    index('idx_messages_body_trgm')
-      .using('gin', sql`lower(${t.body}) gin_trgm_ops`),
-    // `searchMessages` always scopes to a participant as well as the term.
-    // `btree_gin` (migration 0012) lets the scalar participant column live in
-    // the same GIN index, so the term is never probed across other users'
-    // messages.
-    index('idx_messages_sender_body_trgm')
-      .using('gin', t.senderId, sql`lower(${t.body}) gin_trgm_ops`),
-    index('idx_messages_recipient_body_trgm')
-      .using('gin', t.recipientId, sql`lower(${t.body}) gin_trgm_ops`),
+    index('idx_messages_body_fts')
+      .using('gin', sql`to_tsvector('simple', ${t.body})`)
+      .where(sql`${t.deletedAt} is null`),
+  ],
+);
+
+const messageChanges = pgTable(
+  'message_changes',
+  {
+    changeId: bigserial('change_id', { mode: 'bigint' }).primaryKey(),
+    conversationId: text('conversation_id').notNull(),
+    messageId: text('message_id').notNull(),
+    senderId: text('sender_id').notNull(),
+    recipientId: text('recipient_id').notNull(),
+    changeType: text('change_type').notNull(),
+    changedAt: timestamp('changed_at', { withTimezone: true, mode: 'string' }).notNull(),
+    message: jsonb('message').notNull(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.conversationId, t.messageId],
+      foreignColumns: [messages.conversationId, messages.messageId],
+    }).onDelete('cascade'),
+    index('idx_message_changes_sender_cursor').on(t.senderId, t.changedAt, t.changeId),
+    index('idx_message_changes_recipient_cursor').on(t.recipientId, t.changedAt, t.changeId),
   ],
 );
 
@@ -463,4 +474,5 @@ export {
   groupCalls,
   groupCallParticipants,
   accountDeletions,
+  messageChanges,
 };

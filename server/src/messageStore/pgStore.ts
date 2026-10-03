@@ -9,21 +9,20 @@
  *
  *   - `listConversations` reads a bounded page from its one-row-per-conversation
  *     projection, then joins those message pointers back to the source table.
- *   - `searchMessages` filters and pages *in the database*, instead of fetching
- *     every candidate and slicing.
+ *   - `searchMessages` uses PostgreSQL full-text search and pages in the
+ *     database, instead of fetching every candidate and slicing.
  *   - There is no `conversation_index` collection to keep consistent by hand,
  *     no compare-and-set ordering, and no `bodyLower` shadow column: the index
- *     is derived (`lower(body)` with `gin_trgm_ops`), so it cannot drift from
- *     the column it indexes.
+ *     is derived (`to_tsvector('simple', body)`), so it cannot drift from the
+ *     column it indexes.
  *
- * Search semantics are deliberately identical to the memory store's
- * `bodyMatches`: a literal, case-insensitive substring match. The term is
- * escaped for `LIKE` so a user cannot inject a pattern, exactly as it was
- * escaped for a regex before.
+ * Search uses the `simple` dictionary, so query tokens are matched without
+ * stemming or stop-word removal. User input is passed as a bound value to
+ * `plainto_tsquery`, never interpreted as a query expression.
  */
 
-import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
-import { conversations as conversationsTable, messages as messagesTable } from '../../db/schema.ts';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, not, or, sql } from 'drizzle-orm';
+import { conversations as conversationsTable, messageChanges as changesTable, messages as messagesTable } from '../../db/schema.ts';
 import {
   clampExportReadLimit,
   clampLimit,
@@ -35,6 +34,7 @@ import { normalizeTimestamp } from '../../../shared/time.ts';
 import type { Database } from '../../db/client.ts';
 import type {
   ConversationSummary,
+  MessageChange,
   MessageStore,
   NewMessageInput,
   StoredMessage,
@@ -49,17 +49,6 @@ type MessageRow = typeof messagesTable.$inferSelect;
  * generics `Database` is instantiated with.
  */
 type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
-
-/**
- * Escape the `LIKE` metacharacters in a user-supplied search term.
- *
- * Without this, a term containing `%` matches everything and one containing `_`
- * matches more than the user typed. `\` is the escape character declared by the
- * `ESCAPE` clause at the call site.
- */
-export function escapeLikePattern(value: string): string {
-  return String(value).replace(/[\\%_]/g, '\\$&');
-}
 
 /**
  * Shape a row into the domain record every caller expects.
@@ -99,6 +88,16 @@ function toStoredMessage(row: MessageRow): StoredMessage {
     createdAt: normalizeTimestamp(row.createdAt),
     deliveredTo: [...(row.deliveredTo ?? [])],
     readAt: normalizeTimestamp(row.readAt ?? null),
+  };
+}
+
+function toSyncMessage(value: unknown): StoredMessage {
+  const message = value as StoredMessage;
+  return {
+    ...message,
+    createdAt: normalizeTimestamp(message.createdAt) as string,
+    deletedAt: normalizeTimestamp(message.deletedAt ?? null),
+    readAt: normalizeTimestamp(message.readAt ?? null),
   };
 }
 
@@ -207,6 +206,23 @@ async function advanceConversationProjection(tx: Tx, record: StoredMessage): Pro
     .where(eq(conversationsTable.conversationId, record.conversationId));
 }
 
+async function recordMessageChange(
+  tx: Tx,
+  message: StoredMessage,
+  type: MessageChange['type'],
+  changedAt: string
+): Promise<void> {
+  await tx.insert(changesTable).values({
+    conversationId: message.conversationId,
+    messageId: message.messageId,
+    senderId: message.senderId,
+    recipientId: message.recipientId,
+    changeType: type,
+    changedAt,
+    message,
+  });
+}
+
 /**
  * Build the Postgres-backed message store.
  *
@@ -237,7 +253,9 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
         // outbox resends the same `(conversationId, messageId)` and must not
         // bump the unread counter a second time.
         await advanceConversationProjection(tx, record);
-        return { message: toStoredMessage(inserted[0]), inserted: true };
+        const stored = toStoredMessage(inserted[0]);
+        await recordMessageChange(tx, stored, 'new', stored.createdAt);
+        return { message: stored, inserted: true };
       }
 
       // The insert was a no-op, so the message already exists; return the
@@ -297,21 +315,39 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
       return row ? toStoredMessage(row) : null;
     },
 
-    async searchMessages({ userId, query, limit, before, beforeMessageId, withLookahead } = {}) {
+    async searchMessages({
+      userId,
+      query,
+      conversationId,
+      excludedUserIds = [],
+      createdAtAfter,
+      limit,
+      before,
+      beforeMessageId,
+      withLookahead,
+    } = {}) {
       const term = normaliseSearchTerm(query);
       if (!term || !userId) return [];
 
-      // `lower(body) LIKE lower('%term%')` is exactly what the trigram GIN
-      // index on `lower(body)` serves, and exactly what `bodyMatches` does in
-      // the memory store.
-      const pattern = `%${escapeLikePattern(term.toLowerCase())}%`;
+      const blockedPeer = excludedUserIds.length
+        ? not(
+            or(
+              and(eq(messagesTable.senderId, userId), inArray(messagesTable.recipientId, excludedUserIds)),
+              and(eq(messagesTable.recipientId, userId), inArray(messagesTable.senderId, excludedUserIds))
+            )!
+          )
+        : undefined;
       const rows = await db
         .select()
         .from(messagesTable)
         .where(
           and(
             byParticipant(userId),
-            sql`lower(${messagesTable.body}) like ${pattern} escape '\\'`,
+            conversationId ? eq(messagesTable.conversationId, conversationId) : undefined,
+            createdAtAfter ? gte(messagesTable.createdAt, createdAtAfter) : undefined,
+            isNull(messagesTable.deletedAt),
+            sql`to_tsvector('simple', ${messagesTable.body}) @@ plainto_tsquery('simple', ${term})`,
+            blockedPeer,
             before
               ? or(
                   lt(messagesTable.createdAt, before),
@@ -328,6 +364,66 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
         .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
         .limit(withLookahead ? clampExportReadLimit(limit) : clampLimit(limit));
       return rows.map(toStoredMessage);
+    },
+
+    async listMessageChanges({
+      userId,
+      since,
+      afterChangedAt,
+      afterChangeId,
+      excludedUserIds = [],
+      createdAtAfter,
+      limit,
+    }) {
+      const blockedPeer = excludedUserIds.length
+        ? not(
+            or(
+              and(eq(changesTable.senderId, userId), inArray(changesTable.recipientId, excludedUserIds)),
+              and(eq(changesTable.recipientId, userId), inArray(changesTable.senderId, excludedUserIds))
+            )!
+          )
+        : undefined;
+      const afterCursor = afterChangedAt && afterChangeId
+        ? or(
+            gt(changesTable.changedAt, afterChangedAt),
+            and(
+              eq(changesTable.changedAt, afterChangedAt),
+              sql`${changesTable.changeId} > ${BigInt(afterChangeId)}`
+            )
+          )
+        : undefined;
+      const rows = await db
+        .select({
+          changeId: changesTable.changeId,
+          changeType: changesTable.changeType,
+          changedAt: changesTable.changedAt,
+          message: changesTable.message,
+        })
+        .from(changesTable)
+        .innerJoin(
+          messagesTable,
+          and(
+            eq(messagesTable.conversationId, changesTable.conversationId),
+            eq(messagesTable.messageId, changesTable.messageId)
+          )
+        )
+        .where(
+          and(
+            or(eq(changesTable.senderId, userId), eq(changesTable.recipientId, userId)),
+            sql`${changesTable.changedAt} > ${since}`,
+            createdAtAfter ? gte(messagesTable.createdAt, createdAtAfter) : undefined,
+            afterCursor,
+            blockedPeer
+          )
+        )
+        .orderBy(asc(changesTable.changedAt), asc(changesTable.changeId))
+        .limit(clampExportReadLimit(limit));
+      return rows.map((row) => ({
+        changeId: String(row.changeId),
+        type: row.changeType as MessageChange['type'],
+        changedAt: normalizeTimestamp(row.changedAt) as string,
+        message: toSyncMessage(row.message),
+      }));
     },
 
     async listUserMessages({ userId, limit, before, beforeMessageId } = {}) {
@@ -518,53 +614,61 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
       // re-notifying both participants. Both rules are in the `WHERE` clause,
       // so they are enforced by the database rather than by a read-then-write
       // that two instances could interleave.
-      const updated = await db
-        .update(messagesTable)
-        .set({
-          body: '',
-          attachment: null,
-          reactions: {},
-          deletedAt: nextTimestamp(),
-        })
-        .where(
-          and(
-            byPrimaryKey(conversationId, messageId),
-            eq(messagesTable.senderId, userId),
-            isNull(messagesTable.deletedAt)
+      return db.transaction(async (tx) => {
+        const deletedAt = nextTimestamp();
+        const updated = await tx
+          .update(messagesTable)
+          .set({
+            body: '',
+            attachment: null,
+            reactions: {},
+            deletedAt,
+          })
+          .where(
+            and(
+              byPrimaryKey(conversationId, messageId),
+              eq(messagesTable.senderId, userId),
+              isNull(messagesTable.deletedAt)
+            )
           )
-        )
-        .returning();
-
-      return updated.length > 0 ? toStoredMessage(updated[0]) : null;
+          .returning();
+        if (!updated.length) return null;
+        const stored = toStoredMessage(updated[0]);
+        await recordMessageChange(tx, stored, 'deleted', deletedAt);
+        return stored;
+      });
     },
 
     async reactToMessage({ conversationId, messageId, userId, emoji, action } = {}) {
       if (!conversationId || !messageId || !userId || !emoji) return null;
 
-      const [existing] = await db
-        .select()
-        .from(messagesTable)
-        .where(and(byPrimaryKey(conversationId, messageId), isNull(messagesTable.deletedAt)))
-        .limit(1);
-      if (!existing) return null;
+      return db.transaction(async (tx) => {
+        const [existing] = await tx
+          .select()
+          .from(messagesTable)
+          .where(and(byPrimaryKey(conversationId, messageId), isNull(messagesTable.deletedAt)))
+          .limit(1);
+        if (!existing) return null;
 
-      // The merge rule (idempotent in both directions) is shared with the
-      // memory store rather than reimplemented as a jsonb expression, so the
-      // two backends cannot disagree about what a retried reaction does.
-      const reactions = applyReaction(
-        (existing.reactions as Record<string, string[]>) ?? {},
-        emoji,
-        userId,
-        action ?? 'add'
-      );
-
-      const updated = await db
-        .update(messagesTable)
-        .set({ reactions })
-        .where(and(byPrimaryKey(conversationId, messageId), isNull(messagesTable.deletedAt)))
-        .returning();
-
-      return updated.length > 0 ? toStoredMessage(updated[0]) : null;
+        const reactions = applyReaction(
+          (existing.reactions as Record<string, string[]>) ?? {},
+          emoji,
+          userId,
+          action ?? 'add'
+        );
+        if (JSON.stringify(reactions) === JSON.stringify(existing.reactions ?? {})) {
+          return toStoredMessage(existing);
+        }
+        const [updated] = await tx
+          .update(messagesTable)
+          .set({ reactions })
+          .where(and(byPrimaryKey(conversationId, messageId), isNull(messagesTable.deletedAt)))
+          .returning();
+        if (!updated) return null;
+        const stored = toStoredMessage(updated);
+        await recordMessageChange(tx, stored, 'reactions', nextTimestamp());
+        return stored;
+      });
     },
 
     async close() {

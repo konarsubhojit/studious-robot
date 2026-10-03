@@ -9,8 +9,13 @@ jest.mock('react-native', () => ({
   Platform: { OS: 'android' },
 }));
 
+jest.mock('../src/crashReporting', () => ({
+  captureCrash: jest.fn(),
+}));
+
 import RNFS from 'react-native-fs';
 import { installCrashHandler, saveCrashLog } from '../src/crashReporter';
+import { captureCrash } from '../src/crashReporting';
 
 const writeFileMock = (RNFS.writeFile as jest.Mock);
 const globalWithErrorUtils = (global as any);
@@ -90,6 +95,12 @@ describe('saveCrashLog', () => {
 });
 
 describe('installCrashHandler', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (captureCrash as jest.Mock).mockReset();
+    writeFileMock.mockResolvedValue(undefined);
+  });
+
   afterEach(() => {
     delete globalWithErrorUtils.ErrorUtils;
   });
@@ -126,6 +137,26 @@ describe('installCrashHandler', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(original).toHaveBeenCalledWith(error, true);
+    expect(captureCrash).toHaveBeenCalledWith(error, true, expect.any(Function));
+    expect(writeFileMock).toHaveBeenCalled();
+    expect((captureCrash as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(original.mock.invocationCallOrder[0]);
+  });
+
+  test('a throwing remote shim cannot prevent local saving or handler chaining', async () => {
+    const original = jest.fn();
+    let handler: any;
+    globalWithErrorUtils.ErrorUtils = {
+      getGlobalHandler: () => original,
+      setGlobalHandler: (installed: any) => { handler = installed; },
+    };
+    (captureCrash as jest.Mock).mockImplementation(() => { throw new Error('SDK failure'); });
+    installCrashHandler(() => 'offline QA logs');
+    const error = new Error('non-fatal');
+
+    expect(() => handler(error, false)).not.toThrow();
+    expect(original).toHaveBeenCalledWith(error, false);
+    expect(writeFileMock.mock.calls[0][1]).toContain('offline QA logs');
+    await Promise.resolve();
   });
 
   test('does nothing when ErrorUtils is not available', () => {
