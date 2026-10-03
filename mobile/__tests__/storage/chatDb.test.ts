@@ -52,6 +52,53 @@ function makeMessages(count: number, overrides: Partial<import('../../src/hooks/
 }
 
 describe('chatDb', () => {
+  test('group snapshots, receipts and explicit outbox targets survive a SQLite cold reload in their account scope', async () => {
+    const scope = 'https://example.test:group-alice';
+    await loadChatSnapshot(scope);
+    const group = {
+      conversationId: 'mock-group-1', name: 'Team', creatorId: 'alice',
+      memberIds: ['alice', 'bob', 'carol'], membershipVersion: 2,
+    };
+    saveChatSnapshot({
+      conversations: [{ peerId: group.conversationId, conversationId: group.conversationId,
+        group, localMock: true, readByMember: { bob: '2026-10-03T01:00:00Z' }, unreadCount: 3 }],
+      outbox: [{ messageId: 'q-group', recipientId: group.conversationId, conversationId: group.conversationId,
+        targetKind: 'group', localMock: true, body: 'queued group', attempts: 0 }],
+    }, scope);
+    await flushChatDb(scope);
+    resetChatDbCache();
+    const restored = await loadChatSnapshot(scope);
+    expect(restored.conversations[0]).toMatchObject({ group, localMock: true, unreadCount: 3,
+      readByMember: { bob: '2026-10-03T01:00:00Z' } });
+    expect(restored.outbox[0]).toMatchObject({
+      messageId: 'q-group', recipientId: group.conversationId, conversationId: group.conversationId,
+      targetKind: 'group', localMock: true, body: 'queued group',
+    });
+
+    expect((await loadChatSnapshot('https://example.test:group-bob')).outbox).toEqual([]);
+  });
+
+  test('queued group membership survives conversation retention so replay cannot become a direct send', async () => {
+    await loadChatSnapshot();
+    const group = {
+      conversationId: 'mock-group-old', name: 'Older team', creatorId: 'alice',
+      memberIds: ['alice', 'bob', 'carol'], membershipVersion: 1,
+    };
+    saveChatSnapshot({
+      conversations: [
+        ...Array.from({ length: MAX_CONVERSATIONS }, (_, index) => ({ peerId: `newer-${index}` })),
+        { peerId: group.conversationId, conversationId: group.conversationId, group, localMock: true },
+      ],
+      outbox: [{ messageId: 'old-group-send', recipientId: group.conversationId, conversationId: group.conversationId,
+        targetKind: 'group', localMock: true, body: 'still queued' }],
+    });
+    await flushChatDb();
+    resetChatDbCache();
+    const restored = await loadChatSnapshot();
+    expect(restored.conversations).toHaveLength(MAX_CONVERSATIONS + 1);
+    expect(restored.conversations.find(row => row.peerId === group.conversationId)?.group).toEqual(group);
+    expect(restored.outbox[0].targetKind).toBe('group');
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     resetChatDbCache();

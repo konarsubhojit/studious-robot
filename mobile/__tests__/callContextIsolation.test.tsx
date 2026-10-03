@@ -146,6 +146,7 @@ function ChatProbe() {
 }
 
 let pushCallFlow: (next: Record<string, unknown>) => void = () => {};
+let mountedTree: renderer.ReactTestRenderer | null = null;
 
 /**
  * Re-renders `CallProvider` with whatever `useCallFlow` currently returns,
@@ -183,6 +184,8 @@ describe('call context consumers only wake for the slice they read', () => {
   });
 
   afterEach(() => {
+    act(() => mountedTree?.unmount());
+    mountedTree = null;
     jest.clearAllMocks();
     pushCallFlow = () => {};
     callRef.current = null;
@@ -197,7 +200,7 @@ describe('call context consumers only wake for the slice they read', () => {
    */
   async function renderMinimizedCall() {
     await act(async () => {
-      renderer.create(
+      mountedTree = renderer.create(
         <SafeAreaProvider
           initialMetrics={{
             frame: { x: 0, y: 0, width: 320, height: 640 },

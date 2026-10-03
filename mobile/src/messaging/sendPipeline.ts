@@ -1,4 +1,4 @@
-import { MESSAGE_TYPES } from '../../../shared';
+import { MESSAGE_TYPES, SIGNALING_VERSION } from '../../../shared';
 import { byOldestFirst } from './messageIdentity';
 import { prependMessage } from './messageHistory';
 import type { AttachmentRecord } from '../../../shared/signaling/schemas';
@@ -91,6 +91,8 @@ type OptimisticInput = {
   type?: string;
   attachment?: AttachmentRecord | null;
   replyTo?: string | null;
+  targetKind?: 'group';
+  localMock?: boolean;
 };
 
 /**
@@ -156,6 +158,8 @@ export function buildOutboxItem({
   type = MESSAGE_TYPES.TEXT,
   attachment = null,
   replyTo = null,
+  targetKind,
+  localMock,
 }: Omit<OptimisticInput, 'senderId'>): OutboxItem {
   return {
     messageId,
@@ -169,6 +173,23 @@ export function buildOutboxItem({
     attempts: 0,
     lastAttemptAt: null,
     lastError: null,
+    ...(targetKind ? { targetKind, localMock: Boolean(localMock) } : {}),
+  };
+}
+
+/** Direct rows also carry a cached conversationId; only the explicit kind selects group targeting. */
+export function outboxSendPayload(item: OutboxItem) {
+  if (item.targetKind === 'group' && !item.conversationId) throw new Error('Missing group conversation');
+  return {
+    version: SIGNALING_VERSION,
+    ...(item.targetKind === 'group'
+      ? { conversationId: item.conversationId! }
+      : { recipientId: item.recipientId }),
+    body: item.body ?? '',
+    ...(item.type && item.type !== MESSAGE_TYPES.TEXT ? { type: item.type } : {}),
+    ...(item.attachment ? { attachment: item.attachment } : {}),
+    ...(item.replyTo ? { replyTo: item.replyTo } : {}),
+    messageId: item.messageId,
   };
 }
 

@@ -32,7 +32,7 @@ export type ScreenRenderers = {
   renderChatList?: () => ReactNode;
   renderChatConversation?: (
     peerId: string | null,
-    options: { messageId: string | null }
+    options: { messageId: string | null; isGroup?: boolean }
   ) => ReactNode;
   renderSearch?: () => ReactNode;
   renderPeerProfile?: (peerId: string | null) => ReactNode;
@@ -78,6 +78,11 @@ function ChatConversationRoute({ route }: { route: { params?: { peerId?: string 
   );
 }
 
+function GroupConversationRoute({ route }: { route: { params?: { peerId?: string | null; }; }; }) {
+  const { renderChatConversation } = useContext(ScreenRenderersContext);
+  return renderChatConversation?.(route.params?.peerId ?? null, { messageId: null, isGroup: true }) ?? null;
+}
+
 function SearchRoute() {
   const { renderSearch } = useContext(ScreenRenderersContext);
   return renderSearch?.() ?? null;
@@ -108,6 +113,7 @@ function ChatsNavigator() {
     <ChatStack.Navigator screenOptions={{ headerShown: false }}>
       <ChatStack.Screen name={CHAT_SCREENS.LIST} component={ChatListRoute} />
       <ChatStack.Screen name={CHAT_SCREENS.CONVERSATION} component={ChatConversationRoute} />
+      <ChatStack.Screen name={CHAT_SCREENS.GROUP} component={GroupConversationRoute} />
       <ChatStack.Screen name={CHAT_SCREENS.SEARCH} component={SearchRoute} />
       <ChatStack.Screen name={CHAT_SCREENS.PROFILE} component={PeerProfileRoute} />
     </ChatStack.Navigator>
@@ -122,7 +128,7 @@ export type AppNavigatorProps = {
   onTabPress?: (tab: string) => void;
   onRouteChange?: (route: { activeTab: string; chatPeerId: string | null; }) => void;
   renderChatList: () => React.ReactNode;
-  renderChatConversation: (peerId: string | null, options: { messageId: string | null; }) => React.ReactNode;
+  renderChatConversation: (peerId: string | null, options: { messageId: string | null; isGroup?: boolean; }) => React.ReactNode;
   renderSearch?: () => React.ReactNode;
   renderPeerProfile?: (peerId: string | null) => React.ReactNode;
   renderCalls: () => React.ReactNode;

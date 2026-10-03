@@ -171,7 +171,9 @@ function SearchIdentityRow({
     : category === 'calls' ? callPeerOf(item, currentUserId) : item.peerId;
   const suppliedProfile = category === 'contacts' ? item : undefined;
   const { name } = usePeerProfile(peerId, suppliedProfile);
-  const { label, subtitle, testID } = searchRowDetails(category, item, name);
+  // A group conversation has no peer identity to resolve: its own name is the title.
+  const title = item.group?.name ?? name;
+  const { label, subtitle, testID } = searchRowDetails(category, item, title);
   const onPress = () => {
     rememberTerm();
     if (category === 'conversations') onOpenConversation?.(peerId);
@@ -187,7 +189,7 @@ function SearchIdentityRow({
       testID={testID}>
       <Avatar id={peerId} profile={suppliedProfile} size="sm" />
       <View style={styles.rowText}>
-        <HighlightedText text={name} term={term} style={styles.rowTitle} />
+        <HighlightedText text={title} term={term} style={styles.rowTitle} />
         {category === 'messages' ? (
           <HighlightedText text={subtitle} term={term} style={styles.rowSubtitle} numberOfLines={2} />
         ) : (
@@ -304,7 +306,7 @@ function SearchScreen({
       .map((conversation, order) => ({
         conversation,
         order,
-        index: matchIndex(conversation.peerId, term),
+        index: matchIndex(conversation.group?.name ?? conversation.peerId, term),
       }))
       .filter(entry => entry.index !== -1)
       .sort(byMatchQuality)

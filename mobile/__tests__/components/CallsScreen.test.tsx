@@ -4,6 +4,10 @@ import renderer, { act } from 'react-test-renderer';
 installRenderCleanup();
 import CallsScreen from '../../src/components/CallsScreen';
 import { describeOffline, OFFLINE_CONSEQUENCE } from '../../src/connectivityUx';
+const mountedTrees: renderer.ReactTestRenderer[] = [];
+afterEach(() => {
+  act(() => { mountedTrees.splice(0).forEach(tree => tree.unmount()); });
+});
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -44,6 +48,7 @@ function render(props: any = {}) {
   act(() => {
     tree = renderer.create(<CallsScreen {...baseProps} {...props} />);
   });
+  mountedTrees.push(tree);
   return tree;
 }
 

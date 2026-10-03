@@ -137,6 +137,13 @@ function prunePeerHistories(
   ).map(peer => [peer, histories[peer]]));
 }
 
+/** A queued group cannot be reconstructed from its recipient key; keep its membership snapshot. */
+function pruneConversations(rows: ConversationSummary[], outbox: OutboxItem[]): ConversationSummary[] {
+  if (rows.length <= MAX_CONVERSATIONS) return rows;
+  const groups = new Set(outbox.filter(item => item.targetKind === 'group').map(item => item.recipientId));
+  return rows.filter((row, index) => index < MAX_CONVERSATIONS || groups.has(row.peerId));
+}
+
 /**
  * Canonicalise the timestamps a chat-list row carries.
  *
@@ -215,7 +222,7 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
   });
 
   return {
-    conversations: conversations.slice(0, MAX_CONVERSATIONS),
+    conversations: pruneConversations(conversations, outbox),
     messagesByPeer: prunePeerHistories(messagesByPeer, outbox, drafts),
     outbox,
     drafts,
@@ -362,8 +369,7 @@ export function saveChatSnapshot(partial: Partial<ChatSnapshot>, scope = 'legacy
 
   store.cache = {
     conversations: partial.conversations
-      ? (partial.conversations.length > MAX_CONVERSATIONS
-        ? partial.conversations.slice(0, MAX_CONVERSATIONS) : partial.conversations)
+      ? pruneConversations(partial.conversations, partial.outbox ?? base.outbox)
       : base.conversations,
     messagesByPeer,
     outbox: partial.outbox ?? base.outbox,

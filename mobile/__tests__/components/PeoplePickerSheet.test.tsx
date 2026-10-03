@@ -5,6 +5,8 @@ import renderer, { act } from 'react-test-renderer';
 installRenderCleanup();
 import PeoplePickerSheet from '../../src/components/PeoplePickerSheet';
 
+const mountedTrees: renderer.ReactTestRenderer[] = [];
+
 /** @param tree @param testID */
 const byTestID = (tree: any, testID: string) =>
   tree.root.findAll((n: any) => n.props?.testID === testID);
@@ -33,13 +35,24 @@ function render(props: any = {}) {
   act(() => {
     tree = renderer.create(<PeoplePickerSheet {...baseProps} {...props} />);
   });
+  mountedTrees.push(tree);
   return tree;
 }
 
 describe('PeoplePickerSheet', () => {
   afterEach(() => {
+    act(() => { mountedTrees.splice(0).forEach(tree => tree.unmount()); });
     jest.useRealTimers();
     jest.clearAllMocks();
+  });
+
+  test('group threads are never offered as people for direct chats or peer calls', () => {
+    const tree = render({ conversations: [
+      { peerId: 'bob', conversationId: 'alice:bob' },
+      { peerId: 'mock-group-1', group: { name: 'Team' } },
+    ] });
+    expect(rowCount(tree, 'people-picker-row')).toBe(1);
+    expect(JSON.stringify(tree.toJSON())).not.toContain('mock-group-1');
   });
 
   test('renders nothing while closed', () => {

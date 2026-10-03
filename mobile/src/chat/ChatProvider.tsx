@@ -3,7 +3,7 @@ import { useCallSelector } from '../call/CallProvider';
 import useChatDeepLink from '../hooks/useChatDeepLink';
 import useChatSync from '../hooks/useChatSync';
 import useNotificationPreferences from '../hooks/useNotificationPreferences';
-import { openChatConversation } from '../navigation/navigationRef';
+import { openChatConversation, openGroupConversation } from '../navigation/navigationRef';
 import type { CallContextValue } from '../call/CallProvider';
 import type { ReactNode } from 'react';
 import type { deriveShellRoute } from '../navigation/routes';
@@ -30,6 +30,11 @@ export type ChatContextValue = {
   saveDraft: CallFlow['saveDraft'];
   clearDraft: CallFlow['clearDraft'];
   typingByPeer: CallFlow['typingByPeer'];
+  groupTyping: CallFlow['groupTyping'];
+  groupActions: CallFlow['groupActions'];
+  groupPreviewActions: CallFlow['groupPreviewActions'];
+  groupCalls: CallFlow['groupCalls'];
+  groupCallActions: CallFlow['groupCallActions'];
   unreadTotal: CallFlow['unreadTotal'];
   currentUserId: CallFlow['userId'];
   sendMessage: CallFlow['sendMessage'];
@@ -116,6 +121,11 @@ const selectChatSlice = (state: CallContextValue) => ({
   startRecordingVoiceNote: state.callFlow.startRecordingVoiceNote,
   stopRecordingVoiceNoteAndSend: state.callFlow.stopRecordingVoiceNoteAndSend,
   typingByPeer: state.callFlow.typingByPeer,
+  groupTyping: state.callFlow.groupTyping,
+  groupActions: state.callFlow.groupActions,
+  groupPreviewActions: state.callFlow.groupPreviewActions,
+  groupCalls: state.callFlow.groupCalls,
+  groupCallActions: state.callFlow.groupCallActions,
   unblockPeer: state.callFlow.unblockPeer,
   unreadTotal: state.callFlow.unreadTotal,
   userId: state.callFlow.userId,
@@ -134,9 +144,11 @@ const selectChatSlice = (state: CallContextValue) => ({
 export function ChatProvider({ children }: { children: ReactNode; }) {
   const callFlow = useCallSelector(selectChatSlice);
   const [chatPeerId, setChatPeerId] = useState((null as string | null));
+  const [groupRouteId, setGroupRouteId] = useState<string | null>(null);
 
   const handleRouteChange: (route: ShellRoute) => void = useCallback(route => {
     setChatPeerId(route.chatPeerId);
+    setGroupRouteId(route.chatGroupId ?? null);
   }, []);
 
   const {
@@ -150,6 +162,8 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
     handleLoadOlderMessages,
   } = useChatSync({
     chatPeerId,
+    isGroup: Boolean(groupRouteId || callFlow.conversations.find(row => row.peerId === chatPeerId)?.group),
+    syncGroupHistory: callFlow.conversations.some(row => row.peerId === chatPeerId && row.group && !row.localMock && !row.left),
     isRegistered: callFlow.isRegistered,
     messagesByPeer: callFlow.messagesByPeer,
     fetchConversations: callFlow.fetchConversations,
@@ -166,7 +180,10 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
   useChatDeepLink({
     userId: callFlow.userId,
     conversations: callFlow.conversations,
-    onOpenConversation: openChatConversation,
+    onOpenConversation: useCallback((id: string) => {
+      if (callFlow.conversations.find(row => row.peerId === id)?.group) openGroupConversation(id);
+      else openChatConversation(id);
+    }, [callFlow.conversations]),
   });
 
   const {
@@ -198,6 +215,11 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       saveDraft: callFlow.saveDraft,
       clearDraft: callFlow.clearDraft,
       typingByPeer: callFlow.typingByPeer,
+      groupTyping: callFlow.groupTyping,
+      groupActions: callFlow.groupActions,
+      groupPreviewActions: callFlow.groupPreviewActions,
+      groupCalls: callFlow.groupCalls,
+      groupCallActions: callFlow.groupCallActions,
       unreadTotal: callFlow.unreadTotal,
       currentUserId: callFlow.userId,
       sendMessage: callFlow.sendMessage,
@@ -254,6 +276,11 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.sendMessage,
       callFlow.sendTypingIndicator,
       callFlow.typingByPeer,
+      callFlow.groupTyping,
+      callFlow.groupActions,
+      callFlow.groupPreviewActions,
+      callFlow.groupCalls,
+      callFlow.groupCallActions,
       callFlow.unreadTotal,
       callFlow.userId,
       callFlow.pickAndSendAttachment,

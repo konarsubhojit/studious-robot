@@ -127,7 +127,7 @@ export default function PeoplePickerSheet({
   }, [query, onSearchUsers, runSearch, visible]);
 
   const recents = useMemo(() => {
-    const rows = Array.isArray(conversations) ? conversations : [];
+    const rows = Array.isArray(conversations) ? conversations.filter(row => !row.group) : [];
     return rows
       .map(conversation => ({
         userId: conversation.peerId,

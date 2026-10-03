@@ -67,6 +67,14 @@ export function openChatConversation(peerId: string | null | undefined, { messag
   );
 }
 
+/** A separate restorable route prevents an unresolved group id reaching direct APIs. */
+export function openGroupConversation(conversationId: string) {
+  if (!conversationId) return;
+  runWhenReady(() => nav.navigate(TABS.CHATS, {
+    screen: CHAT_SCREENS.GROUP, params: { peerId: conversationId },
+  }));
+}
+
 /**
  * Open the unified search screen.  It lives in the Chats tab's stack, so
  * opening it from the Calls tab switches tabs first — search spans both.

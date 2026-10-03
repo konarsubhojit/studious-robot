@@ -19,7 +19,14 @@ export function totalUnread(conversations: ConversationSummary[]): number {
 export function mergePendingConversations(
   remote: ConversationSummary[], local: ConversationSummary[], pendingPeers: Set<string>,
 ): ConversationSummary[] {
-  const pending = local.filter(row => pendingPeers.has(row.peerId));
+  const remoteByPeer = new Map(remote.map(row => [row.peerId, row]));
+  const pending = local.filter(row => row.localMock || pendingPeers.has(row.peerId)).map(row => {
+    const authoritative = remoteByPeer.get(row.peerId);
+    // A queued bubble cannot override server-authoritative membership or a departure.
+    if (!row.group || row.localMock || !authoritative?.group) return row;
+    return { ...row, ...authoritative, lastMessage: row.lastMessage, lastActivity: row.lastActivity,
+      unreadCount: authoritative.left ? 0 : row.unreadCount };
+  });
   if (!pending.length) return remote;
   const heldPeers = new Set(pending.map(row => row.peerId));
   return [...pending, ...remote.filter(row => !heldPeers.has(row.peerId))];
@@ -76,7 +83,8 @@ export function withIncomingMessage(
   message: ChatMessage,
   { incrementUnread = true }: { incrementUnread?: boolean; } = {},
 ): ConversationSummary[] {
-  return withMessage(conversations, message, message.senderId, incrementUnread);
+  const group = conversations.find(row => row.group && row.conversationId === message.conversationId);
+  return withMessage(conversations, message, group?.peerId ?? message.senderId, incrementUnread);
 }
 
 /**

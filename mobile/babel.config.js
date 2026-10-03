@@ -6,6 +6,7 @@ module.exports = {
       {
         include: [
           'SIGNALING_URL',
+          'GROUP_TRANSPORT',
           'ROOM_ID',
           'TURN_USERNAME',
           'TURN_CREDENTIAL',

@@ -5,6 +5,9 @@ installRenderCleanup();
 import ChatListScreen from '../../src/components/ChatListScreen';
 import SwipeableRow from '../../src/components/SwipeableRow';
 import { fontScaleCaps, sizes } from '../../src/theme';
+import { createMockGroup } from '../../src/chat/groupMockAdapter';
+
+const mountedTrees: renderer.ReactTestRenderer[] = [];
 
 function findByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
@@ -35,12 +38,28 @@ function render(props: any) {
   act(() => {
     tree = renderer.create(<ChatListScreen {...props} />);
   });
+  mountedTrees.push(tree);
   return tree;
 }
 
 describe('ChatListScreen', () => {
   afterEach(() => {
+    act(() => { mountedTrees.splice(0).forEach(tree => tree.unmount()); });
     jest.useRealTimers();
+  });
+
+  test('mixed direct/group rows show group names, unread badges and no person profile for a group', () => {
+    const open = jest.fn();
+    const profile = jest.fn();
+    const group = { ...createMockGroup('alice', 'Project team', ['bob', 'carol'], 'mock-group-1'), unreadCount: 3 };
+    const tree = render({ conversations: [makeConversation(), group], onOpenConversation: open, onOpenProfile: profile });
+    const row = tree.root.findAll((node: renderer.ReactTestInstance) =>
+      node.props.testID === 'chat-list-row' && node.props.title === 'Project team')[0];
+    expect(row.props.accessibilityLabel).toContain('3 unread');
+    expect(row.props.onLongPress).toBeUndefined();
+    act(() => row.props.onPress());
+    expect(open).toHaveBeenCalledWith('mock-group-1');
+    expect(profile).not.toHaveBeenCalled();
   });
 
   test('renders the conversation list with last message and timestamp', () => {

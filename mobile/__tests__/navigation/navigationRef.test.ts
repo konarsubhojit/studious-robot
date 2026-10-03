@@ -15,6 +15,7 @@ import {
   flushPendingNavigation,
   navigationRef,
   openChatConversation,
+  openGroupConversation,
   openTab,
   resetNavigation,
   resetPendingNavigation,
@@ -22,6 +23,16 @@ import {
 import { CHAT_SCREENS, DEFAULT_TAB, TABS } from '../../src/navigation/routes';
 
 describe('navigationRef', () => {
+  test('group navigation has its own restorable route and queues until ready', () => {
+    (navigationRef.isReady as jest.Mock).mockReturnValue(false);
+    openGroupConversation('mock-group-1');
+    expect(navigationRef.navigate).not.toHaveBeenCalled();
+    (navigationRef.isReady as jest.Mock).mockReturnValue(true);
+    flushPendingNavigation();
+    expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
+      screen: CHAT_SCREENS.GROUP, params: { peerId: 'mock-group-1' },
+    });
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     resetPendingNavigation();

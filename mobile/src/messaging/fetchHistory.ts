@@ -34,3 +34,19 @@ export async function fetchHistory(
   if (!Array.isArray(data.messages)) return null;
   return data.messages;
 }
+
+/** Group history is a separate implemented REST route, with a message-only cursor. */
+export async function fetchGroupHistory(
+  authedFetch: Function | null, server: string, conversationId: string, cursor: TimelineCursor | null,
+): Promise<ChatMessage[] | null> {
+  const params = new URLSearchParams({ limit: String(cursor ? BACKFILL_MESSAGE_LIMIT : FIRST_PAGE_MESSAGE_LIMIT) });
+  if (cursor?.before) params.set('before', cursor.before);
+  if (cursor?.beforeMessageId) params.set('beforeMessageId', cursor.beforeMessageId);
+  const response = await authedFetch?.((sid: string) => ({
+    url: `${server}${API_ROUTES.CONVERSATIONS}/${encodeURIComponent(conversationId)}/messages?${params}`,
+    options: { headers: bearerAuthHeaders(sid) },
+  }));
+  if (!response?.ok) return null;
+  const data = await response.json();
+  return Array.isArray(data.messages) ? data.messages : null;
+}
