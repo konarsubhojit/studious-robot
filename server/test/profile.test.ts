@@ -148,6 +148,31 @@ test('PATCH /profile requires a displayName field', async (t) => {
   assert.equal(res.status, 400);
 });
 
+test('display names are mutable, non-unique labels, not addressable identities', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+  const aliceSession = await createSession(url, 'alice');
+  const bobSession = await createSession(url, 'bob');
+
+  for (const session of [aliceSession, bobSession]) {
+    const res = await patchJson(url, '/profile', {
+      displayName: 'Study Buddy',
+      userId: 'renamed',
+      authUid: 'different-account',
+    }, session);
+    assert.equal(res.status, 200);
+  }
+  assert.equal((await getJson(url, '/profile', aliceSession)).body.userId, 'alice');
+  assert.equal((await getJson(url, '/profile', bobSession)).body.userId, 'bob');
+  const searched = await getJson(url, '/users?search=Study%20Buddy', aliceSession);
+  assert.deepEqual(searched.body.users.map((user: { userId: string; }) => user.userId), ['bob']);
+  const byLabel = await getJson(url, '/users?userId=Study%20Buddy', aliceSession);
+  assert.deepEqual(byLabel.body.users, []);
+  const renamed = await patchJson(url, '/profile', { displayName: 'New Label' }, aliceSession);
+  assert.equal(renamed.body.userId, 'alice');
+  assert.equal(renamed.body.displayName, 'New Label');
+});
+
 test('PATCH /profile rejects a display name that matches another username', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);
