@@ -461,7 +461,15 @@ describe('useMessaging', () => {
 
   test('authoritative group events route messages, per-member typing/read, and sends by conversation only', async () => {
     const { resultRef, params } = setup();
-    await act(async () => { resultRef.current.handleSocketConnected(); });
+    params.authedFetchRef.current.mockResolvedValue({
+      ok: true,
+      json: async () => ({ changes: [], nextCursor: null, hasMore: false }),
+    });
+    await act(async () => {
+      resultRef.current.handleSocketConnected();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     const snapshot = createMockGroup('alice', 'Live group', ['bob', 'carol'], 'group-live').group!;
     await act(async () => {
       params.socketRef.current.receive('conversation.updated', { conversation: snapshot, updatedBy: 'alice' });
@@ -491,7 +499,9 @@ describe('useMessaging', () => {
     expect(send).not.toHaveProperty('recipientId');
     expect(typing).toEqual({ version: 2, conversationId: 'group-live', isTyping: true });
     await act(async () => { await resultRef.current.markConversationRead('group-live'); });
-    expect(params.authedFetchRef.current).not.toHaveBeenCalled();
+    const requestUrls = params.authedFetchRef.current.mock.calls
+      .map(([buildRequest]: any[]) => buildRequest('sess-1').url);
+    expect(requestUrls.some((url: string) => url.includes('/messages/read'))).toBe(false);
   });
 
   test('storage failure prevents mock send completion and keeps the group outbox recoverable', async () => {
@@ -1646,6 +1656,29 @@ describe('useMessaging searchMessages', () => {
       expect.objectContaining({ cursor: null, complete: true, messagesSynced: 5 }),
     );
     expect(resultRef.current.isBackfillingMessages).toBe(false);
+  });
+
+  test('starts history backfill when the authenticated socket connects', async () => {
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockResolvedValue({
+      ok: true,
+      json: async () => ({ changes: [], nextCursor: null, hasMore: false }),
+    });
+
+    await act(async () => {
+      resultRef.current.handleSocketConnected();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(params.authedFetchRef.current).toHaveBeenCalledTimes(1);
+    expect(params.authedFetchRef.current.mock.calls[0][0]('sess-1').url)
+      .toContain('/messages/sync?');
+    expect(resourceCache.writeResource).toHaveBeenCalledWith(
+      expect.any(String),
+      'messages:backfill',
+      expect.objectContaining({ complete: true }),
+    );
   });
 
   test('returns nothing for a blank term, without calling the server', async () => {
