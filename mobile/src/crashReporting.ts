@@ -31,6 +31,7 @@ export type CrashReportingSdk = {
   addBreadcrumb?: (breadcrumb: object) => void;
   setTag?: (key: string, value: string) => void;
   captureException?: (error: unknown, hint: Parameters<typeof sentryCaptureException>[1]) => unknown;
+  reactNativeErrorHandlersIntegration?: (options: { onerror: boolean; }) => { name: string; };
 };
 
 /**
@@ -230,9 +231,12 @@ export function initCrashReporting(
       // SDK attach request bodies, headers or user identifiers on its own.
       sendDefaultPii: false,
       // Our global handler owns JS capture; a second handler captures first
-      // and Sentry's dedupe then drops our context-enriched event.
+      // and Sentry's dedupe then drops our context-enriched event. Keep the
+      // integration's production promise-rejection tracker.
       integrations: (integrations: { name: string; }[]) =>
-        integrations.filter(integration => integration.name !== 'ReactNativeErrorHandlers'),
+        integrations.map(integration => integration.name === 'ReactNativeErrorHandlers'
+          ? sdk.reactNativeErrorHandlersIntegration?.({ onerror: false }) ?? integration
+          : integration),
       // Automatic console/network breadcrumbs bypass our diagnostic allowlist.
       beforeBreadcrumb: (breadcrumb: { category?: string; }) =>
         breadcrumb.category === 'app' ? breadcrumb : null,

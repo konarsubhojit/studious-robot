@@ -110,7 +110,7 @@ are excluded, and emails and labelled identity/content fields in error details
 are redacted. Automatic console/network breadcrumbs are dropped because they
 bypass this allowlist. Do not put message bodies or attachment keys in exception
 text.
-The app's handler is the sole global JavaScript capture path: Sentry's competing
-`ReactNativeErrorHandlers` integration is excluded to avoid deduplicating away
-the enriched event. Native crash reporting and the other integrations remain
-enabled.
+The app's handler is the sole `ErrorUtils` capture path: Sentry's
+`ReactNativeErrorHandlers` integration uses `onerror: false` to avoid
+deduplicating away the enriched event. Its production promise-rejection tracker,
+native crash reporting and the other integrations remain enabled.

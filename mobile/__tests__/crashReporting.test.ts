@@ -85,12 +85,14 @@ describe('crashReporting', () => {
       init: jest.fn(),
       addBreadcrumb: jest.fn(),
       captureException: jest.fn(),
+      reactNativeErrorHandlersIntegration: jest.fn(),
     };
 
     beforeEach(() => {
       sdk.init.mockReset();
       sdk.addBreadcrumb.mockReset();
       sdk.captureException.mockReset();
+      sdk.reactNativeErrorHandlersIntegration.mockReset();
       jest.doMock('@sentry/react-native', () => sdk);
     });
 
@@ -139,6 +141,7 @@ describe('crashReporting', () => {
         setGlobalHandler: (installed: any) => { handler = installed; },
       };
       const nativeIntegration = { name: 'DeviceContext', setupOnce: jest.fn() };
+      const setupRejectionTracker = jest.fn();
       const jsIntegration = {
         name: 'ReactNativeErrorHandlers',
         setupOnce: jest.fn(() => {
@@ -152,11 +155,20 @@ describe('crashReporting', () => {
       sdk.init.mockImplementation(options => {
         options.integrations([jsIntegration, nativeIntegration]).forEach((integration: any) => integration.setupOnce());
       });
+      sdk.reactNativeErrorHandlersIntegration.mockImplementation(options => ({
+        name: 'ReactNativeErrorHandlers',
+        setupOnce: () => {
+          setupRejectionTracker();
+          if (options.onerror) jsIntegration.setupOnce();
+        },
+      }));
       try {
         installCrashHandler(() => '');
         initCrashReporting(undefined, DSN);
         handler(new Error('global crash'), true);
         expect(jsIntegration.setupOnce).not.toHaveBeenCalled();
+        expect(sdk.reactNativeErrorHandlersIntegration).toHaveBeenCalledWith({ onerror: false });
+        expect(setupRejectionTracker).toHaveBeenCalledTimes(1);
         expect(nativeIntegration.setupOnce).toHaveBeenCalledTimes(1);
         expect(sdk.captureException).toHaveBeenCalledTimes(1);
         expect(sdk.captureException.mock.calls[0][1]).toEqual(expect.objectContaining({
