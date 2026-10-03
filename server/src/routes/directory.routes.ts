@@ -1,7 +1,7 @@
 import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
 import { USER_DIRECTORY_DEFAULT_LIMIT, USER_DIRECTORY_MAX_LIMIT } from '../config.ts';
-import { isDirectoryVisibleAsync } from '../security.ts';
+import { listBlocksAsync } from '../security.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { getPresenceSnapshot, hasKnownUser, listKnownUsers } from '../lib/state.ts';
@@ -85,6 +85,15 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
         ? Math.min(Math.floor(requestedLimit), USER_DIRECTORY_MAX_LIMIT)
         : USER_DIRECTORY_DEFAULT_LIMIT;
 
+    let blockedIds: Set<string>;
+    try {
+      blockedIds = new Set(await listBlocksAsync(state, session.userId, true));
+    } catch {
+      // Shared privacy is authoritative; a stale local map cannot grant access.
+      res.status(200).json({ users: [], total: 0 });
+      return;
+    }
+
     const matches = [];
     const candidates = targetUserId
       ? [targetUserId].filter(id => hasKnownUser(state, id))
@@ -92,10 +101,9 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
     for (const candidateId of candidates) {
       if (candidateId === session.userId) continue;
       if (search && !matchesSearch(state, candidateId, search)) continue;
-      // Hide users in either direction of a block relationship. The same
-      // predicate authorises avatar downloads, so a blocked user disappears
-      // from the directory and loses access to the pictures in it together.
-      if (!(await isDirectoryVisibleAsync(state, session.userId, candidateId))) continue;
+      // One bidirectional snapshot preserves avatar visibility semantics
+      // without issuing shared-store reads for every directory candidate.
+      if (blockedIds.has(candidateId)) continue;
       matches.push(candidateId);
     }
 

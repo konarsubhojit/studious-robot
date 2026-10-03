@@ -534,6 +534,14 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     const session = await requireSession(req, res);
     if (!session) return;
 
+    let blockedIds: Set<string>;
+    try {
+      blockedIds = new Set(await listBlocksAsync(state, session.userId, true));
+    } catch {
+      res.status(503).json({ error: 'message store unavailable' });
+      return;
+    }
+
     // The cached value is the raw store result: the blocklist filter and the
     // presence flag below are evaluated per request so neither can go stale.
     const cacheKey = conversationsCacheKey(session.userId);
@@ -551,10 +559,10 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
 
     // Calls are part of the same relationship: fold them in so the preview and
     // the unread badge reflect the newest activity, message or call.
-    const visible = (await filterVisible(
-      await augmentConversationsWithCalls(state, session.userId, conversations),
-      conversation => isDirectoryVisibleAsync(state, session.userId, conversation.peerId)
-    ))
+    // The list is unbounded: use one authoritative privacy snapshot rather
+    // than a pair of shared-store reads for every peer, including cached peers.
+    const visible = (await augmentConversationsWithCalls(state, session.userId, conversations))
+      .filter(conversation => !blockedIds.has(conversation.peerId))
       .map((conversation) => ({
         ...conversation,
         online: getPresenceSnapshot(state, conversation.peerId).online,
