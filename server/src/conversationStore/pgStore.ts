@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import {
   groupCallParticipants as callParticipantsTable,
   groupCalls as callsTable,
@@ -98,6 +98,7 @@ function toSnapshot(row: ConversationRow, members: ConversationMember[]): Conver
     conversationId: row.conversationId,
     name: row.name,
     creatorId: row.creatorId,
+    ownerId: members.find(({ role }) => role === 'owner')?.userId ?? row.creatorId,
     memberIds: members.filter((member) => member.leftAt === null).map(({ userId }) => userId),
     membershipVersion: row.membershipVersion,
     createdAt: new Date(row.createdAt).toISOString(),
@@ -286,7 +287,7 @@ function createPgConversationStore(db: Database): ConversationStore {
         if (!conversation) {
           throw new ConversationStoreError('not_member', 'not an active member');
         }
-        await requireActiveMember(conversationId, userId, tx);
+        const member = await requireActiveMember(conversationId, userId, tx);
         const cursor = before
           ? beforeMessageId
             ? or(
@@ -302,8 +303,12 @@ function createPgConversationStore(db: Database): ConversationStore {
           .select()
           .from(messagesTable)
           .where(cursor
-            ? and(eq(messagesTable.conversationId, conversationId), cursor)
-            : eq(messagesTable.conversationId, conversationId))
+            ? and(
+                eq(messagesTable.conversationId, conversationId),
+                gte(messagesTable.createdAt, member.joinedAt),
+                cursor
+              )
+            : and(eq(messagesTable.conversationId, conversationId), gte(messagesTable.createdAt, member.joinedAt)))
           .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
           .limit(Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
         return rows.map(toMessage);
@@ -334,6 +339,138 @@ function createPgConversationStore(db: Database): ConversationStore {
           .returning();
         const members = await membersFor(conversationId, tx);
         return { conversation: toSnapshot(updated, members), members };
+      });
+    },
+
+    async addMembers({ conversationId, actorId, userIds }) {
+      return db.transaction(async (tx) => {
+        const [conversation] = await tx
+          .select()
+          .from(conversationsTable)
+          .where(and(eq(conversationsTable.conversationId, conversationId), isNull(conversationsTable.deletedAt)))
+          .for('update')
+          .limit(1);
+        if (!conversation) return null;
+        const actor = await requireActiveMember(conversationId, actorId, tx);
+        if (actor.role !== 'owner' && actor.role !== 'admin') {
+          throw new ConversationStoreError('forbidden', 'only owners and admins can manage group members');
+        }
+        const currentMembers = await membersFor(conversationId, tx);
+        const previousMemberships = userIds.length > 0
+          ? await tx.select({ userId: membersTable.userId })
+            .from(membersTable)
+            .where(and(
+              eq(membersTable.conversationId, conversationId),
+              inArray(membersTable.userId, userIds)
+            ))
+          : [];
+        if (
+          userIds.length === 0 ||
+          new Set(userIds).size !== userIds.length ||
+          userIds.includes(actorId) ||
+          previousMemberships.length > 0
+        ) {
+          throw new ConversationStoreError('invalid_members', 'invalid or previously joined group member');
+        }
+        if (currentMembers.length + userIds.length > 16) {
+          throw new ConversationStoreError('group_full', 'a group can have at most 16 members');
+        }
+        const now = new Date();
+        await tx.insert(membersTable).values(userIds.map((userId) => ({
+          conversationId,
+          userId,
+          role: 'member',
+          joinedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })));
+        const [updated] = await tx
+          .update(conversationsTable)
+          .set({ updatedAt: now, membershipVersion: conversation.membershipVersion + 1 })
+          .where(eq(conversationsTable.conversationId, conversationId))
+          .returning();
+        const members = await membersFor(conversationId, tx);
+        return { conversation: toSnapshot(updated, members), members };
+      });
+    },
+
+    async removeMember({ conversationId, actorId, userId }) {
+      return db.transaction(async (tx) => {
+        const [conversation] = await tx
+          .select()
+          .from(conversationsTable)
+          .where(and(eq(conversationsTable.conversationId, conversationId), isNull(conversationsTable.deletedAt)))
+          .for('update')
+          .limit(1);
+        if (!conversation) return null;
+        const actor = await requireActiveMember(conversationId, actorId, tx);
+        const member = await requireActiveMember(conversationId, userId, tx);
+        if (actor.role !== 'owner' && actor.role !== 'admin') {
+          throw new ConversationStoreError('forbidden', 'only owners and admins can manage group members');
+        }
+        if (member.role === 'owner' || actorId === userId) {
+          throw new ConversationStoreError('forbidden', 'the owner cannot be removed');
+        }
+        const now = new Date();
+        const [leftMemberRow] = await tx
+          .update(membersTable)
+          .set({ leftAt: now, updatedAt: now })
+          .where(and(
+            eq(membersTable.conversationId, conversationId),
+            eq(membersTable.userId, userId),
+            isNull(membersTable.leftAt)
+          ))
+          .returning();
+        const [updatedConversation] = await tx
+          .update(conversationsTable)
+          .set({ updatedAt: now, membershipVersion: conversation.membershipVersion + 1 })
+          .where(eq(conversationsTable.conversationId, conversationId))
+          .returning();
+        const activeCalls = await tx
+          .select({ call: callsTable })
+          .from(callParticipantsTable)
+          .innerJoin(callsTable, eq(callsTable.callId, callParticipantsTable.callId))
+          .where(and(
+            eq(callsTable.conversationId, conversationId),
+            eq(callParticipantsTable.userId, userId),
+            or(eq(callParticipantsTable.status, 'ringing'), eq(callParticipantsTable.status, 'accepted'))
+          ));
+        const callChanges: GroupCallChange[] = [];
+        for (const { call } of activeCalls) {
+          const [updatedParticipant] = await tx
+            .update(callParticipantsTable)
+            .set({ status: 'left', leftAt: now, updatedAt: now })
+            .where(and(
+              eq(callParticipantsTable.callId, call.callId),
+              eq(callParticipantsTable.userId, userId),
+              or(eq(callParticipantsTable.status, 'ringing'), eq(callParticipantsTable.status, 'accepted'))
+            ))
+            .returning();
+          if (!updatedParticipant) continue;
+          const statuses = await tx
+            .select({ status: callParticipantsTable.status })
+            .from(callParticipantsTable)
+            .where(eq(callParticipantsTable.callId, call.callId));
+          const hasActiveParticipant = statuses.some(({ status }) => status === 'ringing' || status === 'accepted');
+          const [updatedCall] = await tx
+            .update(callsTable)
+            .set({
+              status: hasActiveParticipant ? call.status : 'ended',
+              stateVersion: call.stateVersion + 1,
+              updatedAt: now,
+              endedAt: hasActiveParticipant ? call.endedAt : now,
+            })
+            .where(eq(callsTable.callId, call.callId))
+            .returning();
+          callChanges.push(await callChange(updatedCall, tx));
+        }
+        const members = await membersFor(conversationId, tx);
+        return {
+          conversation: toSnapshot(updatedConversation, members),
+          members,
+          changedMember: toMember(leftMemberRow),
+          callChanges,
+        };
       });
     },
 
@@ -512,14 +649,15 @@ function createPgConversationStore(db: Database): ConversationStore {
           .for('update')
           .limit(1);
         if (!conversation) return null;
-        await requireActiveMember(conversationId, userId, tx);
+        const member = await requireActiveMember(conversationId, userId, tx);
         const [existing] = await tx
           .select()
           .from(messagesTable)
           .where(and(eq(messagesTable.conversationId, conversationId), eq(messagesTable.messageId, messageId)))
           .for('update')
           .limit(1);
-        if (!existing || existing.deletedAt || existing.senderId !== userId) return null;
+        if (!existing || new Date(existing.createdAt).getTime() < Date.parse(member.joinedAt) ||
+            existing.deletedAt || existing.senderId !== userId) return null;
         const tombstone = applyTombstone(toMessage(existing), new Date().toISOString());
         const [updated] = await tx
           .update(messagesTable)
@@ -539,14 +677,14 @@ function createPgConversationStore(db: Database): ConversationStore {
           .for('update')
           .limit(1);
         if (!conversation) return null;
-        await requireActiveMember(conversationId, userId, tx);
+        const member = await requireActiveMember(conversationId, userId, tx);
         const [existing] = await tx
           .select()
           .from(messagesTable)
           .where(and(eq(messagesTable.conversationId, conversationId), eq(messagesTable.messageId, messageId)))
           .for('update')
           .limit(1);
-        if (!existing || existing.deletedAt) return null;
+        if (!existing || new Date(existing.createdAt).getTime() < Date.parse(member.joinedAt) || existing.deletedAt) return null;
         const reactions = applyReaction(
           (existing.reactions as Record<string, string[]>) ?? {},
           emoji,

@@ -35,6 +35,8 @@ const CLIENT_EVENTS = Object.freeze({
   // Group conversation lifecycle.
   CONVERSATION_CREATE: 'conversation.create',
   CONVERSATION_UPDATE: 'conversation.update',
+  CONVERSATION_MEMBER_ADD: 'conversation.member.add',
+  CONVERSATION_MEMBER_REMOVE: 'conversation.member.remove',
   CONVERSATION_LEAVE: 'conversation.leave',
   CONVERSATION_CALL_START: 'conversation.call.start',
   CONVERSATION_CALL_ACCEPT: 'conversation.call.accept',

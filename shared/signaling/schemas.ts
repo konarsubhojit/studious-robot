@@ -156,6 +156,7 @@ export type ConversationRecord = {
   conversationId: string;
   name: string;
   creatorId: string;
+  ownerId?: string;
   memberIds: string[];
   membershipVersion: number;
 };
@@ -164,6 +165,7 @@ const conversationRecord = s.object(
     conversationId: idField,
     name: s.string({ min: 1, max: 128, trim: true }),
     creatorId: idField,
+    ownerId: idField.optional(),
     memberIds: s.array(idField),
     membershipVersion: s.number({ min: 1, integer: true }),
   },
@@ -282,6 +284,16 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     version: versionField,
     conversationId: idField,
     name: s.string({ min: 1, max: 128, trim: true }),
+  }),
+  [CLIENT_EVENTS.CONVERSATION_MEMBER_ADD]: s.object({
+    version: versionField,
+    conversationId: idField,
+    userIds: s.array(idField),
+  }),
+  [CLIENT_EVENTS.CONVERSATION_MEMBER_REMOVE]: s.object({
+    version: versionField,
+    conversationId: idField,
+    userId: idField,
   }),
   [CLIENT_EVENTS.CONVERSATION_LEAVE]: s.object({
     version: versionField,

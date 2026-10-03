@@ -227,6 +227,16 @@ test('conversation signaling payloads require one target and the current contrac
     version: SIGNALING_VERSION,
     conversationId: 'study-team',
   }).success, false);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.CONVERSATION_MEMBER_ADD, {
+    version: SIGNALING_VERSION,
+    conversationId: 'study-team',
+    userIds: ['carol'],
+  }).success, true);
+  assert.equal(parseEventPayload(CLIENT_EVENTS.CONVERSATION_MEMBER_REMOVE, {
+    version: SIGNALING_VERSION,
+    conversationId: 'study-team',
+    userId: 'bob',
+  }).success, true);
   assert.equal(parseEventPayload(CLIENT_EVENTS.CONVERSATION_LEAVE, {
     version: SIGNALING_VERSION,
     conversationId: 'study-team',

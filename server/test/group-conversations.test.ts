@@ -153,12 +153,44 @@ test('group messages require active membership and fan out to every current memb
     assert.equal(nonOwnerRename.ok, false);
     assert.equal(nonOwnerRename.error.code, 'forbidden');
 
+    const addedUpdate = waitFor(mallory, SERVER_EVENTS.CONVERSATION_UPDATED);
+    const added = await emitWithAck(alice, CLIENT_EVENTS.CONVERSATION_MEMBER_ADD, {
+      version: SIGNALING_VERSION,
+      conversationId,
+      userIds: ['mallory'],
+    });
+    assert.equal(added.ok, true);
+    assert.deepEqual(added.conversation.memberIds, ['alice', 'bob', 'carol', 'mallory']);
+    assert.equal((await addedUpdate).conversation.membershipVersion, added.conversation.membershipVersion);
+    const newMemberHistory = await getJson(url, historyPath, sessions[3]);
+    assert.equal(newMemberHistory.body.messages.length, 0);
+
+    const nonOwnerRemoval = await emitWithAck(bob, CLIENT_EVENTS.CONVERSATION_MEMBER_REMOVE, {
+      version: SIGNALING_VERSION,
+      conversationId,
+      userId: 'carol',
+    });
+    assert.equal(nonOwnerRemoval.ok, false);
+    assert.equal(nonOwnerRemoval.error.code, 'forbidden');
+
+    const removedUpdate = waitFor(mallory, SERVER_EVENTS.CONVERSATION_UPDATED);
+    const removed = await emitWithAck(alice, CLIENT_EVENTS.CONVERSATION_MEMBER_REMOVE, {
+      version: SIGNALING_VERSION,
+      conversationId,
+      userId: 'mallory',
+    });
+    assert.equal(removed.ok, true);
+    assert.equal(removed.conversation.memberIds.includes('mallory'), false);
+    assert.equal((await removedUpdate).conversation.memberIds.includes('mallory'), false);
+    assert.equal((await getJson(url, historyPath, sessions[3])).status, 403);
+
     const departed = await emitWithAck(alice, CLIENT_EVENTS.CONVERSATION_LEAVE, {
       version: SIGNALING_VERSION,
       conversationId,
     });
     assert.equal(departed.ok, true);
     assert.equal(departed.conversation.memberIds.includes('alice'), false);
+    assert.equal(departed.conversation.ownerId, 'bob');
     const departedHistory = await getJson(url, historyPath, sessions[0]);
     assert.equal(departedHistory.status, 403);
     const formerMemberSend = await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_SEND, {
