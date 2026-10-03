@@ -1,15 +1,17 @@
 # Bounded group messaging MVP — product and data decision
 
-Decision record for issue **#411**. This is a design decision, not an
-implementation authorization. It defines the smallest useful private group chat
-and deliberately leaves the current one-to-one path unchanged.
+Decision record for issue **#411**, resolving the admission/history review in
+**#537**. It defines the smallest useful private group chat and deliberately
+leaves the current one-to-one path unchanged.
 
-> **Status: implementation deferred.** The product use case and data contract
-> below are accepted for a future, server-readable MVP, but no implementation
-> sub-issues are to be created until the encrypted-messaging decision is revised
-> to say how an eventual group protocol handles admission and history. The
-> current [E2EE decision](./e2ee-design.md#11-decision) is no-go for production;
-> this document must be reviewed again before group work is approved.
+> **Status: resolved; implementation deferral closed.** The current
+> [E2EE decision](./e2ee-design.md#11-decision) is no-go for production E2EE,
+> so the group MVP is server-readable, like existing one-to-one messages. This
+> decision closes the E2EE-related deferral; group implementation must follow
+> the admission and history rules below. Revisiting E2EE requires a new,
+> recorded production go/no-go that explicitly covers group admission, history
+> visibility, and key distribution/revocation; this record must then be reviewed
+> against that decision before any encrypted-group implementation.
 
 ## 1. Product boundary
 
@@ -20,14 +22,18 @@ system.
 
 - A group has at most **16 active members**, including its creator. This bounds
   one accepted message to 15 recipient-state writes and 15 user notification
-  decisions.
+  decisions; notification delivery is then bounded by the existing reachable-
+  device selection per user. Raising the cap would increase both database
+  fan-out and push amplification linearly, so larger groups need a measured
+  capacity decision rather than an arbitrary cap increase.
 - Membership is by direct, account-addressed invitation only. There are no
   join links, directory search, or discovery.
 - Group audio and video calls are explicitly out of scope. They need a separate
   media-topology and capacity decision; a group must not be accepted as a call
   target.
-- This design describes the present server-readable service. It makes no E2EE
-  claim and does not choose a group key protocol.
+- Group messages and attachments are readable by the server, as are current
+  one-to-one messages and attachments. This MVP makes no E2EE claim and chooses
+  no group key protocol.
 
 ## 2. Membership and authority
 
@@ -42,6 +48,8 @@ authority.
 | Admin | Invite, cancel an invitation, remove a member, and change group name. |
 | Member | Read, search permitted history, send messages/attachments, react, mute, and leave. |
 
+The MVP has owner and admin roles; members have equal ordinary messaging
+permissions, but not equal authority. Only the owner or an admin may invite.
 The owner cannot be removed or leave while owner. They must first transfer
 ownership to an active admin; if there is no suitable admin, they may promote
 one. An admin may not remove the owner or themselves. The creator starts as the
@@ -78,16 +86,24 @@ room name is a delivery optimization, never evidence of membership.
 changes, ownership transfers, and deletion so all devices can reconcile a
 durable ordered timeline.
 
-- **Join:** accepting an unexpired invitation creates an interval at the commit
-  time. A new member can see only messages and attachments created at or after
-  `joined_at`; no prior history is backfilled or searchable.
+- **Join/history decision:** accepting an unexpired invitation creates an
+  interval at the commit time. A new member cannot see messages or attachments
+  from before `joined_at`; no prior history is backfilled or searchable. This
+  protects earlier group content from being exposed to a later invitee. It
+  requires every history, search, and attachment-visibility read to enforce that
+  member's `joined_at` watermark; that per-member filter is part of the schema
+  contract, not an optional optimization.
 - **Leave:** an active member may leave immediately. They retain the history and
-  attachments created during their interval, subject to normal retention and
-  account erasure, but receive no later messages or pushes.
+  attachments already downloaded locally, subject to normal retention and
+  account erasure. Server-side, they lose history, search, attachment-download,
+  socket, and push access immediately; their interval remains as audit/history
+  for entitled members, but cannot authorize further reads by the departed
+  member. They receive no later messages or pushes.
 - **Removal:** owner/admin removal closes the member's interval immediately.
-  It has the same history boundary as leaving, with an audit event naming the
-  actor and reason. It does not retract bytes already downloaded or plaintext
-  already displayed.
+  It has the same local-retention and server-access consequences as leaving, but
+  is distinguishable from voluntary leave: `removed_at`, actor, reason, and a
+  removal event record the action. It does not retract bytes already downloaded
+  or plaintext already displayed.
 - **Deletion:** only the owner may delete an empty group. Deleting a populated
   group requires first removing or having every non-owner leave, preventing one
   account from unexpectedly destroying other members' history.
@@ -119,13 +135,20 @@ Group state is per member, not two columns on a conversation:
   follow existing token-pruning/outcome handling and do not alter message
   acceptance or unread state.
 
-Blocking a group member does not remove either account or conceal shared
-membership. It suppresses notifications and previews for that blocked sender
-and displays their messages behind a local “blocked sender” disclosure; it does
-not make their content searchable locally. Direct invitations remain forbidden
-for a blocked pair. The MVP has no user report workflow today: member removal
-and audit logs are the available moderation response. A user-facing report and
-staff case-handling flow is a prerequisite for any future larger/public group
+Blocking is pairwise and does not remove either account or conceal shared
+membership. Group messages continue to be delivered to all active members
+regardless of a block; the one-to-one block predicate does not filter group
+delivery, for which membership is the authority. If either member has blocked
+the other, the blocker's client still receives that sender's group messages but
+gets no push or preview for them; the messages still count toward group unread
+state, are shown behind a local “blocked sender” disclosure, and are excluded
+from the blocker's local search. Thus group messages from either side remain
+visible to the other party in the shared group. Direct invitations remain
+forbidden for a blocked pair. Blocking therefore is not a way to remove someone
+from a shared group; owner/admin removal and audit logs are the available
+moderation response.
+The MVP has no user-report workflow. A user-facing report and staff
+case-handling flow is a prerequisite for any future larger/public group
 proposal, not silently implied by this MVP.
 
 ## 5. Data, migration, and compatibility
@@ -168,11 +191,13 @@ Before approval, measured acceptance criteria are:
 4. Authorization tests cover every operation in §2, including a removed member
    attempting history, search, download, and room re-subscription.
 
-## 6. Deferred-implementation decision
+## 6. Implementation decision
 
-No implementation sub-issues are created from this record. Re-open approval
-only after the E2EE record has a production decision or explicitly confirms
-that this server-readable group history/admission model is compatible with the
-chosen group-key semantics. At that review, split work into schema/migration,
-server authorization and fan-out, mobile capability/UI, and account-erasure
-sub-issues, each carrying the acceptance criteria above.
+This record closes the prior implementation deferral. Implementation may be
+planned against the server-readable admission, history, block, and lifecycle
+decisions above, while preserving the separate one-to-one data and read path.
+If production E2EE is reconsidered, group implementation must pause for a new
+recorded decision that explicitly resolves group admission, pre-join history,
+and group-key distribution/revocation; this document must be reviewed against
+that decision before encrypted-group work proceeds. Implementation work should
+carry the acceptance criteria above.
