@@ -496,7 +496,7 @@ that the service is active, and polls `/health`. Install the tracked script at
 the exact path CI invokes:
 
 ```bash
-sudo install -o root -g root -m 0750 \
+sudo install -o root -g root -m 0755 \
   /home/wetalk/repos/studious-robot/deploy/redeploy.sh \
   /usr/local/bin/redeploy.sh
 ```
