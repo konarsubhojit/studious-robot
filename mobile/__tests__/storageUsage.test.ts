@@ -102,6 +102,20 @@ describe('measureStorageUsage', () => {
     expect(usage.mediaFileCount).toBe(1);
   });
 
+  test('counts cached avatar files as recoverable media', async () => {
+    const cache = `${RNFS.CachesDirectoryPath}/attachments`;
+    RNFS.readDir.mockImplementation(async (path: string) => {
+      if (path === RNFS.CachesDirectoryPath) return [dir(cache)];
+      if (path === cache) return [file(`${cache}/attachment-avatar.jpg`, 12_345)];
+      return [];
+    });
+
+    const usage = await measureStorageUsage();
+
+    expect(usage.mediaBytes).toBe(12_345);
+    expect(usage.mediaFileCount).toBe(1);
+  });
+
   test('reports an unreadable device as unmeasured rather than as zero', async () => {
     RNFS.readDir.mockRejectedValue(new Error('EACCES'));
 

@@ -20,6 +20,7 @@ export type ThirdPartyLicense = {
 };
 
 export const THIRD_PARTY_LICENSES: ThirdPartyLicense[] = [
+  { name: '@bam.tech/react-native-image-resizer', license: 'MIT' },
   { name: '@op-engineering/op-sqlite', license: 'MIT' },
   { name: '@react-native-community/netinfo', license: 'MIT' },
   { name: '@react-native-documents/picker', license: 'MIT' },

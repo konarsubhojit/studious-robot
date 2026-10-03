@@ -71,13 +71,13 @@ function normaliseImageAsset(asset: any): { uri: string; mimeType: string; sizeB
  * @returns `null` when the module isn't linked, the user cancelled, or the
  *   picker errored.
  */
-export async function pickPhoto(): Promise<{
+export async function pickPhoto(options: { maxWidth?: number; maxHeight?: number } = {}): Promise<{
     uri: string; mimeType: string; sizeBytes: number;
     name?: string; width?: number; height?: number;
 } | null> {
   const picker = loadImagePicker();
   if (!picker) return null;
-  const result = await picker.launchImageLibrary({ mediaType: 'photo', quality: 0.8 });
+  const result = await picker.launchImageLibrary({ mediaType: 'photo', quality: 0.8, ...options });
   if (result.didCancel || result.errorCode) return null;
   return normaliseImageAsset(result.assets?.[0]);
 }

@@ -58,6 +58,7 @@ export function usePeerProfile(userId: string, suppliedProfile?: PeerProfile) {
   return profile;
 }
 
+/** Update one account's in-memory profile after an account-owned change succeeds. */
 export function useUpdatePeerProfile(userId: string) {
   const store = useContext(ProfileContext);
   return useCallback((profile: PeerProfile) => store?.seed(userId, profile), [store, userId]);

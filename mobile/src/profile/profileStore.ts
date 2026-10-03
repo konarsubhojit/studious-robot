@@ -1,4 +1,5 @@
 import { resolveDisplayName } from '../../../shared/identity';
+import { evictCachedAttachment } from '../attachmentCache';
 import { bearerAuthHeaders } from '../authHeaders';
 import { fetchPeerProfile } from './fetchPeerProfile';
 import type { ContactRow, PeerProfile } from '../types/directory';
@@ -73,6 +74,7 @@ export function createProfileStore(transport: ProfileTransport) {
     if (next.avatarKey !== previous.avatarKey) {
       next.avatarUrl = undefined;
       deadlines.delete(id);
+      if (previous.avatarKey) void evictCachedAttachment(previous.avatarKey);
     }
     profiles.set(id, next);
     emit();

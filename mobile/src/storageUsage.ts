@@ -20,7 +20,7 @@ import { errorMessage } from './errors';
  */
 
 export type StorageCategory =
-  /** Cached attachments and recorded voice notes: safe to delete, re-fetchable. */
+  /** Cached attachments, avatars, and recorded voice notes: safe to delete and re-fetchable. */
   | 'media'
   /** Durable and crash logs: kept, because they exist to survive the failure. */
   | 'logs'

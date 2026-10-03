@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
+import { cacheAvatarImage } from '../../avatarImageCache';
 import { usePeerProfile } from '../../profile/ProfileContext';
 import { deriveInitials } from '../../callUx';
 import type { PeerProfile } from '../../types/directory';
@@ -36,6 +37,21 @@ const INITIALS_SCALE = 0.4;
 /** Presence-dot diameter, as a fraction of the avatar's. */
 const DOT_SCALE = 0.28;
 
+function imageUriFor({
+  avatarKey,
+  avatarUrl,
+  cachedImage,
+  failedUrl,
+}: {
+  avatarKey?: string | null;
+  avatarUrl?: string;
+  cachedImage: { key: string; uri: string } | null;
+  failedUrl?: string;
+}): string | undefined {
+  if (cachedImage && avatarUrl && cachedImage.key === avatarKey) return cachedImage.uri;
+  return avatarUrl && avatarUrl !== failedUrl ? avatarUrl : undefined;
+}
+
 /**
  * The person mark: initials in a circle, with an optional presence dot.
  *
@@ -49,23 +65,50 @@ export default function Avatar({ id, profile: suppliedProfile, size = 'md', onli
   const styles = useThemedStyles(createStyles);
   const profile = usePeerProfile(id ?? '', suppliedProfile);
   const [failedUrl, setFailedUrl] = useState<string>();
+  const [cachedImage, setCachedImage] = useState<{ key: string; uri: string } | null>(null);
   const diameter = sizes.avatar[size] ?? sizes.avatar.md;
   const dotSize = Math.round(diameter * DOT_SCALE);
+
+  useEffect(() => {
+    let active = true;
+    const avatarKey = profile.avatarKey;
+    setCachedImage(null);
+    setFailedUrl(undefined);
+    if (avatarKey && profile.avatarUrl) {
+      void cacheAvatarImage({
+        avatarKey,
+        downloadUrl: profile.avatarUrl,
+        isCurrent: () => active,
+      }).then(path => {
+        if (active && path) setCachedImage({ key: avatarKey, uri: `file://${path}` });
+      });
+    }
+    return () => { active = false; };
+  }, [profile.avatarKey, profile.avatarUrl]);
 
   const circleStyle = {
     height: diameter,
     width: diameter,
     borderRadius: diameter / 2,
   };
+  const imageUri = imageUriFor({
+    avatarKey: profile.avatarKey,
+    avatarUrl: profile.avatarUrl,
+    cachedImage,
+    failedUrl,
+  });
 
   return (
     <View style={[styles.wrap, circleStyle]} testID={testID}>
       <View style={[styles.circle, circleStyle, loading && styles.circleLoading]}>
-        {loading ? null : profile.avatarUrl && profile.avatarUrl !== failedUrl ? (
+        {loading ? null : imageUri ? (
           <Image
-            source={{ uri: profile.avatarUrl }}
+            source={{ uri: imageUri }}
             style={circleStyle}
-            onError={() => setFailedUrl(profile.avatarUrl)}
+            onError={() => {
+              if (imageUri === profile.avatarUrl) setFailedUrl(profile.avatarUrl);
+              else setCachedImage(null);
+            }}
             accessible={false}
             testID={testID ? `${testID}-image` : undefined}
           />

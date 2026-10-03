@@ -7,6 +7,7 @@ import RNFS from 'react-native-fs';
 import { logWarn } from '../src/appLogger';
 import {
   attachmentCacheKey,
+  evictCachedAttachment,
   evictCachedAttachmentsForMessage,
   findCachedAttachment,
   MAX_ATTACHMENT_CACHE_AGE_MS,
@@ -223,6 +224,26 @@ describe('attachment cache bounds', () => {
     expect(Object.values(await readIndex()).map(entry => entry.path)).toEqual([
       (kept as { path: string }).path,
     ]);
+  });
+});
+
+describe('avatar cache keys', () => {
+  test('stores and evicts avatar bytes by avatarKey', async () => {
+    const avatarKey = 'avatars/alice/123e4567-e89b-12d3-a456-426614174000.jpg';
+    await RNFS.writeFile('/downloads/avatar.jpg', 'avatar-bytes', 'utf8');
+    const stored = await rememberCachedAttachment({
+      cacheKey: avatarKey,
+      sourcePath: '/downloads/avatar.jpg',
+      now: NOW,
+    });
+
+    expect(await findCachedAttachment({ cacheKey: avatarKey, now: NOW })).toMatchObject({
+      key: avatarKey,
+      path: stored?.path,
+    });
+    await expect(evictCachedAttachment(avatarKey)).resolves.toBe(true);
+    expect(await RNFS.exists((stored as { path: string }).path)).toBe(false);
+    await expect(findCachedAttachment({ cacheKey: avatarKey, now: NOW })).resolves.toBeNull();
   });
 });
 

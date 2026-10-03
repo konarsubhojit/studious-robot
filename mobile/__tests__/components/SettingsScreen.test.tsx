@@ -204,6 +204,22 @@ describe('SettingsScreen', () => {
     expect(baseProps.onClose).toHaveBeenCalled();
   });
 
+  test('offers a profile-photo picker and confirms a successful change', async () => {
+    const onChangeAvatar = jest.fn().mockResolvedValue('avatars/alice/new.jpg');
+    let tree: any;
+    await act(async () => {
+      tree = renderer.create(<SettingsScreen {...baseProps} onChangeAvatar={onChangeAvatar} />);
+    });
+
+    await act(async () => {
+      findByTestID(tree, 'settings-change-avatar')[0].props.onPress();
+    });
+
+    expect(onChangeAvatar).toHaveBeenCalledTimes(1);
+    expect(findByTestID(tree, 'settings-toast').some((node: any) =>
+      node.props.message === 'Profile photo updated')).toBe(true);
+  });
+
   test('export logs control is only shown when onExportLogs is provided', () => {
     let withoutTree;
     act(() => {

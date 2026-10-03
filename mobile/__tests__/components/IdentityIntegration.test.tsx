@@ -1,6 +1,7 @@
 import React, { StrictMode } from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { AppState, Text } from 'react-native';
+import { cacheAvatarImage } from '../../src/avatarImageCache';
 import { ProfileDataProvider, usePeerProfile } from '../../src/profile/ProfileContext';
 import Avatar from '../../src/components/primitives/Avatar';
 import RingingAvatar from '../../src/components/RingingAvatar';
@@ -20,6 +21,7 @@ import type { ReactNode } from 'react';
 import type { AppStateStatus } from 'react-native';
 
 jest.mock('react-native-nitro-sound', () => ({ default: {} }));
+jest.mock('../../src/avatarImageCache', () => ({ cacheAvatarImage: jest.fn(async () => null) }));
 installRenderCleanup();
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
@@ -102,6 +104,13 @@ test('avatars show authorized images, fail to name initials, and refresh on expi
   expect(tree.root.findAll(n => n.props.testID === 'avatar-image')).toHaveLength(0);
   await act(async () => { jest.advanceTimersByTime(25_000); });
   expect(transport.authedFetch).toHaveBeenCalledTimes(3); // self plus original and renewed avatar
+});
+
+test('renders cached avatar bytes only after the profile authorizes its image', async () => {
+  jest.mocked(cacheAvatarImage).mockResolvedValueOnce('/tmp/avatar-cache.jpg');
+  const tree = await renderProfile(<Avatar id={peerId} testID="cached-avatar" />);
+
+  expect(node(tree, 'cached-avatar-image').props.source.uri).toBe('file:///tmp/avatar-cache.jpg');
 });
 
 test.each(['denied', 'network'])('mounted avatars retry %s failures after the cooldown', async failure => {

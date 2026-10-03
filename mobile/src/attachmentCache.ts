@@ -8,9 +8,8 @@ import { errorMessage } from './errors';
  *
  * Three properties make this safe to keep:
  *
- * - Entries are keyed by the attachment's *object key* (the URL path), not by
- *   its display name: the name is sender-controlled and not unique, while the
- *   key is stable across the signed URLs that are re-minted on every fetch.
+ * - Entries are keyed by the attachment's object key or an avatar's `avatarKey`,
+ *   not by its display name or signed URL: the stable key survives URL renewal.
  * - The cache is bounded, by age and by total size, so it can never grow into
  *   the storage complaint it exists to avoid.
  * - It is an optimisation, never a second copy of the record. A tombstoned
@@ -44,7 +43,7 @@ export const MAX_ATTACHMENT_CACHE_BYTES = 64 * 1024 * 1024;
 export const MAX_ATTACHMENT_CACHE_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 export type CachedAttachment = {
-  /** The attachment's object key, stable across re-signed URLs. */
+  /** Stable attachment object key or avatarKey. */
   key: string;
   /** The message the bytes belong to, so a tombstone can evict them. */
   messageId?: string | null;
@@ -237,11 +236,13 @@ async function prune(index: CacheIndex, now: number): Promise<CacheIndex> {
  *
  * @returns the cached entry, or `null` on a miss.
  */
-export async function findCachedAttachment({ url, now = Date.now() }: {
+export async function findCachedAttachment({ url, cacheKey, now = Date.now() }: {
   url?: string | null;
+  /** Optional stable key for resources such as avatars that have no URL identity. */
+  cacheKey?: string | null;
   now?: number;
 } = {}): Promise<CachedAttachment | null> {
-  const key = attachmentCacheKey(url);
+  const key = cacheKey ?? attachmentCacheKey(url);
   if (!key || !isCacheUsable()) return null;
 
   const index = await loadIndex();
@@ -281,14 +282,15 @@ export async function findCachedAttachment({ url, now = Date.now() }: {
  *
  * @returns the stored entry, or `null` when nothing could be cached.
  */
-export async function rememberCachedAttachment({ url, sourcePath, messageId, label, now = Date.now() }: {
+export async function rememberCachedAttachment({ url, cacheKey, sourcePath, messageId, label, now = Date.now() }: {
   url?: string | null;
+  cacheKey?: string | null;
   sourcePath?: string | null;
   messageId?: string | null;
   label?: string | null;
   now?: number;
 }): Promise<CachedAttachment | null> {
-  const key = attachmentCacheKey(url);
+  const key = cacheKey ?? attachmentCacheKey(url);
   const directory = cacheDirectory();
   if (!key || !directory || !sourcePath || !isCacheUsable()) return null;
 
@@ -341,11 +343,25 @@ export async function evictCachedAttachmentsForMessage(
     // let a later open serve bytes the sender has withdrawn.
     delete survivors[entry.key];
   }
+
   await saveIndex(survivors);
   logInfo('[AttachmentCache] evicted cached attachments for a deleted message', {
     entries: doomed.length,
   });
   return doomed.length;
+}
+
+/** Remove one cache entry by its stable object key. */
+export async function evictCachedAttachment(cacheKey: string | null | undefined): Promise<boolean> {
+  if (!cacheKey || !isCacheUsable()) return false;
+  const currentIndex = await loadIndex();
+  const entry = currentIndex[cacheKey];
+  if (!entry) return false;
+  await removeFile(entry, 'replaced');
+  const nextIndex = { ...currentIndex };
+  delete nextIndex[cacheKey];
+  await saveIndex(nextIndex);
+  return true;
 }
 
 /**

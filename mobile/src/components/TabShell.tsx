@@ -5,6 +5,7 @@ import { logError } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
 import { bearerAuthHeaders } from '../authHeaders';
 import { resolveAttachmentDownloadUrl } from '../attachmentAccess';
+import { uploadAvatar } from '../avatarUpload';
 import { AttachmentUriProvider } from '../attachmentUri';
 import { errorMessage } from '../errors';
 import {
@@ -171,6 +172,9 @@ function TabShell() {
     revokeDevice,
     revokeAllDevices,
   } = useDevices({ signalingUrl, authedFetch, updateStatus });
+  const handleChangeAvatar = useCallback(async () => {
+    return uploadAvatar({ authedFetch, signalingUrl });
+  }, [authedFetch, signalingUrl]);
 
   const handleOpenConversation = useCallback((id: string, options?: { messageId?: string | null }) => {
     if (chat.conversations.find(row => row.peerId === id)?.group) openGroupConversation(id);
@@ -564,6 +568,7 @@ function TabShell() {
       blockedUsers={chat.blockedUsers}
       onUnblockUser={chat.unblockPeer}
       onOpenProfile={openPeerProfile}
+      onChangeAvatar={handleChangeAvatar}
     />
   ), [
     accountEmail,
@@ -583,6 +588,7 @@ function TabShell() {
     chat.unblockPeer,
     clearCachedMedia,
     handleAutoLightingToggle,
+    handleChangeAvatar,
     handleDeveloperModeToggle,
     handleExportLogs,
     handleHapticsToggle,
