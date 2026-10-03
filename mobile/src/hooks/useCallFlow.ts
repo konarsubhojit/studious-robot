@@ -27,6 +27,7 @@ import usePresenceSearch from './usePresenceSearch';
 import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import { CALL_END_REASON_LABELS } from '../callUx';
+import type { CallQualityMetrics } from '../callUx';
 import { triggerHaptic } from '../haptics';
 import { shouldShowPermissionPrimer } from '../permissionsPrimer';
 import {
@@ -797,7 +798,8 @@ export default function useCallFlow({
     renegotiate,
   });
 
-  const applyVideoAdaptation = useCallback((quality: { bars: number }) => {
+  const applyVideoAdaptation = useCallback((quality: { bars: number; label: string }) => {
+    if (quality.label === 'No link') return;
     const next = nextVideoAdaptation(videoAdaptationRef.current, {
       bars: quality.bars,
       dataSaverEnabled,
@@ -813,6 +815,16 @@ export default function useCallFlow({
     if (pc) applyBitrateConstraints(pc, VIDEO_ADAPTATION_CONSTRAINTS[next.level]).catch(() => {});
   }, [dataSaverEnabled, isScreenSharing, peerConnectionRef]);
 
+  const reportCallStats = useCallback((metrics: CallQualityMetrics) => {
+    const callId = activeCallIdRef.current;
+    if (!callId || !socketRef.current?.connected) return;
+    signalingRef.current?.emit(CLIENT_EVENTS.CALL_STATS, {
+      version: SIGNALING_VERSION,
+      callId,
+      ...metrics,
+    });
+  }, [activeCallIdRef, signalingRef, socketRef]);
+
   useEffect(() => {
     if (!isInCall) videoAdaptationRef.current = INITIAL_VIDEO_ADAPTATION;
   }, [isInCall]);
@@ -825,6 +837,7 @@ export default function useCallFlow({
     remoteStreamRef,
     updateStatus,
     onQualitySample: applyVideoAdaptation,
+    onStatsSample: reportCallStats,
   });
   useEffect(() => {
     connectionQualityRef.current = connectionQuality;

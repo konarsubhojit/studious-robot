@@ -12,6 +12,7 @@ import {
   smoothConnectionQuality,
   collectCallStats,
   summarizeCandidatePair,
+  toCallQualityMetrics,
 } from '../src/callUx';
 
 describe('callUx', () => {
@@ -37,18 +38,18 @@ describe('callUx', () => {
     expect(clamp(120, 12, 88)).toBe(88);
   });
 
-  test('maps network metrics to signal quality bars', () => {
+  test('maps network metrics to three signal-quality levels', () => {
     expect(getConnectionQuality({})).toEqual({ bars: 0, label: 'No link' });
     expect(getConnectionQuality({ rttMs: 120, packetLossRatio: 0.01, bitrateKbps: 900 })).toEqual({
       bars: 3,
-      label: 'Strong',
+      label: 'Good',
     });
     expect(getConnectionQuality({ rttMs: 390, packetLossRatio: 0.02, bitrateKbps: 600 })).toEqual({
-      bars: 1,
-      label: 'Weak',
+      bars: 2,
+      label: 'Fair',
     });
     expect(getConnectionQuality({ rttMs: 700, packetLossRatio: 0.14, bitrateKbps: 80 })).toEqual({
-      bars: 0,
+      bars: 1,
       label: 'Poor',
     });
   });
@@ -141,7 +142,9 @@ describe('callUx', () => {
   });
 
   describe('collectCallStats', () => {
-    const report = (stats: any[]) => ({ forEach: (fn: (stat: any) => void) => stats.forEach(fn) });
+    const report = (stats: any[]) => ({
+      forEach: (fn: (stat: any) => void) => stats.forEach(fn),
+    });
 
     test('sums inbound video and ignores audio and remote-side reports', () => {
       // Audio survives conditions that have already destroyed the video, so
@@ -174,6 +177,24 @@ describe('callUx', () => {
       expect(sample.rttMs).toBe(50);
     });
 
+    test('collects inbound video jitter and its codec', () => {
+      const sample = collectCallStats(
+        report([
+          {
+            type: 'inbound-rtp',
+            kind: 'video',
+            codecId: 'codec-video',
+            jitter: 0.025,
+            packetsReceived: 100,
+          },
+          { type: 'codec', id: 'codec-video', mimeType: 'video/VP8' },
+        ]),
+      );
+
+      expect(sample.jitterMs).toBe(25);
+      expect(sample.codec).toBe('VP8');
+    });
+
     test('ignores candidate pairs that never succeeded', () => {
       const sample = collectCallStats(
         report([{ type: 'candidate-pair', state: 'failed', id: 'dead' }, null, 'garbage']),
@@ -183,12 +204,38 @@ describe('callUx', () => {
       expect(sample.rttMs).toBeUndefined();
     });
   });
+
+  test('normalizes metrics to the bounded call.stats payload', () => {
+    expect(
+      toCallQualityMetrics(
+        { rttMs: 80_000, jitterMs: 12_000, totalPacketsLost: 0, totalPacketsReceived: 0, totalBytesReceived: 0, candidatePair: null },
+        1.5,
+        1_500_000,
+      ),
+    ).toEqual({
+      rttMs: 60_000,
+      jitterMs: 10_000,
+      packetLossPercent: 100,
+      bitrateBps: 1_000_000_000,
+      codec: 'unknown',
+    });
+  });
+
+  test('does not turn unavailable metrics into measured zeros', () => {
+    expect(
+      toCallQualityMetrics(
+        { rttMs: 80, totalPacketsLost: 0, totalPacketsReceived: 10, totalBytesReceived: 100, candidatePair: null },
+        0,
+        undefined,
+      ),
+    ).toBeNull();
+  });
 });
 
 describe('smoothConnectionQuality', () => {
-  const strong = { bars: 3, label: 'Strong' };
+  const strong = { bars: 3, label: 'Good' };
   const fair = { bars: 2, label: 'Fair' };
-  const poor = { bars: 0, label: 'Poor' };
+  const poor = { bars: 1, label: 'Poor' };
 
   test('publishes the first sample as-is', () => {
     expect(smoothConnectionQuality(null, strong)).toEqual({
@@ -358,12 +405,9 @@ describe('isRelayPolicyViolated', () => {
 });
 
 describe('shouldWarnPoorConnection', () => {
-  test('blames packet loss only when loss was measured', () => {
-    expect(shouldWarnPoorConnection({ bars: 0, packetLossRatio: 0.4 })).toBe(true);
-    expect(shouldWarnPoorConnection({ bars: 0, packetLossRatio: undefined })).toBe(false);
-  });
-
-  test('stays quiet while the call still has bars', () => {
-    expect(shouldWarnPoorConnection({ bars: 1, packetLossRatio: 0.4 })).toBe(false);
+  test('warns for poor quality, not for no-link or fair samples', () => {
+    expect(shouldWarnPoorConnection({ bars: 1 })).toBe(true);
+    expect(shouldWarnPoorConnection({ bars: 0 })).toBe(false);
+    expect(shouldWarnPoorConnection({ bars: 2 })).toBe(false);
   });
 });
