@@ -114,3 +114,6 @@ The app's handler is the sole `ErrorUtils` capture path: Sentry's
 `ReactNativeErrorHandlers` integration uses `onerror: false` to avoid
 deduplicating away the enriched event. Its production promise-rejection tracker,
 native crash reporting and the other integrations remain enabled.
+Remote delivery, like the asynchronous local file write, is best-effort: the
+handler does not wait for an SDK flush before chaining, so immediate fatal
+process termination may interrupt delivery.
