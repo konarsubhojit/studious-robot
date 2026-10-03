@@ -128,6 +128,47 @@ describe('crashReporting', () => {
       );
     });
 
+    test('keeps one enriched global capture while retaining native integrations', () => {
+      const { initCrashReporting } = require('../src/crashReporting');
+      const { installCrashHandler } = require('../src/crashReporter');
+      const original = jest.fn();
+      let handler: any;
+      const previousErrorUtils = (global as any).ErrorUtils;
+      (global as any).ErrorUtils = {
+        getGlobalHandler: () => handler ?? original,
+        setGlobalHandler: (installed: any) => { handler = installed; },
+      };
+      const nativeIntegration = { name: 'DeviceContext', setupOnce: jest.fn() };
+      const jsIntegration = {
+        name: 'ReactNativeErrorHandlers',
+        setupOnce: jest.fn(() => {
+          const previous = handler;
+          handler = (error: Error, isFatal: boolean) => {
+            sdk.captureException(error);
+            previous(error, isFatal);
+          };
+        }),
+      };
+      sdk.init.mockImplementation(options => {
+        options.integrations([jsIntegration, nativeIntegration]).forEach((integration: any) => integration.setupOnce());
+      });
+      try {
+        installCrashHandler(() => '');
+        initCrashReporting(undefined, DSN);
+        handler(new Error('global crash'), true);
+        expect(jsIntegration.setupOnce).not.toHaveBeenCalled();
+        expect(nativeIntegration.setupOnce).toHaveBeenCalledTimes(1);
+        expect(sdk.captureException).toHaveBeenCalledTimes(1);
+        expect(sdk.captureException.mock.calls[0][1]).toEqual(expect.objectContaining({
+          captureContext: expect.objectContaining({ level: 'fatal' }),
+          mechanism: { handled: false, type: 'onerror' },
+        }));
+        expect(original).toHaveBeenCalledTimes(1);
+      } finally {
+        (global as any).ErrorUtils = previousErrorUtils;
+      }
+    });
+
     test('is idempotent, so a second call never re-initialises the SDK', () => {
       const { initCrashReporting } = require('../src/crashReporting');
 
@@ -206,6 +247,7 @@ describe('crashReporting', () => {
           level: isFatal ? 'fatal' : 'error',
           tags: { isFatal: String(isFatal), appVersion: require('../src/appInfo').APP_VERSION, signalingHost: 'signal.example:8443', callPhase: 'in_call' },
         },
+        mechanism: { handled: false, type: 'onerror' },
         attachments: [expect.objectContaining({ filename: 'app-logs.jsonl', data: expect.stringContaining('"callPhase":"in_call"') })],
       });
       for (const privateText of ['alice', 'password', 'private message', 'private-key', 'token=']) {

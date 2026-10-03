@@ -122,6 +122,7 @@ export function captureCrash(error: unknown, isFatal: boolean, getLogs?: () => s
     }
     const result = sdk.captureException(exception, {
       captureContext: { level: isFatal ? 'fatal' : 'error', tags },
+      mechanism: { handled: false, type: 'onerror' },
       attachments: logs ? [{ filename: 'app-logs.jsonl', data: logs, contentType: 'text/plain' }] : [],
     });
     Promise.resolve(result).catch(() => {
@@ -228,6 +229,10 @@ export function initCrashReporting(
       // The app redacts its own payloads (see `addBreadcrumb`); never let the
       // SDK attach request bodies, headers or user identifiers on its own.
       sendDefaultPii: false,
+      // Our global handler owns JS capture; a second handler captures first
+      // and Sentry's dedupe then drops our context-enriched event.
+      integrations: (integrations: { name: string; }[]) =>
+        integrations.filter(integration => integration.name !== 'ReactNativeErrorHandlers'),
       // Automatic console/network breadcrumbs bypass our diagnostic allowlist.
       beforeBreadcrumb: (breadcrumb: { category?: string; }) =>
         breadcrumb.category === 'app' ? breadcrumb : null,
