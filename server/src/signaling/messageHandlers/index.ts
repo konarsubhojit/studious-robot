@@ -11,6 +11,7 @@ import { handleMessageSend } from './send.ts';
 import { describeError } from '../../lib/errors.ts';
 import { parseClientMessageId, validateBody, validateReactionEmoji } from './validation.ts';
 import { deliverMessage } from './delivery.ts';
+import { fanoutConversationEvent } from '../../domain/conversationFanout.ts';
 
 async function ensureCanDeleteMessage(
   state: import('../../stores/contracts.ts').ServerState,
@@ -30,6 +31,145 @@ async function ensureCanDeleteMessage(
     };
   }
   return { ok: true, attachmentUrl: existing.attachment?.url };
+}
+
+async function handleGroupMessageDelete(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  { io, state }: { io: import('socket.io').Server; state: import('../../stores/contracts.ts').ServerState },
+  requesterId: string,
+  parsed: Record<string, any>
+): Promise<boolean> {
+  const conversationId = normaliseId(parsed.conversationId);
+  if (!conversationId) return false;
+  const messageId = parseClientMessageId(parsed.messageId);
+  if (!messageId) {
+    acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, ERROR_CODES.BAD_REQUEST, 'messageId is required', state);
+    return true;
+  }
+  try {
+    if (!(await state.conversationStore.getMember(conversationId, requesterId))) {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
+      return true;
+    }
+    const existing = await state.conversationStore.getMessage(conversationId, messageId);
+    if (!existing || existing.deletedAt) {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, ERROR_CODES.NOT_FOUND, 'message not found', state);
+      return true;
+    }
+    if (existing.senderId !== requesterId) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.FORBIDDEN,
+        'you can only delete your own messages',
+        state
+      );
+      return true;
+    }
+    const result = await state.conversationStore.deleteMessage({
+      conversationId,
+      messageId,
+      userId: requesterId,
+    });
+    if (!result) {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, ERROR_CODES.NOT_FOUND, 'message not found', state);
+      return true;
+    }
+    const r2Config = loadR2Config();
+    if (r2Config && existing.attachment?.url) {
+      void deleteAttachmentObject({ config: r2Config, url: existing.attachment.url })
+        .catch((error) => {
+          console.error(
+            `[messages] failed to delete group attachment for messageId=${messageId}: ${describeError(error)}`
+          );
+        });
+    }
+    await fanoutConversationEvent(io, state, {
+      conversationId,
+      eventName: SERVER_EVENTS.MESSAGE_DELETED,
+      recipientIds: result.recipients,
+      payload: {
+        version: SIGNALING_VERSION,
+        conversationId,
+        messageId,
+        deletedBy: requesterId,
+        message: result.message,
+      },
+    });
+    acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, { messageId, conversationId });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'not_member') {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
+    } else {
+      console.error(`[messages] failed to delete group message: ${describeError(error)}`);
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, ERROR_CODES.INTERNAL_ERROR, 'could not delete message', state);
+    }
+  }
+  return true;
+}
+
+async function handleGroupMessageReaction(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  { io, state }: { io: import('socket.io').Server; state: import('../../stores/contracts.ts').ServerState },
+  requesterId: string,
+  parsed: Record<string, any>
+): Promise<boolean> {
+  const conversationId = normaliseId(parsed.conversationId);
+  if (!conversationId) return false;
+  const messageId = parseClientMessageId(parsed.messageId);
+  const emoji = validateReactionEmoji(parsed.emoji);
+  if (!messageId || !emoji) {
+    acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, ERROR_CODES.BAD_REQUEST, 'messageId and an emoji are required', state);
+    return true;
+  }
+  try {
+    if (!(await state.conversationStore.getMember(conversationId, requesterId))) {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
+      return true;
+    }
+    const result = await state.conversationStore.reactToMessage({
+      conversationId,
+      messageId,
+      userId: requesterId,
+      emoji,
+      action: parsed.action,
+    });
+    if (!result) {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, ERROR_CODES.NOT_FOUND, 'message not found', state);
+      return true;
+    }
+    const envelope = {
+      version: SIGNALING_VERSION,
+      conversationId,
+      messageId,
+      reactions: result.message.reactions ?? {},
+      actorId: requesterId,
+      emoji,
+      action: parsed.action,
+    };
+    await fanoutConversationEvent(io, state, {
+      conversationId,
+      eventName: SERVER_EVENTS.MESSAGE_REACTION,
+      recipientIds: result.recipients,
+      payload: envelope,
+    });
+    acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, {
+      messageId,
+      conversationId,
+      reactions: envelope.reactions,
+    });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'not_member') {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
+    } else {
+      console.error(`[messages] failed to react to group message: ${describeError(error)}`);
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, ERROR_CODES.INTERNAL_ERROR, 'could not store reaction', state);
+    }
+  }
+  return true;
 }
 
 function registerMessageHandlers(
@@ -83,6 +223,8 @@ function registerMessageHandlers(
 
     const parsed = parseInboundPayload(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, payload, state);
     if (!parsed) return;
+
+    if (await handleGroupMessageDelete(socket, ack, { io, state }, requesterId, parsed)) return;
 
     const peerId = normaliseId(parsed.peerId);
     const messageId = parseClientMessageId(parsed.messageId);
@@ -224,6 +366,8 @@ function registerMessageHandlers(
     const parsed = parseInboundPayload(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, payload, state);
     if (!parsed) return;
 
+    if (await handleGroupMessageReaction(socket, ack, { io, state }, requesterId, parsed)) return;
+
     const peerId = normaliseId(parsed.peerId);
     const messageId = parseClientMessageId(parsed.messageId);
     const emoji = validateReactionEmoji(parsed.emoji);
@@ -323,7 +467,7 @@ function registerMessageHandlers(
     });
   });
 
-  socket.on(CLIENT_EVENTS.MESSAGE_TYPING, (payload = {}) => {
+  socket.on(CLIENT_EVENTS.MESSAGE_TYPING, async (payload = {}) => {
     if (!socket.data.identity?.sessionId) return;
     if ((payload as Record<string, unknown>).version !== SIGNALING_VERSION) {
       return;
@@ -339,6 +483,27 @@ function registerMessageHandlers(
     }
 
     const senderId = socket.data.identity.userId;
+    const conversationId = normaliseId(parsed.data.conversationId);
+    if (conversationId) {
+      try {
+        if (!(await state.conversationStore.getMember(conversationId, senderId))) return;
+        const members = await state.conversationStore.listMembers(conversationId);
+        await fanoutConversationEvent(io, state, {
+          conversationId,
+          eventName: SERVER_EVENTS.MESSAGE_TYPING,
+          recipientIds: members.map(({ userId }) => userId).filter((userId) => userId !== senderId),
+          payload: {
+            version: SIGNALING_VERSION,
+            conversationId,
+            senderId,
+            isTyping: Boolean(parsed.data.isTyping),
+          },
+        });
+      } catch (error) {
+        console.error(`[messages] group typing fan-out failed: ${describeError(error)}`);
+      }
+      return;
+    }
     const recipientId = normaliseId(parsed.data.recipientId);
     if (!recipientId || recipientId === senderId) return;
 

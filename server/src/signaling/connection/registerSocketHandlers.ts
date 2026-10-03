@@ -13,6 +13,7 @@ import { placeCallWithShared } from '../../domain/sharedCalls.ts';
 import { notifyCallCreated, notifyIncomingCallAcknowledged, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice, notifyCallTransition } from '../../domain/notifications.ts';
 import { handleSocketCallTransition, handleRtcRelay, handleCallConnected, handleCallStats } from '../callHandlers.ts';
 import { registerMessageHandlers } from '../messageHandlers.ts';
+import { registerConversationHandlers } from '../conversationHandlers.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from '../ack.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, TRANSPORT_EVENTS } from '../../../../shared/index.ts';
 import { verboseLog } from '../../lib/verbose.ts';
@@ -431,6 +432,7 @@ function registerSocketHandlers(
     });
 
     registerMessageHandlers(socket, { io, state });
+    registerConversationHandlers(socket, { io, state, ringingTimeoutMs });
 
     socket.on(TRANSPORT_EVENTS.DISCONNECT, (reason) => {
       const identity = socket.data.identity;

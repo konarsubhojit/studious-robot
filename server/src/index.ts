@@ -25,6 +25,7 @@ import { CALL_END_REASONS, CALL_TRANSITION_CHANNEL } from './config.ts';
 import { createStores, createRedisPgStores } from './stores/index.ts';
 import { createMemoryMessageBus, createRedisMessageBus } from './messageBus.ts';
 import { createCache } from './cache.ts';
+import { createConversationStore } from './conversationStore.ts';
 import { logNotificationHubStartupStatus } from './push.ts';
 import { describeError } from './lib/errors.ts';
 import { assertSharedStateForMultiInstance } from './lib/instances.ts';
@@ -38,6 +39,7 @@ export {
   createMemoryMessageBus,
   createRedisMessageBus,
   createCache,
+  createConversationStore,
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

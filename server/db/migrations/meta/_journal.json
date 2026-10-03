@@ -127,6 +127,20 @@
       "when": 1790960319731,
       "tag": "0017_call_quality_samples",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790995704542,
+      "tag": "0018_add_group_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790996022159,
+      "tag": "0019_add_group_calls",
+      "breakpoints": true
     }
   ]
 }

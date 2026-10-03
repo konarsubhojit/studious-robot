@@ -287,6 +287,23 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     version: versionField,
     conversationId: idField,
   }),
+  [CLIENT_EVENTS.CONVERSATION_CALL_START]: s.object({
+    version: versionField,
+    conversationId: idField,
+    mediaType: s.enum(['audio', 'video']).optional(),
+  }),
+  [CLIENT_EVENTS.CONVERSATION_CALL_ACCEPT]: s.object({
+    version: versionField,
+    callId: idField,
+  }),
+  [CLIENT_EVENTS.CONVERSATION_CALL_DECLINE]: s.object({
+    version: versionField,
+    callId: idField,
+  }),
+  [CLIENT_EVENTS.CONVERSATION_CALL_LEAVE]: s.object({
+    version: versionField,
+    callId: idField,
+  }),
 });
 
 /**
@@ -391,6 +408,30 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     version: inboundVersionField,
     conversation: conversationRecord,
     updatedBy: idField,
+  }),
+  [SERVER_EVENTS.CONVERSATION_CALL_UPDATED]: s.object({
+    version: inboundVersionField,
+    conversationId: idField,
+    callId: idField,
+    call: s.object(
+      {
+        callId: idField,
+        conversationId: idField,
+        initiatorId: idField,
+        mediaType: s.enum(['audio', 'video']),
+        status: s.enum(['ringing', 'active', 'ended']),
+        ringTimeoutAt: s.string().optional().nullable(),
+      },
+      { passthrough: true }
+    ),
+    participants: s.array(s.object({
+      callId: idField,
+      userId: idField,
+      status: s.enum(['ringing', 'accepted', 'declined', 'left']),
+      invitedAt: s.string(),
+      acceptedAt: s.string().optional().nullable(),
+      leftAt: s.string().optional().nullable(),
+    }, { passthrough: true })),
   }),
 
   [SERVER_EVENTS.SESSION_INVALID]: s.object({ sessionId: s.string().optional().nullable() }),

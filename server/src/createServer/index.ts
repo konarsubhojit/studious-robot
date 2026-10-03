@@ -6,6 +6,7 @@ import { createTelemetry } from '../telemetry.ts';
 import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
+import { createConversationStore } from '../conversationStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from '../cache.ts';
 import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_RATE_LIMIT, DEFAULT_SESSION_RATE_WINDOW_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_CALL_QUALITY_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS, DEFAULT_FANOUT_PROBE_INTERVAL_MS, DEFAULT_ACCOUNT_DELETION_GRACE_MS, DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS } from '../config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
@@ -24,6 +25,7 @@ import { describeError } from '../lib/errors.ts';
 import { parseByteSize, parseNonNegativeNumber } from '../lib/env.ts';
 import { setQueryTimingSink } from '../lib/queryTiming.ts';
 import { createFanoutProbe } from '../lib/fanoutProbe.ts';
+import { subscribeToConversationFanout } from '../domain/conversationFanout.ts';
 import {
   clearRedisDegradation,
   isRedisPermissionError,
@@ -217,6 +219,10 @@ function createServer(opts: CreateServerOptions = {}) {
   // database as the rest of the durable state; falls back to an in-process
   // store so the server runs unchanged when no `db` handle is provided.
   const messageStore = createMessageStore({ messageStore: opts.messageStore, db });
+  const conversationStore = createConversationStore({
+    conversationStore: opts.conversationStore,
+    db,
+  });
 
   // Shared read cache for hot queries (conversation lists, first-page message
   // history, call history).  Defaults to the in-process backend; `index.js`
@@ -270,6 +276,7 @@ function createServer(opts: CreateServerOptions = {}) {
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Postgres is configured). */
     messageStore,
+    conversationStore,
     /** Shared read cache for conversation lists, message pages and call history. */
     cache,
     /**
@@ -313,6 +320,7 @@ function createServer(opts: CreateServerOptions = {}) {
     .catch((error: unknown) => {
       console.error(`[calls] failed to subscribe to call transitions: ${describeError(error)}`);
     });
+  let unsubscribeFromConversationFanout: (() => Promise<void>) | null = null;
 
   verboseLog('server', 'state.initialized', {
     storeNames: Object.entries(stores)
@@ -347,6 +355,13 @@ function createServer(opts: CreateServerOptions = {}) {
     maxHttpBufferSize:
       parseEnv('SOCKET_MAX_BUFFER_BYTES', DEFAULT_SOCKET_MAX_BUFFER_BYTES),
   });
+  const conversationFanoutSubscription = subscribeToConversationFanout(io, state)
+    .then((unsubscribe) => {
+      unsubscribeFromConversationFanout = unsubscribe;
+    })
+    .catch((error: unknown) => {
+      console.error(`[conversations] failed to subscribe to fan-out: ${describeError(error)}`);
+    });
 
   // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis
   // adapter so room / per-user emits fan out to sockets on every instance.
@@ -626,6 +641,10 @@ function createServer(opts: CreateServerOptions = {}) {
       if (typeof unsubscribeFromCallTransitions === 'function') {
         await unsubscribeFromCallTransitions();
       }
+      await conversationFanoutSubscription;
+      if (typeof unsubscribeFromConversationFanout === 'function') {
+        await unsubscribeFromConversationFanout();
+      }
 
       // Close durable stores (Redis/Postgres) if they support it.
       if (typeof stores.close === 'function') {
@@ -670,6 +689,7 @@ function createServer(opts: CreateServerOptions = {}) {
      * Exposed for the same reason as `cacheInvalidationSubscriptionReady`.
      */
     callTransitionSubscriptionReady: callTransitionSubscription,
+    conversationFanoutSubscriptionReady: conversationFanoutSubscription,
     getCall: (callId: string) => state.calls.get(callId) || null,
     getCallEvents: (callId: string) => state.callEvents.get(callId) || [],
     getMetrics: () => state.telemetry.getSnapshot(),
