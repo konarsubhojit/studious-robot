@@ -27,7 +27,10 @@ const API_ROUTES = Object.freeze({
   CONVERSATIONS: '/conversations',
   MESSAGES: '/messages',
   MESSAGES_READ: '/messages/read',
+  /** Full-text message search. */
   MESSAGES_SEARCH: '/messages/search',
+  /** Cursor-paginated message change feed. */
+  MESSAGES_SYNC: '/messages/sync',
   ATTACHMENTS_PRESIGN: '/attachments/presign',
   ATTACHMENTS_DOWNLOAD: '/attachments/download',
   AVATAR: '/avatar',

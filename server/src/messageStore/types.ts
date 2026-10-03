@@ -45,12 +45,32 @@ export type ListMessagesOptions = {
 export type SearchMessagesOptions = {
   userId?: string;
   query?: unknown;
+  conversationId?: string;
+  excludedUserIds?: string[];
+  createdAtAfter?: string;
   limit?: unknown;
   before?: string;
   /** Tie-breaker used with `before` for stable pagination across timestamp ties. */
   beforeMessageId?: string;
   /** Internal API look-ahead reads may ask for one extra row to compute hasMore. */
   withLookahead?: boolean;
+};
+
+export type MessageChange = {
+  changeId: string;
+  type: 'new' | 'edited' | 'deleted' | 'reactions';
+  changedAt: string;
+  message: StoredMessage;
+};
+
+export type ListMessageChangesOptions = {
+  userId: string;
+  since: string;
+  afterChangedAt?: string;
+  afterChangeId?: string;
+  excludedUserIds?: string[];
+  createdAtAfter?: string;
+  limit?: unknown;
 };
 
 export type ListUserMessagesOptions = {
@@ -92,6 +112,7 @@ export type MessageStore = {
   listMessages: (opts?: ListMessagesOptions) => Promise<StoredMessage[]>;
   getMessage: (conversationId: string, messageId: string) => Promise<StoredMessage | null>;
   searchMessages: (opts?: SearchMessagesOptions) => Promise<StoredMessage[]>;
+  listMessageChanges?: (opts: ListMessageChangesOptions) => Promise<MessageChange[]>;
   /** Bounded export page containing every participant message, including tombstones. */
   listUserMessages?: (opts?: ListUserMessagesOptions) => Promise<StoredMessage[]>;
   /**

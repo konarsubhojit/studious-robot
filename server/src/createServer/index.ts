@@ -111,6 +111,9 @@ function createServer(opts: CreateServerOptions = {}) {
   const sessionTtlMs =
     opts.sessionTtlMs ??
     parseNonNegativeNumber('SESSION_TTL_MS', process.env.SESSION_TTL_MS, DEFAULT_SESSION_TTL_MS);
+  const messageRetentionMs =
+    opts.messageRetentionMs ??
+    parseNonNegativeNumber('MESSAGE_RETENTION_MS', process.env.MESSAGE_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS);
 
   // ── Rate limiters ────────────────────────────────────────────────────────
   const callInitRateLimiter = createRateLimiter({
@@ -149,6 +152,10 @@ function createServer(opts: CreateServerOptions = {}) {
     windowMs:
       opts.messageSearchRateWindowMs ??
       parseEnv('MESSAGE_SEARCH_RATE_WINDOW_MS', 60_000),
+  });
+  const messageSyncRateLimiter = createRateLimiter({
+    maxRequests: opts.messageSyncRateLimit ?? parseEnv('MESSAGE_SYNC_RATE_LIMIT', 30),
+    windowMs: opts.messageSyncRateWindowMs ?? parseEnv('MESSAGE_SYNC_RATE_WINDOW_MS', 60_000),
   });
   // Minted once per view/open/download attempt (an image bubble, a full-screen
   // viewer, a saved file), so it needs a much larger budget than a write, but
@@ -260,6 +267,8 @@ function createServer(opts: CreateServerOptions = {}) {
     messageSendRateLimiter,
     /** Rate limiter for message search (`GET /messages/search`). */
     messageSearchRateLimiter,
+    messageSyncRateLimiter,
+    messageRetentionMs,
     /** Rate limiter for attachment download-URL minting (`GET /attachments/download`). */
     attachmentDownloadRateLimiter,
     accountExportRateLimiter,
@@ -510,9 +519,6 @@ function createServer(opts: CreateServerOptions = {}) {
   const auditRetentionMs =
     opts.auditRetentionMs ??
     parseNonNegativeNumber('AUDIT_RETENTION_MS', process.env.AUDIT_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS);
-  const messageRetentionMs =
-    opts.messageRetentionMs ??
-    parseNonNegativeNumber('MESSAGE_RETENTION_MS', process.env.MESSAGE_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS);
   const configuredCallQualityRetentionMs =
     opts.callQualityRetentionMs ??
     parseNonNegativeNumber(

@@ -13,7 +13,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { summariseConversations } from '../src/messageStore/conversations.ts';
-import { escapeLikePattern } from '../src/messageStore/pgStore.ts';
 import {
   DEFAULT_MESSAGE_LIMIT,
   DEFAULT_FIRST_MESSAGE_LIMIT,
@@ -61,34 +60,24 @@ test('a requested page size is clamped into the supported range', () => {
   assert.ok(DEFAULT_FIRST_MESSAGE_LIMIT < DEFAULT_MESSAGE_LIMIT);
 });
 
-test('a search term is trimmed and matched literally', () => {
+test('a search term is trimmed before tokenization', () => {
   assert.equal(normaliseSearchTerm('  lunch  '), 'lunch');
   assert.equal(normaliseSearchTerm(null), '');
   assert.equal(normaliseSearchTerm(undefined), '');
 });
 
-test('a search term cannot smuggle a LIKE wildcard into the query', () => {
-  // `%` and `_` are the only metacharacters `LIKE` has, plus the escape
-  // character itself.  Unescaped, a search for `%` would match every message
-  // the caller can see rather than the literal percent sign they typed.
-  assert.equal(escapeLikePattern('100%'), '100\\%');
-  assert.equal(escapeLikePattern('a_b'), 'a\\_b');
-  assert.equal(escapeLikePattern('back\\slash'), 'back\\\\slash');
-  // Regex metacharacters are *not* escaped: LIKE does not interpret them, so
-  // they already match literally.
-  assert.equal(escapeLikePattern('.*+?[]()'), '.*+?[]()');
+test('full-text search treats user input as plain tokens, not a query expression', () => {
+  assert.equal(bodyMatches({ body: '100% savings' }, '100%'), true);
+  assert.equal(bodyMatches({ body: 'lunch meeting' }, 'lunch OR dinner'), false);
+  assert.equal(bodyMatches({ body: 'lunch meeting' }, '.*'), false);
 });
 
-test('the Postgres pattern and the in-memory matcher agree on what matches', () => {
-  // The two backends must not disagree about search results, so the pattern
-  // built for Postgres is the same literal, case-insensitive substring test
-  // `bodyMatches` applies in memory.
+test('the in-memory matcher follows simple full-text token semantics', () => {
   const term = normaliseSearchTerm('  Lunch  ');
   assert.equal(bodyMatches({ body: 'about lunch today' }, term), true);
-  assert.equal(bodyMatches({ body: 'LUNCHTIME' }, term), true);
+  assert.equal(bodyMatches({ body: 'LUNCHTIME' }, term), false);
   assert.equal(bodyMatches({ body: 'dinner' }, term), false);
   assert.equal(bodyMatches({}, term), false);
-  assert.equal(escapeLikePattern(term.toLowerCase()), 'lunch');
 });
 
 // ─── Records ──────────────────────────────────────────────────────────────────
