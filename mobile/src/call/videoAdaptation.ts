@@ -19,8 +19,8 @@ const DEGRADE_SAMPLES = 2;
 const RECOVERY_SAMPLES = 3;
 
 function targetLevel(bars: number, dataSaverEnabled: boolean): VideoAdaptationLevel {
-  if (bars <= 0) return 'minimal';
-  if (bars <= 1 || dataSaverEnabled) return 'constrained';
+  if (bars <= 1) return 'minimal';
+  if (bars <= 2 || dataSaverEnabled) return 'constrained';
   return 'standard';
 }
 

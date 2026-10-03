@@ -120,7 +120,7 @@ jest.mock('../../src/callUx', () => ({
   // Only the quality grading is stubbed; the candidate-pair summary is pure
   // and is exactly what these ICE tests are asserting on.
   ...jest.requireActual('../../src/callUx'),
-  getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Strong' })),
+  getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Good' })),
 }));
 
 jest.mock('../../src/screenShare', () => ({
@@ -4074,6 +4074,48 @@ describe('useCallFlow chat', () => {
       peerConnection.onconnectionstatechange?.();
     });
     expect(emits.filter((entry: any) => entry.event === 'call.connected')).toHaveLength(1);
+  });
+
+  test('emits bounded call.stats metrics from the active peer connection', async () => {
+    const { peerConnection, emits } = await acceptCallWithPeerConnection('call-stats-1');
+    await connectPeerConnection(peerConnection, 'call-stats-1');
+    peerConnection.getStats.mockResolvedValue(new Map([
+      ['pair-1', {
+        id: 'pair-1',
+        type: 'candidate-pair',
+        state: 'succeeded',
+        selected: true,
+        currentRoundTripTime: 0.08,
+      }],
+      ['inbound-video', {
+        id: 'inbound-video',
+        type: 'inbound-rtp',
+        kind: 'video',
+        packetsLost: 1,
+        packetsReceived: 99,
+        bytesReceived: 100_000,
+        jitter: 0.02,
+        codecId: 'codec-1',
+      }],
+      ['codec-1', { id: 'codec-1', type: 'codec', mimeType: 'video/VP8' }],
+    ]));
+
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(emits.find((entry: any) => entry.event === 'call.stats')?.payload).toEqual(
+      expect.objectContaining({
+        version: 2,
+        callId: 'call-stats-1',
+        rttMs: 80,
+        jitterMs: 20,
+        packetLossPercent: 1,
+        codec: 'VP8',
+      }),
+    );
   });
 
   test('heartbeats over call.media-state while the call is connected', async () => {

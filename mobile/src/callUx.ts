@@ -227,15 +227,7 @@ export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }: { 
     (isFiniteNumber(rttMs) && rttMs > 600) ||
     (isFiniteNumber(bitrateKbps) && bitrateKbps < 120)
   ) {
-    return { bars: 0, label: 'Poor' };
-  }
-
-  if (
-    (isFiniteNumber(packetLossRatio) && packetLossRatio > 0.07) ||
-    (isFiniteNumber(rttMs) && rttMs > 350) ||
-    (isFiniteNumber(bitrateKbps) && bitrateKbps < 250)
-  ) {
-    return { bars: 1, label: 'Weak' };
+    return { bars: 1, label: 'Poor' };
   }
 
   if (
@@ -246,7 +238,7 @@ export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }: { 
     return { bars: 2, label: 'Fair' };
   }
 
-  return { bars: 3, label: 'Strong' };
+  return { bars: 3, label: 'Good' };
 }
 
 /**
@@ -405,6 +397,10 @@ export function summarizeCandidatePair(
 export type CallStatsSample = {
   /** Round-trip time (ms) of the succeeded candidate pair, when reported. */
   rttMs?: number;
+  /** Inbound video jitter (ms), when reported. */
+  jitterMs?: number;
+  /** Negotiated inbound video codec, when reported. */
+  codec?: string;
   totalPacketsLost: number;
   totalPacketsReceived: number;
   totalBytesReceived: number;
@@ -421,6 +417,8 @@ export type CallStatsSample = {
  * @param report the result of `RTCPeerConnection.getStats()`
  */
 export function collectCallStats(report: { forEach: (fn: (stat: any) => void) => void; }): CallStatsSample {
+  const codecStats = new Map<string, any>();
+  let inboundCodecId: string | undefined;
   const sample: CallStatsSample = {
     totalPacketsLost: 0,
     totalPacketsReceived: 0,
@@ -431,6 +429,10 @@ export function collectCallStats(report: { forEach: (fn: (stat: any) => void) =>
   report.forEach((stat: any) => {
     if (!stat || typeof stat !== 'object') return;
 
+    if (stat.type === 'codec' && typeof stat.id === 'string') {
+      codecStats.set(stat.id, stat);
+    }
+
     if (
       stat.type === 'candidate-pair' &&
       stat.state === 'succeeded' &&
@@ -438,7 +440,10 @@ export function collectCallStats(report: { forEach: (fn: (stat: any) => void) =>
       (!sample.candidatePair || stat.nominated || stat.selected)
     ) {
       sample.candidatePair = stat;
-      if (typeof stat.currentRoundTripTime === 'number') {
+      if (
+        typeof stat.currentRoundTripTime === 'number' &&
+        Number.isFinite(stat.currentRoundTripTime)
+      ) {
         sample.rttMs = stat.currentRoundTripTime * 1000;
       }
     }
@@ -451,10 +456,52 @@ export function collectCallStats(report: { forEach: (fn: (stat: any) => void) =>
       sample.totalPacketsLost += Number(stat.packetsLost || 0);
       sample.totalPacketsReceived += Number(stat.packetsReceived || 0);
       sample.totalBytesReceived += Number(stat.bytesReceived || 0);
+      if (typeof stat.jitter === 'number' && Number.isFinite(stat.jitter) && stat.jitter >= 0) {
+        sample.jitterMs = Math.max(sample.jitterMs ?? 0, stat.jitter * 1000);
+      }
+      if (typeof stat.codecId === 'string') inboundCodecId = stat.codecId;
     }
   });
 
+  const codecStat = inboundCodecId ? codecStats.get(inboundCodecId) : undefined;
+  const codecName =
+    typeof codecStat?.mimeType === 'string'
+      ? codecStat.mimeType.split('/').pop()
+      : typeof codecStat?.name === 'string'
+        ? codecStat.name
+        : undefined;
+  if (codecName) sample.codec = codecName.trim().slice(0, 64);
+
   return sample;
+}
+
+export type CallQualityMetrics = {
+  rttMs: number;
+  jitterMs: number;
+  packetLossPercent: number;
+  bitrateBps: number;
+  codec: string;
+};
+
+/** Normalize one stats poll for the bounded shared `call.stats` contract. */
+export function toCallQualityMetrics(
+  sample: CallStatsSample,
+  packetLossRatio: number | undefined,
+  bitrateKbps: number | undefined,
+): CallQualityMetrics {
+  const boundedInteger = (value: number | undefined, max: number) =>
+    Math.round(typeof value === 'number' && Number.isFinite(value) ? clamp(value, 0, max) : 0);
+  const safePacketLossPercent =
+    typeof packetLossRatio === 'number' && Number.isFinite(packetLossRatio)
+      ? packetLossRatio * 100
+      : 0;
+  return {
+    rttMs: boundedInteger(sample.rttMs, 60_000),
+    jitterMs: boundedInteger(sample.jitterMs, 10_000),
+    packetLossPercent: clamp(safePacketLossPercent, 0, 100),
+    bitrateBps: boundedInteger(bitrateKbps === undefined ? 0 : bitrateKbps * 1000, 1_000_000_000),
+    codec: sample.codec?.trim().slice(0, 64) || 'unknown',
+  };
 }
 
 /** A byte/timestamp pair from the previous stats poll. */
@@ -550,16 +597,12 @@ export function isRelayPolicyViolated({
 /**
  * Whether to say out loud that the connection is poor.
  *
- * Only when loss was actually measured: a sample with no packets grades as
- * zero bars too, and blaming that on packet loss is a diagnosis the data does
- * not support.
+ * A no-link sample is distinct from a measured poor connection.
  */
 export function shouldWarnPoorConnection({
   bars,
-  packetLossRatio,
 }: {
   bars: number;
-  packetLossRatio?: number;
 }): boolean {
-  return bars === 0 && Number.isFinite(packetLossRatio);
+  return bars === 1;
 }

@@ -7,11 +7,11 @@ import type { VideoAdaptationState } from '../../src/call/videoAdaptation';
 describe('nextVideoAdaptation', () => {
   test('requires sustained degradation and then respects its cooldown', () => {
     const first = nextVideoAdaptation(INITIAL_VIDEO_ADAPTATION, {
-      bars: 0, dataSaverEnabled: false, isScreenSharing: false, nowMs: 0,
+      bars: 1, dataSaverEnabled: false, isScreenSharing: false, nowMs: 0,
     });
     expect(first.level).toBe('standard');
     const degraded = nextVideoAdaptation(first, {
-      bars: 0, dataSaverEnabled: false, isScreenSharing: false, nowMs: 7000,
+      bars: 1, dataSaverEnabled: false, isScreenSharing: false, nowMs: 7000,
     });
     expect(degraded.level).toBe('minimal');
     expect(nextVideoAdaptation(degraded, {
