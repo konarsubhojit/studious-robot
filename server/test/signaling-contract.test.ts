@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
+import { SIGNALING_VERSION } from '../../shared/index.ts';
 import { createServer } from '../src/index.ts';
 import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
@@ -78,17 +79,17 @@ test('call.stats accepts active-call participants and rejects malformed or unrel
 
   try {
     const initiated = await emitWithAck(caller, 'call.initiate', {
-      version: 1,
+      version: SIGNALING_VERSION,
       calleeId: 'stats-bob',
     });
     const accepted = await emitWithAck(callee, 'call.accept', {
-      version: 1,
+      version: SIGNALING_VERSION,
       callId: initiated.call.callId,
     });
     assert.equal(accepted.ok, true);
 
     const sample = {
-      version: 1,
+      version: SIGNALING_VERSION,
       callId: initiated.call.callId,
       rttMs: 85,
       jitterMs: 12,
