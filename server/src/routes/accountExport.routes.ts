@@ -148,6 +148,23 @@ async function readMessagePage(
   });
 }
 
+async function readGroupMessagePage(
+  state: ServerState,
+  conversationId: string,
+  userId: string,
+  pageSize: number,
+  before?: string,
+  beforeMessageId?: string
+): Promise<StoredMessage[]> {
+  return state.conversationStore.listMessages({
+    conversationId,
+    userId,
+    limit: pageSize + 1,
+    before,
+    beforeMessageId,
+  });
+}
+
 async function streamMessages(
   res: Response,
   state: ServerState,
@@ -176,6 +193,52 @@ async function streamMessages(
     if (cursor === previousCursor) throw new Error('message export cursor did not advance');
     previousCursor = cursor;
     rows = await readMessagePage(state, userId, pageSize, last.createdAt, last.messageId);
+  }
+
+  return count;
+}
+
+async function streamGroupMessages(
+  res: Response,
+  state: ServerState,
+  userId: string,
+  groups: Awaited<ReturnType<ServerState['conversationStore']['listForUser']>>,
+  pageSize: number,
+  initialPage: StoredMessage[]
+): Promise<number> {
+  let firstValue = true;
+  let count = 0;
+  let firstPage = initialPage;
+
+  for (const group of groups) {
+    let rows = group === groups[0]
+      ? firstPage
+      : await readGroupMessagePage(state, group.conversationId, userId, pageSize);
+    let previousCursor = '';
+    while (rows.length > 0) {
+      const written = await writeArrayValues(
+        res,
+        rows.map(exportMessage),
+        firstValue
+      );
+      firstValue = written.firstValue;
+      count += written.count;
+      if (rows.length < pageSize + 1) break;
+      const last = rows.at(-1);
+      if (!last) break;
+      const cursor = `${last.createdAt}\u0000${last.messageId}`;
+      if (cursor === previousCursor) throw new Error('group message export cursor did not advance');
+      previousCursor = cursor;
+      rows = await readGroupMessagePage(
+        state,
+        group.conversationId,
+        userId,
+        pageSize,
+        last.createdAt,
+        last.messageId
+      );
+    }
+    firstPage = [];
   }
 
   return count;
@@ -290,6 +353,15 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
         session.userId,
         messagePageSize
       );
+      const groupConversations = await state.conversationStore.listForUser(session.userId);
+      const firstGroupMessages = groupConversations.length > 0
+        ? await readGroupMessagePage(
+            state,
+            groupConversations[0].conversationId,
+            session.userId,
+            messagePageSize
+          )
+        : [];
       const firstCalls = await readCallHistory(state, {
         userId: session.userId,
         limit: callPageSize,
@@ -312,6 +384,15 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
         messagePageSize,
         firstMessages
       );
+      await writeChunk(res, `],"groupConversations":${json(groupConversations)},"groupMessages":[`);
+      const groupMessageCount = await streamGroupMessages(
+        res,
+        state,
+        session.userId,
+        groupConversations,
+        messagePageSize,
+        firstGroupMessages
+      );
       await writeChunk(res, '],"calls":[');
       const callCount = await streamCalls(
         res,
@@ -332,7 +413,7 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
         actor: session.userId,
         target: session.userId,
         outcome: 'success',
-        details: { messageCount, callCount },
+        details: { messageCount, groupMessageCount, callCount },
       });
       const auditLog = state.auditLog.getForUser(session.userId);
       const pagination = {

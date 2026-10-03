@@ -1,0 +1,1 @@
+ALTER TABLE "group_calls" ADD COLUMN "state_version" integer DEFAULT 1 NOT NULL;

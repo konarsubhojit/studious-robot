@@ -72,6 +72,7 @@ type EraseOptions = {
 /** What one erasure touched, for the audit entry and the sweep log. */
 type EraseResult = {
   messagesTombstoned: number;
+  groupMessagesTombstoned: number;
   attachmentsDeleted: number;
   avatarsDeleted: number;
   callsDeleted: number;
@@ -455,7 +456,28 @@ async function eraseAccount(
   const devicesRemoved = await eraseDevices(state, userId);
 
   const { tombstoned, attachmentUrls, conversationIds } = await eraseSentMessages(state, userId);
-  const attachmentsDeleted = await eraseAttachments(attachmentUrls, { r2Config, fetchImpl });
+  const groupDataErasure = await state.conversationStore.eraseUserData(userId, pseudonym);
+  const groupConversationIds = new Set(groupDataErasure.conversationIds);
+  const groupAttachmentUrls: string[] = [];
+  let groupMessagesTombstoned = 0;
+  while (true) {
+    const page = await state.conversationStore.eraseUserMessages(
+      userId,
+      pseudonym,
+      ACCOUNT_DELETION_MESSAGE_BATCH
+    );
+    groupMessagesTombstoned += page.messagesTombstoned;
+    groupAttachmentUrls.push(...page.attachmentUrls);
+    for (const conversationId of page.conversationIds) groupConversationIds.add(conversationId);
+    if (page.messagesProcessed < ACCOUNT_DELETION_MESSAGE_BATCH) break;
+  }
+  for (const conversationId of groupConversationIds) {
+    conversationIds.add(conversationId);
+  }
+  const attachmentsDeleted = await eraseAttachments(
+    [...attachmentUrls, ...groupAttachmentUrls],
+    { r2Config, fetchImpl }
+  );
   const avatarsDeleted = await eraseAvatar(avatarKey, { r2Config, fetchImpl });
   if (state.db) {
     // A projection row names both participants even after message bodies are
@@ -485,6 +507,7 @@ async function eraseAccount(
 
   const result: EraseResult = {
     messagesTombstoned: tombstoned,
+    groupMessagesTombstoned,
     attachmentsDeleted,
     avatarsDeleted,
     callsDeleted,

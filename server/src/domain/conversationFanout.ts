@@ -11,6 +11,8 @@ const ALLOWED_FANOUT_EVENTS = new Set<string>([
   SERVER_EVENTS.MESSAGE_REACTION,
   SERVER_EVENTS.MESSAGE_TYPING,
 ]);
+const CALL_VERSION_CACHE_LIMIT = 4096;
+const callVersionsByServer = new WeakMap<object, Map<string, number>>();
 
 type ConversationFanout = {
   conversationId: string;
@@ -19,7 +21,32 @@ type ConversationFanout = {
   recipientIds: string[];
 };
 
+function isNewCallVersion(io: object, event: ConversationFanout): boolean {
+  if (event.eventName !== SERVER_EVENTS.CONVERSATION_CALL_UPDATED) return true;
+  const payload = event.payload as { call?: { callId?: unknown; stateVersion?: unknown; }; };
+  const callId = payload.call?.callId;
+  const stateVersion = payload.call?.stateVersion;
+  if (typeof callId !== 'string' || typeof stateVersion !== 'number' ||
+    !Number.isSafeInteger(stateVersion)) return true;
+
+  let versions = callVersionsByServer.get(io);
+  if (!versions) {
+    versions = new Map();
+    callVersionsByServer.set(io, versions);
+  }
+  const previous = versions.get(callId);
+  if (previous !== undefined && stateVersion <= previous) return false;
+  versions.delete(callId);
+  versions.set(callId, stateVersion);
+  if (versions.size > CALL_VERSION_CACHE_LIMIT) {
+    const oldest = versions.keys().next().value;
+    if (oldest !== undefined) versions.delete(oldest);
+  }
+  return true;
+}
+
 function emitLocally(io: any, event: ConversationFanout): void {
+  if (!isNewCallVersion(io, event)) return;
   const localIo = io.local ?? io;
   for (const userId of new Set(event.recipientIds)) {
     if (typeof userId !== 'string' || userId.length === 0) continue;

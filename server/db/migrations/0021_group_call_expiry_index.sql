@@ -1,0 +1,1 @@
+CREATE INDEX "idx_group_calls_ringing_timeout" ON "group_calls" USING btree ("ring_timeout_at") WHERE "group_calls"."status" = 'ringing';

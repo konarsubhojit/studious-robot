@@ -158,7 +158,6 @@ function registerConversationHandlers(
         actor: userId,
         target: conversationId,
         outcome: 'success',
-        details: { memberId: userId },
       });
       if (result.previousOwnerId) {
         state.auditLog.record({
@@ -179,6 +178,20 @@ function registerConversationHandlers(
           updatedBy: userId,
         },
       });
+      for (const callChange of result.callChanges ?? []) {
+        await fanoutConversationEvent(io, state, {
+          conversationId,
+          eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
+          recipientIds: callChange.participants.map(({ userId: participantId }) => participantId),
+          payload: {
+            version: SIGNALING_VERSION,
+            conversationId,
+            callId: callChange.call.callId,
+            call: callChange.call,
+            participants: callChange.participants,
+          },
+        });
+      }
       acknowledgeSuccess(socket, ack, eventName, { conversation: result.conversation });
     } catch (error) {
       if (rejectStoreError(socket, ack, eventName, error, state)) return;
@@ -243,28 +256,6 @@ function registerConversationHandlers(
         recipientIds: change.participants.map(({ userId }) => userId),
         payload,
       });
-      const timeout = setTimeout(() => {
-        void state.conversationStore.expireCall(change.call.callId)
-          .then(async (expired) => {
-            if (!expired) return;
-            await fanoutConversationEvent(io, state, {
-              conversationId,
-              eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
-              recipientIds: expired.participants.map(({ userId }) => userId),
-              payload: {
-                version: SIGNALING_VERSION,
-                conversationId,
-                callId: expired.call.callId,
-                call: expired.call,
-                participants: expired.participants,
-              },
-            });
-          })
-          .catch((error: unknown) => {
-            console.error(`[conversations] group call timeout failed: ${error instanceof Error ? error.message : String(error)}`);
-          });
-      }, ringingTimeoutMs);
-      timeout.unref?.();
       acknowledgeSuccess(socket, ack, eventName, { call: change.call, participants: change.participants });
     } catch (error) {
       if (rejectStoreError(socket, ack, eventName, error, state)) return;
@@ -294,6 +285,22 @@ function registerConversationHandlers(
         const change = await state.conversationStore.transitionCall({ callId, userId: actorId, action });
         if (!change) {
           acknowledgeError(socket, ack, eventName, ERROR_CODES.NOT_FOUND, 'group call not found', state);
+          return;
+        }
+        if (change.expired) {
+          await fanoutConversationEvent(io, state, {
+            conversationId: change.call.conversationId,
+            eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
+            recipientIds: change.participants.map(({ userId }) => userId),
+            payload: {
+              version: SIGNALING_VERSION,
+              conversationId: change.call.conversationId,
+              callId,
+              call: change.call,
+              participants: change.participants,
+            },
+          });
+          acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'group call expired', state);
           return;
         }
         state.auditLog.record({

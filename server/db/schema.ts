@@ -387,6 +387,7 @@ const groupCalls = pgTable(
     initiatorId: text('initiator_id').notNull(),
     mediaType: text('media_type').notNull().default('video'),
     status: text('status').notNull(),
+    stateVersion: integer('state_version').notNull().default(1),
     ringTimeoutAt: timestamp('ring_timeout_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -395,6 +396,9 @@ const groupCalls = pgTable(
   (t) => [
     index('idx_group_calls_conversation').on(t.conversationId, desc(t.createdAt)),
     index('idx_group_calls_retention').on(t.status, t.updatedAt),
+    index('idx_group_calls_ringing_timeout')
+      .on(t.ringTimeoutAt)
+      .where(sql`${t.status} = 'ringing'`),
   ],
 );
 

@@ -141,6 +141,20 @@
       "when": 1790996022159,
       "tag": "0019_add_group_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790997186573,
+      "tag": "0020_add_group_call_state_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790997695943,
+      "tag": "0021_group_call_expiry_index",
+      "breakpoints": true
     }
   ]
 }

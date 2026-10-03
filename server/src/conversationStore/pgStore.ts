@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import {
   groupCallParticipants as callParticipantsTable,
   groupCalls as callsTable,
@@ -41,6 +41,7 @@ function toCall(row: CallRow): GroupCall {
     initiatorId: row.initiatorId,
     mediaType: row.mediaType as GroupCall['mediaType'],
     status: row.status as GroupCall['status'],
+    stateVersion: row.stateVersion,
     ringTimeoutAt: row.ringTimeoutAt ? new Date(row.ringTimeoutAt).toISOString() : null,
     createdAt: new Date(row.createdAt).toISOString(),
     updatedAt: new Date(row.updatedAt).toISOString(),
@@ -147,6 +148,41 @@ function createPgConversationStore(db: Database): ConversationStore {
     return { call: toCall(call), participants: rows.map(toCallParticipant) };
   }
 
+  async function expireLockedCall(
+    call: CallRow,
+    tx: Tx,
+    now: Date
+  ): Promise<GroupCallChange> {
+    await tx
+      .update(callParticipantsTable)
+      .set({ status: 'declined', leftAt: now, updatedAt: now })
+      .where(and(eq(callParticipantsTable.callId, call.callId), eq(callParticipantsTable.status, 'ringing')));
+    if (call.status === 'ringing') {
+      await tx
+        .update(callParticipantsTable)
+        .set({ status: 'left', leftAt: now, updatedAt: now })
+        .where(and(eq(callParticipantsTable.callId, call.callId), eq(callParticipantsTable.status, 'accepted')));
+    }
+    const participants = await tx
+      .select({ status: callParticipantsTable.status })
+      .from(callParticipantsTable)
+      .where(eq(callParticipantsTable.callId, call.callId));
+    const remainsActive = call.status === 'active' &&
+      participants.some(({ status }) => status === 'accepted');
+    const status: GroupCall['status'] = remainsActive ? 'active' : 'ended';
+    const [updatedCall] = await tx
+      .update(callsTable)
+      .set({
+        status,
+        stateVersion: call.stateVersion + 1,
+        updatedAt: now,
+        endedAt: status === 'ended' ? now : call.endedAt,
+      })
+      .where(eq(callsTable.callId, call.callId))
+      .returning();
+    return { ...(await callChange(updatedCall, tx)), expired: true };
+  }
+
   return {
     async create({ name, creatorId, inviteeIds }) {
       const userIds = [creatorId, ...inviteeIds];
@@ -236,6 +272,44 @@ function createPgConversationStore(db: Database): ConversationStore {
       return Promise.all(rows.map(({ conversation }) => snapshotFor(conversation)));
     },
 
+    async listMessages({ conversationId, userId, limit, before, beforeMessageId }) {
+      return db.transaction(async (tx) => {
+        const [conversation] = await tx
+          .select({ conversationId: conversationsTable.conversationId })
+          .from(conversationsTable)
+          .where(and(
+            eq(conversationsTable.conversationId, conversationId),
+            isNull(conversationsTable.deletedAt)
+          ))
+          .for('update')
+          .limit(1);
+        if (!conversation) {
+          throw new ConversationStoreError('not_member', 'not an active member');
+        }
+        await requireActiveMember(conversationId, userId, tx);
+        const cursor = before
+          ? beforeMessageId
+            ? or(
+                lt(messagesTable.createdAt, before),
+                and(
+                  eq(messagesTable.createdAt, before),
+                  lt(messagesTable.messageId, beforeMessageId)
+                )
+              )
+            : lt(messagesTable.createdAt, before)
+          : undefined;
+        const rows = await tx
+          .select()
+          .from(messagesTable)
+          .where(cursor
+            ? and(eq(messagesTable.conversationId, conversationId), cursor)
+            : eq(messagesTable.conversationId, conversationId))
+          .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
+          .limit(Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
+        return rows.map(toMessage);
+      });
+    },
+
     async updateName({ conversationId, actorId, name }) {
       return db.transaction(async (tx) => {
         const [conversation] = await tx
@@ -315,11 +389,59 @@ function createPgConversationStore(db: Database): ConversationStore {
             changed[0].deletedAt = now;
           }
         }
+        const callRows = await tx
+          .select({ call: callsTable, participant: callParticipantsTable })
+          .from(callParticipantsTable)
+          .innerJoin(callsTable, eq(callsTable.callId, callParticipantsTable.callId))
+          .where(and(
+            eq(callsTable.conversationId, conversationId),
+            eq(callParticipantsTable.userId, userId),
+            or(
+              eq(callParticipantsTable.status, 'ringing'),
+              eq(callParticipantsTable.status, 'accepted')
+            )
+          ))
+          .orderBy(asc(callsTable.callId));
+        const callChanges: GroupCallChange[] = [];
+        for (const { call } of callRows) {
+          const [updatedParticipant] = await tx
+            .update(callParticipantsTable)
+            .set({ status: 'left', leftAt: now, updatedAt: now })
+            .where(and(
+              eq(callParticipantsTable.callId, call.callId),
+              eq(callParticipantsTable.userId, userId),
+              or(
+                eq(callParticipantsTable.status, 'ringing'),
+                eq(callParticipantsTable.status, 'accepted')
+              )
+            ))
+            .returning();
+          if (!updatedParticipant) continue;
+          const participantRows = await tx
+            .select({ status: callParticipantsTable.status })
+            .from(callParticipantsTable)
+            .where(eq(callParticipantsTable.callId, call.callId));
+          const hasActiveParticipant = participantRows.some(({ status }) =>
+            status === 'ringing' || status === 'accepted'
+          );
+          const [updatedCall] = await tx
+            .update(callsTable)
+            .set({
+              status: hasActiveParticipant ? call.status : 'ended',
+              stateVersion: call.stateVersion + 1,
+              updatedAt: now,
+              endedAt: hasActiveParticipant ? call.endedAt : now,
+            })
+            .where(eq(callsTable.callId, call.callId))
+            .returning();
+          callChanges.push(await callChange(updatedCall, tx));
+        }
         const members = await membersFor(conversationId, tx);
         const result = {
           conversation: toSnapshot(changed[0], members),
           members,
           changedMember: toMember(leftMemberRow),
+          callChanges,
           ...(previousOwnerId ? { previousOwnerId } : {}),
         };
         return result;
@@ -462,6 +584,7 @@ function createPgConversationStore(db: Database): ConversationStore {
             initiatorId,
             mediaType,
             status: 'ringing',
+            stateVersion: 1,
             ringTimeoutAt: new Date(now.getTime() + ringTimeoutMs),
             createdAt: now,
             updatedAt: now,
@@ -492,24 +615,30 @@ function createPgConversationStore(db: Database): ConversationStore {
       action: 'accept' | 'decline' | 'leave';
     }) {
       return db.transaction(async (tx) => {
-        const [call] = await tx
-          .select()
+      const [callRef] = await tx
+        .select({ conversationId: callsTable.conversationId })
           .from(callsTable)
           .where(eq(callsTable.callId, callId))
-          .for('update')
-          .limit(1);
-        if (!call || call.status === 'ended') return null;
-        const [conversation] = await tx
-          .select({ conversationId: conversationsTable.conversationId })
-          .from(conversationsTable)
-          .where(and(
-            eq(conversationsTable.conversationId, call.conversationId),
-            isNull(conversationsTable.deletedAt)
-          ))
-          .for('update')
-          .limit(1);
-        if (!conversation) return null;
-        await requireActiveMember(call.conversationId, userId, tx);
+        .limit(1);
+      if (!callRef) return null;
+      const [conversation] = await tx
+        .select({ conversationId: conversationsTable.conversationId })
+        .from(conversationsTable)
+        .where(and(
+          eq(conversationsTable.conversationId, callRef.conversationId),
+          isNull(conversationsTable.deletedAt)
+        ))
+        .for('update')
+        .limit(1);
+      if (!conversation) return null;
+      const [call] = await tx
+        .select()
+        .from(callsTable)
+        .where(eq(callsTable.callId, callId))
+        .for('update')
+        .limit(1);
+      if (!call || call.status === 'ended') return null;
+      await requireActiveMember(call.conversationId, userId, tx);
         const [participant] = await tx
           .select()
           .from(callParticipantsTable)
@@ -518,11 +647,18 @@ function createPgConversationStore(db: Database): ConversationStore {
           .limit(1);
         if (!participant) return null;
 
+        const now = new Date();
+        if (
+          participant.status === 'ringing' &&
+          call.ringTimeoutAt &&
+          call.ringTimeoutAt.getTime() <= now.getTime()
+        ) {
+          return expireLockedCall(call, tx, now);
+        }
         const nextStatus =
           PARTICIPANT_TRANSITIONS[action][participant.status as GroupCallParticipant['status']] ?? null;
         if (!nextStatus) return callChange(call, tx);
 
-        const now = new Date();
         await tx
           .update(callParticipantsTable)
           .set({
@@ -546,6 +682,7 @@ function createPgConversationStore(db: Database): ConversationStore {
           .update(callsTable)
           .set({
             status,
+            stateVersion: call.stateVersion + 1,
             updatedAt: now,
             endedAt: status === 'ended' ? now : call.endedAt,
           })
@@ -555,30 +692,242 @@ function createPgConversationStore(db: Database): ConversationStore {
       });
     },
 
-    async expireCall(callId) {
+    async expireCall(callId, nowMs = Date.now()) {
       return db.transaction(async (tx) => {
+        const [callRef] = await tx
+          .select({ conversationId: callsTable.conversationId })
+          .from(callsTable)
+          .where(eq(callsTable.callId, callId))
+          .limit(1);
+        if (!callRef) return null;
+        await tx
+          .select({ conversationId: conversationsTable.conversationId })
+          .from(conversationsTable)
+          .where(eq(conversationsTable.conversationId, callRef.conversationId))
+          .for('update')
+          .limit(1);
         const [call] = await tx
           .select()
           .from(callsTable)
           .where(eq(callsTable.callId, callId))
           .for('update')
           .limit(1);
-        if (!call || call.status !== 'ringing') return null;
+        const now = new Date(nowMs);
+        if (
+          !call ||
+          (call.status !== 'ringing' && call.status !== 'active') ||
+          !call.ringTimeoutAt ||
+          call.ringTimeoutAt.getTime() > now.getTime()
+        ) return null;
+        const ringing = await tx
+          .select({ callId: callParticipantsTable.callId })
+          .from(callParticipantsTable)
+          .where(and(
+            eq(callParticipantsTable.callId, callId),
+            eq(callParticipantsTable.status, 'ringing')
+          ))
+          .limit(1);
+        if (ringing.length === 0) return null;
+        return expireLockedCall(call, tx, now);
+      });
+    },
+
+    async listExpiredCallIds(now = Date.now()) {
+      const rows = await db
+        .select({ callId: callsTable.callId })
+        .from(callsTable)
+        .where(and(
+          inArray(callsTable.status, ['ringing', 'active']),
+          lte(callsTable.ringTimeoutAt, new Date(now)),
+          sql`exists (
+            select 1 from ${callParticipantsTable}
+            where ${callParticipantsTable.callId} = ${callsTable.callId}
+              and ${callParticipantsTable.status} = 'ringing'
+          )`
+        ))
+        .limit(100);
+      return rows.map(({ callId }) => callId);
+    },
+
+    async eraseUserData(userId, pseudonym) {
+      return db.transaction(async (tx) => {
+        const memberships = await tx
+          .select()
+          .from(membersTable)
+          .where(eq(membersTable.userId, userId));
+        const callRows = await tx
+          .select({ call: callsTable })
+          .from(callsTable)
+          .leftJoin(callParticipantsTable, eq(callParticipantsTable.callId, callsTable.callId))
+          .where(or(
+            eq(callsTable.initiatorId, userId),
+            eq(callParticipantsTable.userId, userId)
+          ));
+        const conversationIds = new Set([
+          ...memberships.map(({ conversationId }) => conversationId),
+          ...callRows.map(({ call }) => call.conversationId),
+        ]);
+        for (const conversationId of [...conversationIds].sort()) {
+          await tx
+            .select({ conversationId: conversationsTable.conversationId })
+            .from(conversationsTable)
+            .where(eq(conversationsTable.conversationId, conversationId))
+            .for('update')
+            .limit(1);
+        }
+
         const now = new Date();
+        const ownerMemberships = memberships.filter(
+          (member) => member.role === 'owner' && member.leftAt === null
+        );
+        for (const member of ownerMemberships) {
+          const [replacement] = await tx
+            .select()
+            .from(membersTable)
+            .where(and(
+              eq(membersTable.conversationId, member.conversationId),
+              isNull(membersTable.leftAt),
+              ne(membersTable.userId, userId)
+            ))
+            .orderBy(asc(membersTable.joinedAt), asc(membersTable.userId))
+            .limit(1);
+          if (replacement) {
+            await tx
+              .update(membersTable)
+              .set({ role: 'owner', updatedAt: now })
+              .where(and(
+                eq(membersTable.conversationId, member.conversationId),
+                eq(membersTable.userId, replacement.userId)
+              ));
+          } else {
+            await tx
+              .update(conversationsTable)
+              .set({ deletedAt: now })
+              .where(eq(conversationsTable.conversationId, member.conversationId));
+          }
+        }
+        for (const conversationId of memberships.map(({ conversationId }) => conversationId)) {
+          await tx
+            .update(conversationsTable)
+            .set({
+              updatedAt: now,
+              membershipVersion: sql`${conversationsTable.membershipVersion} + 1`,
+            })
+            .where(eq(conversationsTable.conversationId, conversationId));
+        }
+        await tx
+          .update(membersTable)
+          .set({
+            userId: pseudonym,
+            role: 'member',
+            leftAt: sql`coalesce(${membersTable.leftAt}, ${now})`,
+            updatedAt: now,
+          })
+          .where(eq(membersTable.userId, userId));
+
+        const affectedCallIds = [...new Set(callRows.map(({ call }) => call.callId))];
         await tx
           .update(callParticipantsTable)
-          .set({ status: 'declined', leftAt: now, updatedAt: now })
-          .where(and(eq(callParticipantsTable.callId, callId), eq(callParticipantsTable.status, 'ringing')));
+          .set({
+            status: 'left',
+            leftAt: now,
+            updatedAt: now,
+            userId: pseudonym,
+          })
+          .where(and(
+            eq(callParticipantsTable.userId, userId),
+            or(
+              eq(callParticipantsTable.status, 'ringing'),
+              eq(callParticipantsTable.status, 'accepted')
+            )
+          ));
         await tx
           .update(callParticipantsTable)
-          .set({ status: 'left', leftAt: now, updatedAt: now })
-          .where(and(eq(callParticipantsTable.callId, callId), eq(callParticipantsTable.status, 'accepted')));
-        const [updatedCall] = await tx
+          .set({ userId: pseudonym })
+          .where(eq(callParticipantsTable.userId, userId));
+        for (const callId of affectedCallIds) {
+          const [call] = await tx
+            .select()
+            .from(callsTable)
+            .where(eq(callsTable.callId, callId))
+            .for('update')
+            .limit(1);
+          if (!call) continue;
+          const participants = await tx
+            .select({ status: callParticipantsTable.status })
+            .from(callParticipantsTable)
+            .where(eq(callParticipantsTable.callId, callId));
+          const hasActiveParticipant = participants.some(({ status }) =>
+            status === 'ringing' || status === 'accepted'
+          );
+          await tx
+            .update(callsTable)
+            .set({
+              initiatorId: call.initiatorId === userId ? pseudonym : call.initiatorId,
+              status: !hasActiveParticipant ? 'ended' : call.status,
+              stateVersion: call.stateVersion + 1,
+              updatedAt: now,
+              endedAt: !hasActiveParticipant ? now : call.endedAt,
+            })
+            .where(eq(callsTable.callId, callId));
+        }
+        await tx
           .update(callsTable)
-          .set({ status: 'ended', updatedAt: now, endedAt: now })
-          .where(eq(callsTable.callId, callId))
-          .returning();
-        return callChange(updatedCall, tx);
+          .set({ initiatorId: pseudonym })
+          .where(eq(callsTable.initiatorId, userId));
+        await tx
+          .update(conversationsTable)
+          .set({ creatorId: pseudonym })
+          .where(eq(conversationsTable.creatorId, userId));
+
+        return { conversationIds: [...conversationIds] };
+      });
+    },
+
+    async eraseUserMessages(userId, pseudonym, limit) {
+      const batchSize = Math.min(Math.max(Math.floor(limit) || 1, 1), 500);
+      return db.transaction(async (tx) => {
+        const rows = await tx
+          .select()
+          .from(messagesTable)
+          .where(eq(messagesTable.senderId, userId))
+          .orderBy(
+            asc(messagesTable.createdAt),
+            asc(messagesTable.conversationId),
+            asc(messagesTable.messageId)
+          )
+          .limit(batchSize)
+          .for('update');
+        const now = new Date().toISOString();
+        const attachmentUrls: string[] = [];
+        const conversationIds = new Set<string>();
+        let messagesTombstoned = 0;
+        for (const row of rows) {
+          conversationIds.add(row.conversationId);
+          const update: Partial<typeof messagesTable.$inferInsert> = { senderId: pseudonym };
+          if (!row.deletedAt) {
+            messagesTombstoned += 1;
+            const url = (row.attachment as { url?: unknown } | null)?.url;
+            if (typeof url === 'string') attachmentUrls.push(url);
+            update.body = '';
+            update.attachment = null;
+            update.reactions = {};
+            update.deletedAt = now;
+          }
+          await tx
+            .update(messagesTable)
+            .set(update)
+            .where(and(
+              eq(messagesTable.conversationId, row.conversationId),
+              eq(messagesTable.messageId, row.messageId)
+            ));
+        }
+        return {
+          attachmentUrls,
+          conversationIds: [...conversationIds],
+          messagesTombstoned,
+          messagesProcessed: rows.length,
+        };
       });
     },
   };

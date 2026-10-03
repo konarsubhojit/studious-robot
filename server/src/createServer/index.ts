@@ -1,7 +1,7 @@
 import http from 'http';
 import express from 'express';
 import { Server } from 'socket.io';
-import { SERVER_EVENTS } from '../../../shared/index.ts';
+import { SERVER_EVENTS, SIGNALING_VERSION } from '../../../shared/index.ts';
 import { createTelemetry } from '../telemetry.ts';
 import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
@@ -25,7 +25,7 @@ import { describeError } from '../lib/errors.ts';
 import { parseByteSize, parseNonNegativeNumber } from '../lib/env.ts';
 import { setQueryTimingSink } from '../lib/queryTiming.ts';
 import { createFanoutProbe } from '../lib/fanoutProbe.ts';
-import { subscribeToConversationFanout } from '../domain/conversationFanout.ts';
+import { fanoutConversationEvent, subscribeToConversationFanout } from '../domain/conversationFanout.ts';
 import {
   clearRedisDegradation,
   isRedisPermissionError,
@@ -487,6 +487,31 @@ function createServer(opts: CreateServerOptions = {}) {
   // Don't prevent the process from exiting if only the timer is left.
   pollTimer.unref();
 
+  const groupCallSweepTimer = setInterval(() => {
+    void (async () => {
+      const now = Date.now();
+      for (const callId of await state.conversationStore.listExpiredCallIds(now)) {
+        const change = await state.conversationStore.expireCall(callId, now);
+        if (!change) continue;
+        await fanoutConversationEvent(io, state, {
+          conversationId: change.call.conversationId,
+          eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
+          recipientIds: change.participants.map(({ userId }) => userId),
+          payload: {
+            version: SIGNALING_VERSION,
+            conversationId: change.call.conversationId,
+            callId: change.call.callId,
+            call: change.call,
+            participants: change.participants,
+          },
+        });
+      }
+    })().catch((error: unknown) => {
+      console.error(`[conversations] group call expiry sweep failed: ${describeError(error)}`);
+    });
+  }, RINGING_POLL_MS);
+  groupCallSweepTimer.unref();
+
   // Background worker: sweep device rows abandoned by an app reinstall. The
   // Notification Hubs delivery path never reports a dead token synchronously,
   // so age is the only signal available (see pruneStaleDevices).
@@ -597,6 +622,7 @@ function createServer(opts: CreateServerOptions = {}) {
     shutdownPromise = (async () => {
       // Stop the background worker.
       clearInterval(pollTimer);
+      clearInterval(groupCallSweepTimer);
       clearInterval(deviceSweepTimer);
       clearInterval(sessionSweepTimer);
       clearInterval(retentionSweepTimer);

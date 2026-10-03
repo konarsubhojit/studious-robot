@@ -420,6 +420,7 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
         initiatorId: idField,
         mediaType: s.enum(['audio', 'video']),
         status: s.enum(['ringing', 'active', 'ended']),
+        stateVersion: s.number({ min: 1, integer: true }),
         ringTimeoutAt: s.string().optional().nullable(),
       },
       { passthrough: true }

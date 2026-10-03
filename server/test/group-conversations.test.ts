@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
-import { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
+import { API_ROUTES, CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
+import { fanoutConversationEvent } from '../src/domain/conversationFanout.ts';
 import { createConversationStore, createMemoryMessageBus, createServer } from '../src/index.ts';
-import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
+import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 async function startServer(opts: import('../src/createServer.ts').CreateServerOptions = {}) {
   const server = createServer(opts);
@@ -76,6 +77,31 @@ test('group messages require active membership and fan out to every current memb
     assert.equal((await bobMessage).message.body, 'hello group');
     assert.equal((await carolMessage).message.messageId, 'group-message-1');
 
+    await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_SEND, {
+      version: SIGNALING_VERSION,
+      conversationId,
+      body: 'second message',
+      messageId: 'group-message-2',
+    });
+    const list = await getJson(url, API_ROUTES.CONVERSATIONS, sessions[0]);
+    assert.equal(list.status, 200);
+    assert.equal(list.body.groupConversations[0].conversationId, conversationId);
+
+    const historyPath = `${API_ROUTES.CONVERSATIONS}/${conversationId}/messages`;
+    const firstPage = await getJson(url, `${historyPath}?limit=1`, sessions[0]);
+    assert.equal(firstPage.status, 200);
+    assert.equal(firstPage.body.messages[0].messageId, 'group-message-2');
+    assert.equal(firstPage.body.hasMore, true);
+    const next = firstPage.body.nextCursor;
+    const secondPage = await getJson(
+      url,
+      `${historyPath}?limit=1&before=${encodeURIComponent(next.before)}&beforeMessageId=${encodeURIComponent(next.beforeMessageId)}`,
+      sessions[0]
+    );
+    assert.equal(secondPage.body.messages[0].messageId, 'group-message-1');
+    const unauthorizedHistory = await getJson(url, historyPath, sessions[3]);
+    assert.equal(unauthorizedHistory.status, 403);
+
     const reactionEvent = waitFor(alice, SERVER_EVENTS.MESSAGE_REACTION);
     const reaction = await emitWithAck(bob, CLIENT_EVENTS.MESSAGE_REACT, {
       version: SIGNALING_VERSION,
@@ -133,6 +159,8 @@ test('group messages require active membership and fan out to every current memb
     });
     assert.equal(departed.ok, true);
     assert.equal(departed.conversation.memberIds.includes('alice'), false);
+    const departedHistory = await getJson(url, historyPath, sessions[0]);
+    assert.equal(departedHistory.status, 403);
     const formerMemberSend = await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_SEND, {
       version: SIGNALING_VERSION,
       conversationId,
@@ -218,16 +246,123 @@ test('group calls ring participants, record individual decisions, and end after 
     });
     assert.equal(declined.participants.find((participant: any) => participant.userId === 'declining').status, 'declined');
 
-    await emitWithAck(accepting, CLIENT_EVENTS.CONVERSATION_CALL_LEAVE, {
+    const leftGroupCall = waitFor(caller, SERVER_EVENTS.CONVERSATION_CALL_UPDATED);
+    const leftGroup = await emitWithAck(accepting, CLIENT_EVENTS.CONVERSATION_LEAVE, {
       version: SIGNALING_VERSION,
-      callId: started.call.callId,
+      conversationId,
     });
+    assert.equal(leftGroup.ok, true);
+    const afterMemberLeaves = await leftGroupCall;
+    assert.equal(
+      afterMemberLeaves.participants.find((participant: any) => participant.userId === 'accepting').status,
+      'left'
+    );
+    assert.equal(afterMemberLeaves.call.status, 'active');
+    assert.ok(afterMemberLeaves.call.stateVersion > accepted.call.stateVersion);
+
     const ended = await emitWithAck(caller, CLIENT_EVENTS.CONVERSATION_CALL_LEAVE, {
       version: SIGNALING_VERSION,
       callId: started.call.callId,
     });
     assert.equal(ended.call.status, 'ended');
+    assert.ok(ended.call.stateVersion > afterMemberLeaves.call.stateVersion);
   } finally {
     await teardown(caller, accepting, declining);
   }
+});
+
+test('group call ring deadlines survive process timers and reject late accepts', async () => {
+  const store = createConversationStore();
+  const { conversation } = await store.create({
+    name: 'Expiry group',
+    creatorId: 'expiry-caller',
+    inviteeIds: ['expiry-invitee'],
+  });
+  const sweptCall = await store.startCall({
+    conversationId: conversation.conversationId,
+    initiatorId: 'expiry-caller',
+    mediaType: 'audio',
+    ringTimeoutMs: 0,
+  });
+  assert.ok(sweptCall);
+  assert.deepEqual(await store.listExpiredCallIds(), [sweptCall.call.callId]);
+  const expired = await store.expireCall(sweptCall.call.callId);
+  assert.equal(expired?.call.status, 'ended');
+  assert.equal(expired?.call.stateVersion, 2);
+  assert.equal(await store.expireCall(sweptCall.call.callId), null);
+
+  const lateCall = await store.startCall({
+    conversationId: conversation.conversationId,
+    initiatorId: 'expiry-caller',
+    mediaType: 'audio',
+    ringTimeoutMs: 0,
+  });
+  assert.ok(lateCall);
+  const lateAccept = await store.transitionCall({
+    callId: lateCall.call.callId,
+    userId: 'expiry-invitee',
+    action: 'accept',
+  });
+  assert.equal(lateAccept?.call.status, 'ended');
+  assert.equal(lateAccept?.expired, true);
+  assert.equal(lateAccept?.call.stateVersion, 2);
+});
+
+test('ring expiry declines pending invitees without ending an active group call', async () => {
+  const store = createConversationStore();
+  const { conversation } = await store.create({
+    name: 'Active expiry group',
+    creatorId: 'active-caller',
+    inviteeIds: ['active-member', 'still-ringing'],
+  });
+  const started = await store.startCall({
+    conversationId: conversation.conversationId,
+    initiatorId: 'active-caller',
+    mediaType: 'audio',
+    ringTimeoutMs: 20,
+  });
+  assert.ok(started);
+  const accepted = await store.transitionCall({
+    callId: started.call.callId,
+    userId: 'active-member',
+    action: 'accept',
+  });
+  assert.equal(accepted?.call.status, 'active');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const expired = await store.expireCall(started.call.callId);
+  assert.equal(expired?.call.status, 'active');
+  assert.equal(expired?.call.stateVersion, 3);
+  assert.equal(
+    expired?.participants.find(({ userId }) => userId === 'active-member')?.status,
+    'accepted'
+  );
+  assert.equal(
+    expired?.participants.find(({ userId }) => userId === 'still-ringing')?.status,
+    'declined'
+  );
+});
+
+test('call fan-out drops snapshots older than the newest committed state version', async () => {
+  const emitted: number[] = [];
+  const io = {
+    to: () => ({
+      emit: (_eventName: string, payload: any) => emitted.push(payload.call.stateVersion),
+    }),
+  };
+  const event = (stateVersion: number) => ({
+    conversationId: 'group-call-version',
+    eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
+    recipientIds: ['version-member'],
+    payload: {
+      version: SIGNALING_VERSION,
+      conversationId: 'group-call-version',
+      callId: 'version-call',
+      call: { callId: 'version-call', stateVersion },
+    },
+  });
+
+  await fanoutConversationEvent(io, {} as any, event(2));
+  await fanoutConversationEvent(io, {} as any, event(1));
+  assert.deepEqual(emitted, [2]);
 });

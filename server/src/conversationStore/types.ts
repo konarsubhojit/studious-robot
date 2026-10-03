@@ -37,6 +37,7 @@ export type ConversationChange = {
   members: ConversationMember[];
   changedMember?: ConversationMember;
   previousOwnerId?: string;
+  callChanges?: GroupCallChange[];
 };
 
 export type GroupCallParticipant = {
@@ -55,6 +56,7 @@ export type GroupCall = {
   initiatorId: string;
   mediaType: 'audio' | 'video';
   status: 'ringing' | 'active' | 'ended';
+  stateVersion: number;
   ringTimeoutAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -64,6 +66,7 @@ export type GroupCall = {
 export type GroupCallChange = {
   call: GroupCall;
   participants: GroupCallParticipant[];
+  expired?: boolean;
 };
 
 export type ConversationStore = {
@@ -76,6 +79,13 @@ export type ConversationStore = {
   getMember: (conversationId: string, userId: string) => Promise<ConversationMember | null>;
   listMembers: (conversationId: string) => Promise<ConversationMember[]>;
   listForUser: (userId: string) => Promise<ConversationSnapshot[]>;
+  listMessages: (args: {
+    conversationId: string;
+    userId: string;
+    limit: number;
+    before?: string;
+    beforeMessageId?: string;
+  }) => Promise<StoredMessage[]>;
   updateName: (args: {
     conversationId: string;
     actorId: string;
@@ -115,7 +125,17 @@ export type ConversationStore = {
     userId: string;
     action: 'accept' | 'decline' | 'leave';
   }) => Promise<GroupCallChange | null>;
-  expireCall: (callId: string) => Promise<GroupCallChange | null>;
+  expireCall: (callId: string, now?: number) => Promise<GroupCallChange | null>;
+  listExpiredCallIds: (now?: number) => Promise<string[]>;
+  eraseUserData: (userId: string, pseudonym: string) => Promise<{
+    conversationIds: string[];
+  }>;
+  eraseUserMessages: (userId: string, pseudonym: string, limit: number) => Promise<{
+    attachmentUrls: string[];
+    conversationIds: string[];
+    messagesTombstoned: number;
+    messagesProcessed: number;
+  }>;
 };
 
 export class ConversationStoreError extends Error {

@@ -79,6 +79,72 @@ function createMemoryConversationStore(): ConversationStore {
     };
   }
 
+  function anonymizeMemberships(userId: string, pseudonym: string, now: string): string[] {
+    const conversationIds = new Set<string>();
+    for (const member of members.values()) {
+      if (member.userId !== userId) continue;
+      const conversation = conversations.get(member.conversationId);
+      if (member.role === 'owner' && member.leftAt === null && conversation) {
+        const nextOwner = listMembers(member.conversationId).find(({ userId: id }) => id !== userId);
+        if (nextOwner) {
+          nextOwner.role = 'owner';
+          nextOwner.updatedAt = now;
+        } else {
+          conversation.deletedAt = now;
+        }
+      }
+      member.leftAt ??= now;
+      member.role = 'member';
+      member.userId = pseudonym;
+      member.updatedAt = now;
+      if (conversation) {
+        conversation.updatedAt = now;
+        conversation.membershipVersion += 1;
+        conversationIds.add(conversation.conversationId);
+        if (conversation.creatorId === userId) conversation.creatorId = pseudonym;
+      }
+      members.delete(memberKey(member.conversationId, userId));
+      members.set(memberKey(member.conversationId, pseudonym), member);
+    }
+    return [...conversationIds];
+  }
+
+  function anonymizeCalls(userId: string, pseudonym: string, now: string): void {
+    const affectedCalls = new Set<string>();
+    for (const call of calls.values()) {
+      if (call.initiatorId !== userId) continue;
+      call.initiatorId = pseudonym;
+      affectedCalls.add(call.callId);
+    }
+    const renamedParticipants = [...callParticipants.values()]
+      .filter(({ userId: participantId }) => participantId === userId);
+    for (const participant of renamedParticipants) {
+      if (participant.status === 'ringing' || participant.status === 'accepted') {
+        participant.status = 'left';
+        participant.leftAt = now;
+        participant.updatedAt = now;
+      }
+      affectedCalls.add(participant.callId);
+      callParticipants.delete(callParticipantKey(participant.callId, userId));
+      participant.userId = pseudonym;
+      callParticipants.set(callParticipantKey(participant.callId, pseudonym), participant);
+    }
+    for (const callId of affectedCalls) {
+      const call = calls.get(callId);
+      if (!call) continue;
+      const hasActiveParticipant = [...callParticipants.values()].some((participant) =>
+        participant.callId === callId &&
+        (participant.status === 'ringing' || participant.status === 'accepted')
+      );
+      if (!hasActiveParticipant) {
+        call.status = 'ended';
+        call.endedAt = now;
+      }
+      call.updatedAt = now;
+      call.stateVersion += 1;
+    }
+  }
+
   return {
     async create({ name, creatorId, inviteeIds }) {
       const memberIds = [creatorId, ...inviteeIds];
@@ -143,6 +209,27 @@ function createMemoryConversationStore(): ConversationStore {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
 
+    async listMessages({ conversationId, userId, limit, before, beforeMessageId }) {
+      const conversation = conversations.get(conversationId);
+      if (!conversation || conversation.deletedAt !== null) {
+        throw new ConversationStoreError('not_member', 'not an active member');
+      }
+      requireActiveMember(conversationId, userId);
+      return [...messages.values()]
+        .filter((message) =>
+          message.conversationId === conversationId &&
+          (!before ||
+            message.createdAt < before ||
+            (Boolean(beforeMessageId) &&
+              message.createdAt === before &&
+              message.messageId < beforeMessageId!))
+        )
+        .sort((a, b) =>
+          b.createdAt.localeCompare(a.createdAt) || b.messageId.localeCompare(a.messageId)
+        )
+        .slice(0, Math.min(Math.max(Math.floor(limit) || 1, 1), 100));
+    },
+
     async updateName({ conversationId, actorId, name }) {
       const conversation = conversations.get(conversationId);
       if (!conversation || conversation.deletedAt !== null) return null;
@@ -165,6 +252,28 @@ function createMemoryConversationStore(): ConversationStore {
       member.updatedAt = now;
       conversation.updatedAt = now;
       conversation.membershipVersion += 1;
+      const callChanges: GroupCallChange[] = [];
+      for (const participant of callParticipants.values()) {
+        if (
+          participant.userId !== userId ||
+          (participant.status !== 'ringing' && participant.status !== 'accepted')
+        ) continue;
+        const call = calls.get(participant.callId);
+        if (!call || call.conversationId !== conversationId || call.status === 'ended') continue;
+        participant.status = 'left';
+        participant.leftAt = now;
+        participant.updatedAt = now;
+        if (![...callParticipants.values()].some((item) =>
+          item.callId === call.callId &&
+          (item.status === 'ringing' || item.status === 'accepted')
+        )) {
+          call.status = 'ended';
+          call.endedAt = now;
+        }
+        call.updatedAt = now;
+        call.stateVersion += 1;
+        callChanges.push(callChange(call));
+      }
       let previousOwnerId: string | undefined;
       if (member.role === 'owner') {
         previousOwnerId = userId;
@@ -176,7 +285,11 @@ function createMemoryConversationStore(): ConversationStore {
           conversation.deletedAt = now;
         }
       }
-      return { ...change(conversation, member), ...(previousOwnerId ? { previousOwnerId } : {}) };
+      return {
+        ...change(conversation, member),
+        ...(previousOwnerId ? { previousOwnerId } : {}),
+        callChanges,
+      };
     },
 
     async saveMessage(message) {
@@ -223,6 +336,7 @@ function createMemoryConversationStore(): ConversationStore {
         initiatorId,
         mediaType,
         status: 'ringing',
+        stateVersion: 1,
         ringTimeoutAt: new Date(Date.now() + ringTimeoutMs).toISOString(),
         createdAt: now,
         updatedAt: now,
@@ -247,9 +361,17 @@ function createMemoryConversationStore(): ConversationStore {
       const call = calls.get(callId);
       if (!call || call.status === 'ended') return null;
       requireActiveMember(call.conversationId, userId);
+      const now = new Date().toISOString();
       const participant = callParticipants.get(callParticipantKey(callId, userId));
       if (!participant) return null;
-      const now = new Date().toISOString();
+      if (
+        participant.status === 'ringing' &&
+        call.ringTimeoutAt !== null &&
+        Date.parse(call.ringTimeoutAt) <= Date.parse(now)
+      ) {
+        const expired = await this.expireCall(callId);
+        return expired ? { ...expired, expired: true } : null;
+      }
       if (action === 'accept' && participant.status === 'ringing') {
         participant.status = 'accepted';
         participant.acceptedAt = now;
@@ -264,6 +386,7 @@ function createMemoryConversationStore(): ConversationStore {
       }
       participant.updatedAt = now;
       call.updatedAt = now;
+      call.stateVersion += 1;
       if (action === 'accept') call.status = 'active';
       if (![...callParticipants.values()].some((item) =>
         item.callId === callId && (item.status === 'ringing' || item.status === 'accepted')
@@ -274,20 +397,88 @@ function createMemoryConversationStore(): ConversationStore {
       return callChange(call);
     },
 
-    async expireCall(callId) {
+    async expireCall(callId, nowMs = Date.now()) {
       const call = calls.get(callId);
-      if (!call || call.status !== 'ringing') return null;
-      const now = new Date().toISOString();
+      if (
+        !call ||
+        (call.status !== 'ringing' && call.status !== 'active') ||
+        !call.ringTimeoutAt ||
+        Date.parse(call.ringTimeoutAt) > nowMs
+      ) return null;
+      if (![...callParticipants.values()].some((participant) =>
+        participant.callId === callId && participant.status === 'ringing'
+      )) return null;
+      const now = new Date(nowMs).toISOString();
       for (const participant of callParticipants.values()) {
-        if (participant.callId !== callId || participant.status === 'declined' || participant.status === 'left') continue;
-        participant.status = participant.status === 'ringing' ? 'declined' : 'left';
+        if (participant.callId !== callId || participant.status !== 'ringing') continue;
+        participant.status = 'declined';
         participant.leftAt = now;
         participant.updatedAt = now;
       }
-      call.status = 'ended';
+      if (call.status === 'ringing') {
+        for (const participant of callParticipants.values()) {
+          if (participant.callId !== callId || participant.status !== 'accepted') continue;
+          participant.status = 'left';
+          participant.leftAt = now;
+          participant.updatedAt = now;
+        }
+        call.status = 'ended';
+      } else if (![...callParticipants.values()].some((participant) =>
+        participant.callId === callId && participant.status === 'accepted'
+      )) {
+        call.status = 'ended';
+      }
       call.updatedAt = now;
-      call.endedAt = now;
+      if (call.status === 'ended') call.endedAt = now;
+      call.stateVersion += 1;
       return callChange(call);
+    },
+
+    async listExpiredCallIds(now = Date.now()) {
+      return [...calls.values()]
+        .filter((call) =>
+          (call.status === 'ringing' || call.status === 'active') &&
+          call.ringTimeoutAt !== null &&
+          Date.parse(call.ringTimeoutAt) <= now &&
+          [...callParticipants.values()].some((participant) =>
+            participant.callId === call.callId && participant.status === 'ringing'
+          )
+        )
+        .map(({ callId }) => callId);
+    },
+
+    async eraseUserData(userId, pseudonym) {
+      const now = new Date().toISOString();
+      const conversationIds = anonymizeMemberships(userId, pseudonym, now);
+      anonymizeCalls(userId, pseudonym, now);
+      return { conversationIds };
+    },
+
+    async eraseUserMessages(userId, pseudonym, limit) {
+      const now = new Date().toISOString();
+      const batch = Math.min(Math.max(Math.floor(limit) || 1, 1), 500);
+      const attachmentUrls: string[] = [];
+      const conversationIds = new Set<string>();
+      let messagesTombstoned = 0;
+      const page = [...messages.values()]
+        .filter(({ senderId }) => senderId === userId)
+        .slice(0, batch);
+      for (const message of page) {
+        conversationIds.add(message.conversationId);
+        if (!message.deletedAt) {
+          messagesTombstoned += 1;
+          const url = (message.attachment as { url?: unknown } | null)?.url;
+          if (typeof url === 'string') attachmentUrls.push(url);
+          applyTombstone(message, now);
+        }
+        message.senderId = pseudonym;
+      }
+      return {
+        attachmentUrls,
+        conversationIds: [...conversationIds],
+        messagesTombstoned,
+        messagesProcessed: page.length,
+      };
     },
   };
 }
