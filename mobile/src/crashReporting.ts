@@ -1,5 +1,8 @@
 import { logInfo, logWarn, redactSensitive } from './appLogger';
 import type { ObservabilityEvent } from './observability';
+import { APP_VERSION } from './appInfo';
+import { CALL_STATES } from './call/callStateMachine';
+import type { captureException as sentryCaptureException } from '@sentry/react-native';
 
 /**
  * Optional crash reporting for the WeTalk mobile app.
@@ -27,6 +30,7 @@ export type CrashReportingSdk = {
   init?: (options: object) => void;
   addBreadcrumb?: (breadcrumb: object) => void;
   setTag?: (key: string, value: string) => void;
+  captureException?: (error: unknown, hint: Parameters<typeof sentryCaptureException>[1]) => unknown;
 };
 
 /**
@@ -48,6 +52,85 @@ let cachedSdk: CrashReportingSdk | null | undefined;
 let hasLoggedMissingSdk = false;
 let status: CrashReportingStatus | undefined;
 let unregisterSink: (() => void) | null = null;
+let getRuntimeContext: (() => { signalingUrl: string; callPhase: string; }) | undefined;
+
+/** Register a live, identity-free view of the call flow; clear it on unmount. */
+export function registerCrashContext(provider: NonNullable<typeof getRuntimeContext>): () => void {
+  getRuntimeContext = provider;
+  return () => {
+    if (getRuntimeContext === provider) getRuntimeContext = undefined;
+  };
+}
+
+function signalingHost(url: string): string | undefined {
+  // Do not forward URL credentials, paths, query parameters or fragments.
+  return /^https?:\/\/(?:[^/@]*@)?(\[[a-f\d:]+\]|[a-z\d.-]+)(?::(\d+))?(?:[/?#]|$)/i
+    .exec(url.trim())?.slice(1).filter(Boolean).join(':');
+}
+
+/**
+ * The local buffer contains free-form text and chat metadata. Only retain its
+ * diagnostic envelope remotely, never message text or arbitrary payloads.
+ */
+function remoteLogBuffer(logs: string): string {
+  return logs.split('\n').slice(-100).flatMap(line => {
+    const match = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z) \[(DEBUG|INFO|WARN|ERROR)\](?: \[(CallFlow|CallKeep|CrashReporting|app\.startup)\])?/.exec(line);
+    if (!match) return [];
+    const callPhase = /"callPhase"\s*:\s*"(outgoing_ringing|incoming_ringing|in_call|idle|ended)"/.exec(line)?.[1];
+    return [{ at: match[1], level: match[2], category: match[3] ?? 'app', callPhase }];
+  }).map(entry => JSON.stringify(entry)).join('\n');
+}
+
+function remoteErrorText(text: string): string {
+  return text
+    .replace(/[^\s<>@"']+@[^\s<>@"']+\.[a-z]{2,}/gi, '[REDACTED]')
+    .replace(/\b(userId|user_id|email|body|content|text|attachmentKey|attachment_key|objectKey)\b["']?\s*[:=][^\n]*/gi, '$1=[REDACTED]');
+}
+
+/** Best-effort exception capture; neither context nor SDK failures may escape. */
+export function captureCrash(error: unknown, isFatal: boolean, getLogs?: () => string): void {
+  try {
+    if (status !== 'enabled') return;
+    const sdk = loadCrashReportingSdk();
+    if (typeof sdk?.captureException !== 'function') return;
+
+    const tags: Record<string, string> = { isFatal: String(isFatal), appVersion: APP_VERSION };
+    try {
+      const context = getRuntimeContext?.();
+      const host = context && signalingHost(context.signalingUrl);
+      if (host) tags.signalingHost = host;
+      if (context && Object.values(CALL_STATES).includes(context.callPhase) &&
+          context.callPhase !== CALL_STATES.IDLE && context.callPhase !== CALL_STATES.ENDED) {
+        tags.callPhase = context.callPhase;
+      }
+    } catch {
+      // Missing runtime context must not suppress the exception.
+    }
+
+    let logs = '';
+    try {
+      logs = remoteLogBuffer(getLogs?.() ?? '');
+    } catch {
+      // A failing log callback must not suppress the exception.
+    }
+
+    // Avoid serialising custom error properties (which may contain chat data).
+    const exception = new Error(error instanceof Error ? remoteErrorText(error.message) : 'Unknown JavaScript error');
+    if (error instanceof Error) {
+      exception.name = remoteErrorText(error.name);
+      exception.stack = error.stack && remoteErrorText(error.stack);
+    }
+    const result = sdk.captureException(exception, {
+      captureContext: { level: isFatal ? 'fatal' : 'error', tags },
+      attachments: logs ? [{ filename: 'app-logs.jsonl', data: logs, contentType: 'text/plain' }] : [],
+    });
+    Promise.resolve(result).catch(() => {
+      // Also swallow failures from asynchronous SDK shims.
+    });
+  } catch {
+    // Reporting must never recurse into the global error handler.
+  }
+}
 
 /**
  * The build-time DSN, or `null` when crash reporting is not configured.
@@ -85,11 +168,17 @@ export function loadCrashReportingSdk(): CrashReportingSdk | null {
 function addBreadcrumb(sdk: CrashReportingSdk, event: ObservabilityEvent) {
   const { level, name, ...rest } = event;
   try {
+    const redacted = redactSensitive(rest) as Record<string, unknown>;
+    // Only schema-defined diagnostics leave the device, not arbitrary chat data.
+    const data: Record<string, unknown> = {};
+    if (typeof redacted.at === 'string' && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(redacted.at)) data.at = redacted.at;
+    if (typeof redacted.value === 'number' && Number.isFinite(redacted.value)) data.value = redacted.value;
+    if (typeof redacted.callPhase === 'string' && Object.values(CALL_STATES).includes(redacted.callPhase)) data.callPhase = redacted.callPhase;
     sdk.addBreadcrumb?.({
       category: 'app',
       level: BREADCRUMB_LEVELS[level] ?? 'info',
       message: name,
-      data: redactSensitive(rest),
+      data,
     });
   } catch {
     // Reporting must never break the emitting caller.
@@ -139,6 +228,9 @@ export function initCrashReporting(
       // The app redacts its own payloads (see `addBreadcrumb`); never let the
       // SDK attach request bodies, headers or user identifiers on its own.
       sendDefaultPii: false,
+      // Automatic console/network breadcrumbs bypass our diagnostic allowlist.
+      beforeBreadcrumb: (breadcrumb: { category?: string; }) =>
+        breadcrumb.category === 'app' ? breadcrumb : null,
     });
   } catch (error) {
     logWarn('[CrashReporting] Crash reporting failed to initialise', error);
@@ -161,4 +253,5 @@ export function _resetCrashReportingForTests() {
   cachedSdk = undefined;
   hasLoggedMissingSdk = false;
   status = undefined;
+  getRuntimeContext = undefined;
 }

@@ -8,6 +8,7 @@ import {
 } from '../call/callStateMachine';
 import * as Telemetry from '../telemetry';
 import { emitEvent } from '../observability';
+import { registerCrashContext } from '../crashReporting';
 import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useCallAudioRouting from './useCallAudioRouting';
@@ -374,6 +375,9 @@ export default function useCallFlow({
   // transitions (a late `rtc.answer` after hang-up, a second incoming call
   // while already connected, …) are ignored instead of corrupting the UI.
   const [callPhase, dispatchCallEvent] = useReducer(callStateReducer, INITIAL_CALL_STATE);
+  const crashContextRef = useRef({ signalingUrl, callPhase });
+  crashContextRef.current = { signalingUrl, callPhase };
+  useEffect(() => registerCrashContext(() => crashContextRef.current), []);
 
   const [activeCall, setActiveCall] = useState(null as CallRecord | null);
 

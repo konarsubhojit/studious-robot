@@ -96,3 +96,17 @@ with the package or native module absent, consistent with
 `mobile/__tests__/callKeep.test.ts` and the optional-messaging tests. The
 acceptance check is `cd mobile && npm test` on Linux with no native module
 installed or initialized.
+
+The global JavaScript handler also forwards exceptions through the optional
+shim, without waiting before chaining to the previous handler. Console output
+and the full local crash file remain available even when remote reporting fails.
+Remote captures include fatality, the bundle version, the signaling **host only**
+(not URL credentials, paths or queries), and the active call-state-machine phase.
+The last 100 buffered log entries are attached as diagnostic envelopes
+(timestamp, level, approved component label and call phase); free-form log text
+and metadata stay local. Structured remote breadcrumbs likewise retain only
+timestamp, numeric metric value and validated call phase. Custom error properties
+are excluded, and emails and labelled identity/content fields in error details
+are redacted. Automatic console/network breadcrumbs are dropped because they
+bypass this allowlist. Do not put message bodies or attachment keys in exception
+text.

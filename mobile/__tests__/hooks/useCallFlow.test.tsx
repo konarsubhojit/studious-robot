@@ -9,6 +9,7 @@ import useCallFlow, {
 } from '../../src/hooks/useCallFlow';
 import type { PeerTrackEvent, WebrtcMediaStream } from '../../src/hooks/useCallFlow';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
+import { registerCrashContext } from '../../src/crashReporting';
 import { startScreenCapture } from '../../src/screenShare';
 import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
 
@@ -85,6 +86,10 @@ jest.mock('../../src/appLogger', () => ({
   logInfo: jest.fn(),
   logVerbose: jest.fn(),
   logWarn: jest.fn(),
+}));
+
+jest.mock('../../src/crashReporting', () => ({
+  registerCrashContext: jest.fn(() => jest.fn()),
 }));
 
 jest.mock('../../src/audioRouting', () => ({
@@ -372,6 +377,26 @@ describe('useCallFlow', () => {
     expect(resultRef.current.isInCall).toBe(false);
     expect(resultRef.current.activeCall).toBeNull();
     expect(resultRef.current.incomingCall).toBeNull();
+  });
+
+  test('registers live identity-free crash context and clears it on unmount', async () => {
+    const { resultRef, tree } = await renderHook();
+    const register = registerCrashContext as jest.Mock;
+    const provider = register.mock.calls.at(-1)?.[0];
+    const unregister = register.mock.results.at(-1)?.value;
+    expect(provider()).toEqual({
+      signalingUrl: resultRef.current.signalingUrl,
+      callPhase: CALL_PHASES.IDLE,
+    });
+    await act(async () => {
+      resultRef.current.setSignalingUrl('https://signal.example');
+    });
+    expect(provider()).toEqual({
+      signalingUrl: 'https://signal.example',
+      callPhase: resultRef.current.callPhase,
+    });
+    await act(async () => { tree.unmount(); });
+    expect(unregister).toHaveBeenCalledTimes(1);
   });
 
   test('initialises connectionQuality with no-link defaults', async () => {
