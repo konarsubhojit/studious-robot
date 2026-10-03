@@ -33,6 +33,35 @@ beforeEach(() => {
 });
 
 describe('useChatSync', () => {
+  test('known live groups fetch and paginate group history while still skipping peer presence', async () => {
+    const { params, resultRef, tree } = await setup({
+      chatPeerId: 'server-group', isGroup: true, syncGroupHistory: true,
+      messagesByPeer: { 'server-group': [{ messageId: 'm1', createdAt: '2026-10-03T06:00:00Z' }] },
+    });
+    expect(params.fetchMessagesForPeer).toHaveBeenCalledWith('server-group');
+    expect(params.checkPresence).not.toHaveBeenCalled();
+    await act(async () => {
+      await resultRef.current.handleRefreshMessages();
+      resultRef.current.handleLoadOlderMessages();
+    });
+    expect(params.fetchMessagesForPeer).toHaveBeenCalledWith('server-group', {
+      cursor: { before: '2026-10-03T06:00:00Z', beforeType: 'message', beforeMessageId: 'm1' },
+    });
+    act(() => tree.unmount());
+  });
+  test('group routes never send the conversation id to direct presence/history/read endpoints', async () => {
+    const { resultRef, params, tree } = await setup({ chatPeerId: 'group-1', isGroup: true });
+    expect(params.setActiveChatPeerId).toHaveBeenCalledWith('group-1');
+    expect(params.checkPresence).not.toHaveBeenCalled();
+    expect(params.fetchMessagesForPeer).not.toHaveBeenCalled();
+    expect(params.markConversationRead).not.toHaveBeenCalled();
+    await act(async () => {
+      await resultRef.current.handleRefreshMessages();
+      resultRef.current.handleLoadOlderMessages();
+    });
+    expect(params.fetchMessagesForPeer).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
   test('fetches conversations on mount when already registered', async () => {
     const { params } = await setup({ isRegistered: true });
     await act(async () => {

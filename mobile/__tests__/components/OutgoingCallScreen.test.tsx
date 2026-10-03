@@ -12,6 +12,21 @@ jest.mock(
 );
 
 const DEFAULT_STATUS: any = { message: 'Ringing…', severity: 'info' };
+const originalCreate = renderer.create;
+const mountedTrees: renderer.ReactTestRenderer[] = [];
+let createSpy: jest.SpyInstance;
+
+beforeEach(() => {
+  createSpy = jest.spyOn(renderer, 'create').mockImplementation((...args) => {
+    const tree = originalCreate(...args);
+    mountedTrees.push(tree);
+    return tree;
+  });
+});
+afterEach(() => {
+  act(() => { mountedTrees.splice(0).forEach(tree => tree.unmount()); });
+  createSpy.mockRestore();
+});
 
 /**
  * Test props are deliberately partial; the component under test is exercised

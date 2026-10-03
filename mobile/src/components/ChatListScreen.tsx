@@ -1,9 +1,10 @@
 import { memo, useCallback, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { describeMessagePreview } from '../../../shared';
 import { useThemedStyles } from '../ThemeContext';
 import { fontScaleCaps, sizes, spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
+import GroupDirectorySheet from './GroupDirectorySheet';
 import StatusToast from './StatusToast';
 import SwipeableRow from './SwipeableRow';
 import {
@@ -107,6 +108,9 @@ export type ChatListScreenProps = {
   onOpenProfile?: (peerId: string) => void;
   /** Opens (or creates) a conversation with someone picked from the directory. */
   onStartChat?: (peerId: string) => void;
+  onCreateGroup?: (name: string, inviteeIds: string[]) => Promise<string>;
+  onOpenGroup?: (conversationId: string) => void;
+  groupTransport?: 'mock' | 'live';
   /** The signed-in user, shown as the header avatar. */
   currentUserId?: string;
   /** App-level status, floated over the list as a transient bar. */
@@ -225,7 +229,9 @@ function ConversationListRow({
   const draftText = drafts?.[conversation.peerId]?.text?.trim();
   const timestamp = formatConversationTimestamp(lastActivityOf(conversation)?.createdAt);
   const accessibilityLabel = [
-    `Open conversation with ${conversation.peerId}`,
+    `Open conversation with ${conversation.group?.name ?? conversation.peerId}`,
+    conversation.group ? 'group' : '',
+    conversation.localMock ? 'local mock' : '',
     hasUnread ? `${unreadCount} unread` : '',
     isMuted ? 'muted' : '',
   ].filter(Boolean).join(', ');
@@ -233,13 +239,14 @@ function ConversationListRow({
   return (
     <SwipeableRow actions={actions}>
       <ListItem
-        title={conversation.peerId}
-        subtitle={draftText ? `Draft: ${draftText}` : formatActivityPreview(conversation)}
+        title={conversation.group?.name ?? conversation.peerId}
+        subtitle={draftText ? `Draft: ${draftText}` :
+          `${conversation.group ? 'Group · ' : ''}${formatActivityPreview(conversation)}`}
         leading={
           <Avatar
             id={peerId}
             size="md"
-            online={conversation.online}
+            online={conversation.group ? undefined : conversation.online}
             testID="chat-list-avatar"
           />
         }
@@ -253,9 +260,9 @@ function ConversationListRow({
           />
         }
         onPress={handleOpenConversation}
-        onLongPress={onOpenProfile ? handleOpenProfile : undefined}
+        onLongPress={onOpenProfile && !conversation.group ? handleOpenProfile : undefined}
         accessibilityLabel={accessibilityLabel}
-        accessibilityHint={onOpenProfile ? 'Long press for contact details' : undefined}
+        accessibilityHint={conversation.group ? 'Open group chat and member management' : onOpenProfile ? 'Long press for contact details' : undefined}
         testID="chat-list-row"
       />
     </SwipeableRow>
@@ -283,6 +290,9 @@ function ChatListScreen({
   onOpenSearch,
   onOpenProfile,
   onStartChat,
+  onCreateGroup,
+  onOpenGroup,
+  groupTransport = 'mock',
   currentUserId,
   drafts,
   isPeerMuted,
@@ -291,6 +301,7 @@ function ChatListScreen({
 }: ChatListScreenProps) {
   const styles = useThemedStyles(createStyles);
   const [isPickerVisible, setIsPickerVisible] = useState(false);
+  const [isGroupPickerVisible, setIsGroupPickerVisible] = useState(false);
 
   const startChat = onStartChat ?? onOpenConversation;
   const openPicker = useCallback(() => setIsPickerVisible(true), []);
@@ -367,6 +378,11 @@ function ChatListScreen({
           Chats
         </Text>
         <View style={styles.titleSpacer} />
+        {onCreateGroup ? <Pressable accessibilityRole="button" accessibilityLabel="New group"
+          style={styles.groupAction}
+          onPress={() => setIsGroupPickerVisible(true)} testID="chat-list-new-group">
+          <Text style={styles.groupActionText}>New group</Text>
+        </Pressable> : null}
         {onOpenSearch ? (
           <IconAction
             icon="search"
@@ -413,6 +429,14 @@ function ChatListScreen({
         />
       ) : null}
 
+      {onCreateGroup && onSearchUsers ? <GroupDirectorySheet
+        visible={isGroupPickerVisible} onClose={() => setIsGroupPickerVisible(false)}
+        currentUserId={currentUserId ?? ''} onSearchUsers={onSearchUsers}
+        localMock={groupTransport !== 'live'}
+        onSubmit={async (name, ids) => {
+          const id = await onCreateGroup(name, ids);
+          (onOpenGroup ?? onOpenConversation)(id);
+        }} /> : null}
       <PeoplePickerSheet
         visible={isPickerVisible}
         onClose={closePicker}
@@ -435,6 +459,8 @@ function ChatListScreen({
 /** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    groupAction: { minHeight: 48, paddingHorizontal: spacing.sm, justifyContent: 'center' },
+    groupActionText: { ...typography.body, color: colors.onSurface },
     root: {
       flex: 1,
       backgroundColor: colors.background,

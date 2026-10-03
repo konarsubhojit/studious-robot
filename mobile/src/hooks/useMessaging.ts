@@ -13,7 +13,15 @@ import { dataScope } from '../storage/localDatabase';
 import { RequestCoalescer } from '../storage/requestCoalescer';
 import type { ChatDraft, ChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
-import { CLIENT_EVENTS } from '../signalingClient';
+import { CLIENT_EVENTS, SERVER_EVENTS } from '../signalingClient';
+import {
+  applyGroupSnapshot, createMockGroup, leaveMockGroup, mutateMockMembers,
+  renameMockGroup, sendMockGroup,
+} from '../chat/groupMockAdapter';
+import type { GroupMemberAction } from '../chat/groupMockAdapter';
+import useGroupCalls from '../chat/useGroupCalls';
+import { conversationAcknowledgement, GROUP_TRANSPORT, parseGroupList, remoteGroupRows } from '../chat/groupTransportAdapter';
+import type { GroupTransport } from '../chat/groupTransportAdapter';
 import { SIGNALING_VERSION } from '../socketProtocol';
 import { displayMessageReceivedInApp } from '../pushNotifications';
 import {
@@ -56,6 +64,7 @@ import {
   drainOrder,
   isRetryable,
   nextDrainDelayMs,
+  outboxSendPayload,
   restoreOutboxMessages,
   withAttemptRecorded,
   withAttemptsReset,
@@ -63,8 +72,8 @@ import {
   withoutMessage,
 } from '../messaging/sendPipeline';
 import useChatSnapshotMirror from '../messaging/useChatSnapshotMirror';
-import { fetchHistory } from '../messaging/fetchHistory';
-import type { AttachmentRecord } from '../../../shared/signaling/schemas';
+import { fetchGroupHistory, fetchHistory } from '../messaging/fetchHistory';
+import type { AttachmentRecord, ConversationRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
 import type { SignalingClient } from '../signalingClient';
 import type { Socket } from 'socket.io-client';
@@ -160,6 +169,7 @@ export type UseMessagingParams = {
   socketRef: { current: Socket | null; };
   userId: string;
   storageUserId?: string;
+  groupTransport?: GroupTransport;
   updateStatus: (message: string, severity?: CallStatus['severity']) => void;
 };
 
@@ -171,6 +181,7 @@ export default function useMessaging({
   socketRef,
   userId,
   storageUserId = userId,
+  groupTransport = GROUP_TRANSPORT,
   updateStatus,
 }: UseMessagingParams) {
   const scope = dataScope(signalingUrl, storageUserId);
@@ -203,6 +214,7 @@ export default function useMessaging({
   // event). Cleared on receipt of isTyping:false or after a short timeout, in
   // case a "stopped typing" event is dropped.
   const [typingByPeer, setTypingByPeer] = useState(({} as Record<string, boolean>));
+  const [groupTyping, setGroupTyping] = useState<Record<string, Record<string, boolean>>>({});
   const typingTimeoutsRef = useRef(
     ({} as Record<string, ReturnType<typeof setTimeout>>),
   );
@@ -231,6 +243,9 @@ export default function useMessaging({
   const conversationsFetchedRef = useRef(false);
   const messagesByPeerRef = useRef(({} as Record<string, ChatMessage[]>));
   const lastLocalCreatedAtMsRef = useRef(0);
+  const { groupCalls, groupCallActions } = useGroupCalls({
+    scope, userId, conversationsRef, signalingRef, socketRef, connected: isSocketConnected,
+  });
 
   useEffect(() => {
     scopeRef.current = scope;
@@ -240,6 +255,7 @@ export default function useMessaging({
     setDrafts({});
     setActiveChatPeerId(null);
     setTypingByPeer({});
+    setGroupTyping({});
     setPendingSendCount(0);
     outboxRef.current = [];
     conversationsRef.current = [];
@@ -282,9 +298,13 @@ export default function useMessaging({
     // Only fill in what the network hasn't already provided: a response that
     // beat the disk read is newer than the cache.
     const pendingPeers = new Set(snapshot.outbox.map(item => item.recipientId));
-    setConversations(prev => mergePendingConversations(
-      conversationsFetchedRef.current || prev.length ? prev : restoredConversations,
-      restoredConversations, pendingPeers));
+    setConversations(prev => {
+      const next = mergePendingConversations(
+        conversationsFetchedRef.current || prev.length ? prev : restoredConversations,
+        restoredConversations, pendingPeers);
+      conversationsRef.current = next;
+      return next;
+    });
     setMessagesByPeer(prev => restoreOutboxMessages(
       { ...snapshot.messagesByPeer, ...prev }, snapshot.outbox, userId));
     // A local edit that beat the disk read wins over its older cached draft.
@@ -325,6 +345,8 @@ export default function useMessaging({
   const fetchConversations = useCallback(() => requests.run('conversations', async () => {
     const sessionId = sessionIdRef.current;
     if (!sessionId) return;
+    const initialGroups = new Map(conversationsRef.current.filter(row => row.group && !row.localMock)
+      .map(row => [row.peerId, row.group!.membershipVersion]));
     try {
       const trimmedUrl = signalingUrl.trim();
       const response = await authedFetchRef.current?.((sid: string) => ({
@@ -335,15 +357,20 @@ export default function useMessaging({
       const data = await response.json();
       if (scopeRef.current !== scope) return;
       if (!Array.isArray(data.conversations)) return;
+      const parsedGroups = parseGroupList(data.groupConversations, userId);
       conversationsFetchedRef.current = true;
       const pendingPeers = new Set(outboxRef.current.map(item => item.recipientId));
-      setConversations(previous => mergePendingConversations(data.conversations, previous, pendingPeers));
+      const previous = conversationsRef.current;
+      const groups = remoteGroupRows(parsedGroups, previous, userId, initialGroups);
+      const next = mergePendingConversations([...groups, ...data.conversations], previous, pendingPeers);
+      conversationsRef.current = next;
+      setConversations(next);
     } catch (error) {
       logWarn('[Messaging] fetchConversations failed', {
         message: errorMessage(error),
       });
     }
-  }), [authedFetchRef, sessionIdRef, signalingUrl, scope, requests]);
+  }), [authedFetchRef, sessionIdRef, signalingUrl, scope, requests, userId]);
 
   /**
    * Fetch a page of conversation history with `peerId` (`GET /messages`) and
@@ -361,13 +388,18 @@ export default function useMessaging({
     (peerId: string, { before, cursor }: { before?: string; cursor?: TimelineCursor | null; } = {}) =>
       requests.run(JSON.stringify(['messages', peerId, cursor ?? before]), async () => {
       const trimmedPeerId = (peerId ?? '').trim();
+      const group = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
+      if (group?.localMock || group?.left) {
+        return messagesByPeerRef.current[trimmedPeerId] ?? [];
+      }
       const sessionId = sessionIdRef.current;
       if (!sessionId || !trimmedPeerId) return [];
       try {
-        const messages = await fetchHistory(
-          authedFetchRef.current, signalingUrl.trim(), trimmedPeerId,
-          cursor ?? (before ? { before } : null), messagesByPeerRef.current[trimmedPeerId]?.length ?? 0,
-        );
+        const pageCursor = cursor ?? (before ? { before } : null);
+        const messages = group
+          ? await fetchGroupHistory(authedFetchRef.current, signalingUrl.trim(), group.group!.conversationId, pageCursor)
+          : await fetchHistory(authedFetchRef.current, signalingUrl.trim(), trimmedPeerId,
+            pageCursor, messagesByPeerRef.current[trimmedPeerId]?.length ?? 0);
         if (!messages || scopeRef.current !== scope) return [];
         messages.forEach((message: ChatMessage) => {
           if (message.deletedAt) evictTombstonedAttachment(message.messageId);
@@ -397,6 +429,16 @@ export default function useMessaging({
     async (peerId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return;
+      const group = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
+      if (group) {
+        if (group.left || !group.group!.memberIds.includes(userId)) return;
+        // The implemented read endpoint is direct-only; group counts remain local.
+        setConversations(prev => prev.map(row => row.peerId !== trimmedPeerId ? row : {
+          ...row, unreadCount: 0,
+          readByMember: { ...row.readByMember, [userId]: new Date().toISOString() },
+        }));
+        return;
+      }
       try {
         const trimmedUrl = signalingUrl.trim();
         const response = await authedFetchRef.current?.((sid: string) => ({
@@ -415,7 +457,7 @@ export default function useMessaging({
         });
       }
     },
-    [authedFetchRef, signalingUrl, scope],
+    [authedFetchRef, signalingUrl, scope, userId],
   );
 
   /**
@@ -496,6 +538,137 @@ export default function useMessaging({
     }, scope);
   }, [scope]);
 
+  const groupActions = useMemo(() => {
+    const commit = async (row: ConversationSummary) => {
+      if (!scope || scopeRef.current !== scope) throw new Error('Sign in before managing groups');
+      await loadChatSnapshot(scope);
+      if (scopeRef.current !== scope) throw new Error('Account changed');
+      const next = [row, ...conversationsRef.current.filter(entry => entry.peerId !== row.peerId)];
+      const previous = conversationsRef.current;
+      conversationsRef.current = next;
+      setConversations(next);
+      saveChatSnapshot({ conversations: next }, scope);
+      try {
+        await flushChatDb(scope);
+      } catch (error) {
+        if (scopeRef.current === scope && conversationsRef.current === next) {
+          conversationsRef.current = previous;
+          setConversations(previous);
+          saveChatSnapshot({ conversations: previous }, scope);
+        }
+        throw error;
+      }
+      if (scopeRef.current !== scope) throw new Error('Account changed');
+    };
+    const find = (id: string) => {
+      const row = conversationsRef.current.find(entry => entry.peerId === id && entry.group);
+      if (!row || row.left || !row.group!.memberIds.includes(userId)) throw new Error('You are not a member');
+      return row;
+    };
+    const live = async (event: string, payload: object) => {
+      if (!scope || scopeRef.current !== scope) throw new Error('Account changed');
+      if (!socketRef.current?.connected || !signalingRef.current) throw new Error('Connect before managing a live group');
+      const ack = await signalingRef.current.request(event, { version: SIGNALING_VERSION, ...payload });
+      if (scopeRef.current !== scope) throw new Error('Account changed');
+      const group = conversationAcknowledgement(ack, userId);
+      const expectedId = (payload as { conversationId?: string }).conversationId;
+      if (expectedId && group.conversationId !== expectedId) throw new Error('Server acknowledged a different group');
+      const next = applyGroupSnapshot(conversationsRef.current, group, userId);
+      conversationsRef.current = next;
+      setConversations(next);
+      saveChatSnapshot({ conversations: next }, scope);
+      try { await flushChatDb(scope); }
+      catch {
+        if (scopeRef.current === scope) updateStatus('Group updated on the server, but its offline cache could not be saved.', 'error');
+      }
+      if (scopeRef.current !== scope) throw new Error('Account changed');
+      return group;
+    };
+    return {
+      mode: groupTransport,
+      create: async (name: string, inviteeIds: string[]) => {
+        const id = `mock-group-${createMessageId()}`;
+        const mock = createMockGroup(userId, name, inviteeIds, id);
+        if (mock.group!.memberIds.length > 16) throw new Error('Select no more than 15 other people');
+        if (groupTransport === 'live') {
+          const group = await live(CLIENT_EVENTS.CONVERSATION_CREATE, {
+            name: mock.group!.name, inviteeIds: mock.group!.memberIds.filter(memberId => memberId !== userId),
+          });
+          return group.conversationId;
+        }
+        await commit(mock);
+        return id;
+      },
+      members: async (id: string, action: GroupMemberAction) => {
+        await commit(mutateMockMembers(find(id), userId, action));
+      },
+      rename: async (id: string, name: string) => {
+        const row = find(id);
+        const updated = renameMockGroup(row, userId, name);
+        if (row.localMock) await commit(updated);
+        else {
+          await live(CLIENT_EVENTS.CONVERSATION_UPDATE, { conversationId: row.conversationId, name: name.trim() });
+        }
+      },
+      leave: async (id: string) => {
+        const row = find(id);
+        if (!row.localMock) {
+          const group = await live(CLIENT_EVENTS.CONVERSATION_LEAVE, { conversationId: row.conversationId });
+          if (group.memberIds.includes(userId)) throw new Error('Server did not confirm departure');
+        } else {
+          await commit(leaveMockGroup(row, userId));
+        }
+        // Keep unsent bubbles recoverable, but never replay after leaving.
+        const messages = {
+          ...messagesByPeerRef.current,
+          [id]: (messagesByPeerRef.current[id] ?? []).map(entry => entry.pending ? asFailed(entry) : entry),
+        };
+        messagesByPeerRef.current = messages;
+        setMessagesByPeer(messages);
+        persistOutbox(outboxRef.current.map(item => item.recipientId === id
+          ? { ...item, attempts: OUTBOX_MAX_ATTEMPTS, lastError: 'Left group' } : item));
+        await flushChatDb(scope);
+      },
+      previewActivity: (id: string, memberId: string, action: 'typing' | 'read' | 'message') => {
+        const row = find(id);
+        if (!row.localMock || memberId === userId || !row.group!.memberIds.includes(memberId)) {
+          throw new Error('Simulation is available only for other local preview members');
+        }
+        const now = new Date().toISOString();
+        if (action === 'read') {
+          setConversations(prev => prev.map(entry => entry.peerId !== id ? entry : {
+            ...entry, readByMember: { ...entry.readByMember, [memberId]: now },
+          }));
+        } else if (action === 'typing') {
+          const key = JSON.stringify([id, memberId]);
+          clearTimeout(typingTimeoutsRef.current[key]);
+          setGroupTyping(prev => ({ ...prev, [id]: { ...prev[id], [memberId]: true } }));
+          typingTimeoutsRef.current[key] = setTimeout(() =>
+            setGroupTyping(prev => ({ ...prev, [id]: { ...prev[id], [memberId]: false } })), TYPING_INDICATOR_TIMEOUT_MS);
+        } else {
+          const message: ChatMessage = {
+            messageId: createMessageId(), conversationId: row.conversationId,
+            senderId: memberId, recipientId: id, body: 'Hello from the local preview', createdAt: now,
+          };
+          messagesByPeerRef.current = prependMessage(messagesByPeerRef.current, id, message);
+          setMessagesByPeer(prev => prependMessage(prev, id, message));
+          setConversations(prev => withIncomingMessage(prev, message, { incrementUnread: activeChatPeerIdRef.current !== id }));
+        }
+      },
+    };
+  }, [scope, userId, persistOutbox, socketRef, signalingRef, groupTransport, updateStatus]);
+
+  useEffect(() => {
+    const signaling = signalingRef.current;
+    if (!signaling || !isSocketConnected || !scope) return undefined;
+    return signaling.on(SERVER_EVENTS.CONVERSATION_UPDATED, ({ conversation }: { conversation: ConversationRecord }) => {
+      if (scopeRef.current !== scope) return;
+      const next = applyGroupSnapshot(conversationsRef.current, conversation, userId);
+      conversationsRef.current = next;
+      setConversations(next);
+    });
+  }, [isSocketConnected, scope, signalingRef, userId]);
+
   /** Schedule the next drain with bounded exponential backoff plus jitter. */
   const scheduleDrain = useCallback(() => {
     if (drainTimerRef.current) return;
@@ -529,19 +702,13 @@ export default function useMessaging({
       if (scopeRef.current !== scope || !outboxRef.current.some(row => row.messageId === item.messageId)) return false;
 
       try {
-        const ack = await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, {
-          version: SIGNALING_VERSION,
-          recipientId: item.recipientId,
-          body: item.body,
-          // Rich fields ride along with the queued send, so an attachment
-          // composed offline is replayed exactly like a text message.
-          ...(item.type && item.type !== MESSAGE_TYPES.TEXT ? { type: item.type } : {}),
-          ...(item.attachment ? { attachment: item.attachment } : {}),
-          ...(item.replyTo ? { replyTo: item.replyTo } : {}),
-          // The server upserts on this id, so a replay of this exact send
-          // resolves to the same message instead of a duplicate.
-          messageId: item.messageId,
-        });
+        const row = conversationsRef.current.find(entry => entry.peerId === item.recipientId);
+        if (item.targetKind === 'group' && (!row?.group || row.left || !row.group.memberIds.includes(userId))) {
+          throw new Error('You are no longer a group member');
+        }
+        const ack = item.localMock
+          ? { message: sendMockGroup(row, item, userId) }
+          : await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, outboxSendPayload(item));
         if (scopeRef.current !== scope) return false;
         const confirmed = (ack as { message?: ChatMessage } | undefined)?.message;
         patchMessage(item.recipientId, item.messageId, entry => asSent(entry, confirmed));
@@ -565,7 +732,7 @@ export default function useMessaging({
         return false;
       }
     },
-    [patchMessage, persistOutbox, signalingRef, socketRef, updateStatus, scope],
+    [patchMessage, persistOutbox, signalingRef, socketRef, updateStatus, scope, userId],
   );
 
   /**
@@ -671,6 +838,11 @@ export default function useMessaging({
         return;
       }
       if (scopeRef.current !== scope) return;
+      const groupRow = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
+      if (groupRow && (groupRow.left || !groupRow.group!.memberIds.includes(userId))) {
+        updateStatus('You are no longer a group member', 'error');
+        return;
+      }
 
       const messageId = createMessageId();
       const createdAt = nextLocalCreatedAt(
@@ -690,6 +862,7 @@ export default function useMessaging({
         type,
         attachment,
         replyTo,
+        ...(groupRow ? { targetKind: 'group' as const, localMock: groupRow.localMock } : {}),
       };
 
       // Built once and shared: the conversation and the chat-list row are two
@@ -716,6 +889,7 @@ export default function useMessaging({
       }
 
       await drainOutbox();
+      return messageId;
     },
     [drainOutbox, persistOutbox, userId, scope, scheduleDrain, updateStatus],
   );
@@ -812,6 +986,8 @@ export default function useMessaging({
     async (peerId: string, messageId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
+      const group = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
+      if (group && (group.left || !group.group!.memberIds.includes(userId))) return;
 
       const queued = outboxRef.current.some(item => item.messageId === messageId);
       // The retry keeps the original message identity, so a late-succeeding
@@ -825,7 +1001,7 @@ export default function useMessaging({
       drainTimerRef.current = null;
       await drainOutbox();
     },
-    [drainOutbox, patchMessage, persistOutbox],
+    [drainOutbox, patchMessage, persistOutbox, userId],
   );
 
   /**
@@ -916,6 +1092,9 @@ export default function useMessaging({
     (peerId: string, isTyping: boolean) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return;
+      const group = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
+      if (group?.left || (group && !group.group!.memberIds.includes(userId))) return;
+      if (group?.localMock) return;
       const signaling = signalingRef?.current;
       if (!signaling || !socketRef.current?.connected) return;
 
@@ -928,11 +1107,11 @@ export default function useMessaging({
 
       signaling.emit(CLIENT_EVENTS.MESSAGE_TYPING, {
         version: SIGNALING_VERSION,
-        recipientId: trimmedPeerId,
+        ...(group ? { conversationId: group.conversationId } : { recipientId: trimmedPeerId }),
         isTyping: Boolean(isTyping),
       });
     },
-    [signalingRef, socketRef],
+    [signalingRef, socketRef, userId],
   );
 
   /** Sum of unreadCount across every conversation; drives the tab badge. */
@@ -945,15 +1124,42 @@ export default function useMessaging({
   const resetTypingState = useCallback(() => {
     Object.values(typingTimeoutsRef.current).forEach(clearTimeout);
     typingTimeoutsRef.current = {};
+    setGroupTyping({});
   }, []);
 
   // ─── Socket-event adapters ────────────────────────────────────────────────
   // These encapsulate exactly how each raw `message.*` socket event mutates
   // this hook's state, so `useCallFlow`'s socket handlers stay thin.
 
+  const handleGroupMessageReceived = useCallback((message: ChatMessage) => {
+    const groupRow = conversationsRef.current.find(row => row.group && row.conversationId === message.conversationId);
+    if (!groupRow) return false;
+    if (groupRow.left || !groupRow.group!.memberIds.includes(userId) ||
+      !groupRow.group!.memberIds.includes(message.senderId)) return true;
+    const key = groupRow.peerId;
+    const duplicate = messagesByPeerRef.current[key]?.some(entry => entry.messageId === message.messageId);
+    messagesByPeerRef.current = prependMessage(messagesByPeerRef.current, key, message);
+    setMessagesByPeer(prev => prependMessage(prev, key, message));
+    const next = withIncomingMessage(conversationsRef.current, message, {
+      incrementUnread: !duplicate && message.senderId !== userId && activeChatPeerIdRef.current !== key,
+    });
+    conversationsRef.current = next;
+    setConversations(next);
+    if (activeChatPeerIdRef.current === key) void markConversationRead(key);
+    return true;
+  }, [markConversationRead, userId]);
+
   const handleMessageReceived = useCallback(
       (message: ChatMessage) => {
       if (!message?.senderId) return;
+      if (handleGroupMessageReceived(message)) return;
+      // Server group messages use the conversation ID as recipientId, unlike direct messages.
+      if (message.conversationId && message.recipientId === message.conversationId && message.recipientId !== userId) {
+        void fetchConversations().then(() => {
+          if (scopeRef.current === scope) handleGroupMessageReceived(message);
+        });
+        return;
+      }
       const senderId = message.senderId;
 
       setMessagesByPeer(prev => applyIncomingMessage(prev, message));
@@ -989,18 +1195,33 @@ export default function useMessaging({
       // path has had a chance to consult the shared dedupe registry.
       markMessageSeen(message.messageId);
     },
-    [fetchConversations, markConversationRead],
+    [fetchConversations, markConversationRead, userId, handleGroupMessageReceived, scope],
   );
 
   const handleMessageDelivered = useCallback(/** @param message */ (message: ChatMessage) => {
     if (!message?.recipientId) return;
+    const group = conversationsRef.current.find(row => row.group && row.conversationId === message.conversationId);
+    if (group) {
+      setMessagesByPeer(prev => patchMessageIn(prev, group.peerId, message.messageId, entry => asSent(entry, message)));
+      return;
+    }
     setMessagesByPeer(prev => applyDeliveryReceipt(prev, message));
   }, []);
 
   const handleMessageRead = useCallback(
     /** @param payload */
-    ({ readerId, readAt }: { readerId?: string; readAt?: string; }) => {
+    ({ readerId, readAt, conversationId }: { readerId?: string; readAt?: string; conversationId?: string; }) => {
       if (!readerId) return;
+      const group = conversationsRef.current.find(row => row.group && row.conversationId === conversationId);
+      if (group) {
+        if (!readAt || !group.group!.memberIds.includes(readerId) || !Number.isFinite(Date.parse(readAt))) return;
+        setConversations(prev => prev.map(row => row.peerId !== group.peerId ||
+          Date.parse(row.readByMember?.[readerId] ?? '') >= Date.parse(readAt) ? row : {
+            ...row, readByMember: { ...row.readByMember, [readerId]: readAt },
+          }));
+        return;
+      }
+      if (conversationId && conversationId !== conversationIdForPeer(conversationsRef.current, readerId)) return;
       setMessagesByPeer(prev =>
         applyReadReceipt(prev, { readerId, readAt, currentUserId: userId }),
       );
@@ -1010,8 +1231,21 @@ export default function useMessaging({
 
   const handleTypingEvent = useCallback(
     /** @param payload */
-    ({ senderId, isTyping }: { senderId?: string; isTyping?: boolean; }) => {
+    ({ senderId, isTyping, conversationId }: { senderId?: string; isTyping?: boolean; conversationId?: string; }) => {
     if (!senderId) return;
+      const group = conversationsRef.current.find(row => row.group && row.conversationId === conversationId);
+      if (group) {
+        if (group.left || senderId === userId || !group.group!.memberIds.includes(senderId)) return;
+        const key = JSON.stringify([conversationId, senderId]);
+        clearTimeout(typingTimeoutsRef.current[key]);
+        const update = (value: boolean) => setGroupTyping(prev => ({
+          ...prev, [group.peerId]: { ...prev[group.peerId], [senderId]: value },
+        }));
+        update(Boolean(isTyping));
+        if (isTyping) typingTimeoutsRef.current[key] = setTimeout(() => update(false), TYPING_INDICATOR_TIMEOUT_MS);
+        return;
+      }
+      if (conversationId && conversationId !== conversationIdForPeer(conversationsRef.current, senderId)) return;
       clearTimeout(typingTimeoutsRef.current[senderId]);
       setTypingByPeer(prev => ({ ...prev, [senderId]: Boolean(isTyping) }));
       if (isTyping) {
@@ -1021,7 +1255,7 @@ export default function useMessaging({
         }, TYPING_INDICATOR_TIMEOUT_MS);
       }
     },
-    [],
+    [userId],
   );
 
   /**
@@ -1149,6 +1383,10 @@ export default function useMessaging({
     activeChatPeerId,
     setActiveChatPeerId,
     typingByPeer,
+    groupTyping,
+    groupActions,
+    groupCalls,
+    groupCallActions,
     unreadTotal: stateScope === scope ? unreadTotal : 0,
     // Only reported once the socket has told us either way, so the banner
     // never flashes during the first connect.

@@ -1,6 +1,11 @@
 import { CHAT_SCREENS, DEFAULT_TAB, deriveShellRoute, TABS } from '../../src/navigation/routes';
 
 describe('deriveShellRoute', () => {
+  test('a restored group route carries a group identity rather than triggering peer sync', () => {
+    expect(deriveShellRoute({ routes: [{
+      name: TABS.CHATS, state: { routes: [{ name: CHAT_SCREENS.GROUP, params: { peerId: 'group-1' } }] },
+    }] })).toEqual({ activeTab: TABS.CHATS, chatPeerId: 'group-1', chatGroupId: 'group-1' });
+  });
   test('falls back to the default tab for missing or empty state', () => {
     expect(deriveShellRoute(undefined)).toEqual({ activeTab: DEFAULT_TAB, chatPeerId: null });
     expect(deriveShellRoute({ routes: [] })).toEqual({ activeTab: DEFAULT_TAB, chatPeerId: null });

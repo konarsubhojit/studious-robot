@@ -618,11 +618,11 @@ export default function useSignalingSocket({
       signaling.on(SERVER_EVENTS.MESSAGE_DELIVERED, ({ message }) => {
         connectSocketHandlersRef.current.handleMessageDelivered(message);
       });
-      signaling.on(SERVER_EVENTS.MESSAGE_READ, ({ readerId, readAt }) => {
-        connectSocketHandlersRef.current.handleMessageRead({ readerId, readAt });
+      signaling.on(SERVER_EVENTS.MESSAGE_READ, payload => {
+        connectSocketHandlersRef.current.handleMessageRead(payload);
       });
-      signaling.on(SERVER_EVENTS.MESSAGE_TYPING, ({ senderId, isTyping }) => {
-        connectSocketHandlersRef.current.handleTypingEvent({ senderId, isTyping });
+      signaling.on(SERVER_EVENTS.MESSAGE_TYPING, payload => {
+        connectSocketHandlersRef.current.handleTypingEvent(payload);
       });
 
       signaling.on(SERVER_EVENTS.CALL_MEDIA_STATE, ({ callId, mediaState }) => {

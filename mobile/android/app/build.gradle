@@ -93,9 +93,9 @@ react {
 }
 
 // Babel inlines these values, so Gradle must not restore a bundle built with
-// another run's Sentry identity (or reporting configuration) from its cache.
+// another run's Sentry identity, reporting configuration or group transport.
 tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
-    ["SENTRY_DSN", "SENTRY_RELEASE", "SENTRY_DIST"].each { key ->
+    ["SENTRY_DSN", "SENTRY_RELEASE", "SENTRY_DIST", "GROUP_TRANSPORT"].each { key ->
         inputs.property(key, System.getenv(key) ?: "")
     }
 }

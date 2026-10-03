@@ -6,6 +6,10 @@ import CallStage from '../../src/components/CallStage';
 import RingingAvatar from '../../src/components/RingingAvatar';
 import { ListItem } from '../../src/components/primitives';
 import { fontScaleCaps } from '../../src/theme';
+const mountedTrees: renderer.ReactTestRenderer[] = [];
+afterEach(() => {
+  act(() => { mountedTrees.splice(0).forEach(tree => tree.unmount()); });
+});
 
 jest.mock(
   '../../src/components/AudioOutputMenu',
@@ -26,6 +30,7 @@ function render(element: React.ReactElement) {
   act(() => {
     tree = renderer.create(element);
   });
+  mountedTrees.push(tree);
   return tree;
 }
 

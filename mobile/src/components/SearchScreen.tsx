@@ -241,7 +241,7 @@ function SearchScreen({
       .map((conversation, order) => ({
         conversation,
         order,
-        index: matchIndex(conversation.peerId, term),
+        index: matchIndex(conversation.group?.name ?? conversation.peerId, term),
       }))
       .filter(entry => entry.index !== -1)
       .sort(byMatchQuality)
@@ -303,11 +303,11 @@ function SearchScreen({
               onOpenConversation?.(item.peerId);
             }}
             accessibilityRole="button"
-            accessibilityLabel={`Open conversation with ${item.peerId}`}
+            accessibilityLabel={`Open conversation with ${item.group?.name ?? item.peerId}`}
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
             testID="search-conversation-row">
             <View style={styles.rowText}>
-              <HighlightedText text={item.peerId} term={term} style={styles.rowTitle} />
+              <HighlightedText text={item.group?.name ?? item.peerId} term={term} style={styles.rowTitle} />
               <Text style={styles.rowSubtitle} numberOfLines={1}>
                 {preview}
               </Text>

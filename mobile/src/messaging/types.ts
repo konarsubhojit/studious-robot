@@ -1,4 +1,4 @@
-import type { AttachmentRecord, MessageRecord } from '../../../shared/signaling/schemas';
+import type { AttachmentRecord, ConversationRecord, MessageRecord } from '../../../shared/signaling/schemas';
 
 /**
  * The vocabulary the messaging client is written in: the shapes every
@@ -39,6 +39,9 @@ export type OutboxItem = {
   messageId: string;
   recipientId: string;
   conversationId?: string | null;
+  /** recipientId remains the local timeline key; it is never emitted for groups. */
+  targetKind?: 'group';
+  localMock?: boolean;
   body?: string;
   type?: string;
   attachment?: AttachmentRecord | null;
@@ -83,6 +86,10 @@ export type ConversationSummary = {
   lastMessage?: ChatMessage | null;
   lastActivity?: ConversationActivity | null;
   unreadCount?: number;
+  group?: ConversationRecord;
+  localMock?: boolean;
+  left?: boolean;
+  readByMember?: Record<string, string>;
 };
 
 /** Per-peer message history, newest-first within each peer. */

@@ -759,9 +759,94 @@ daemon then spins on `OutOfMemoryError: Metaspace` without exiting, so the build
 hangs. `-XX:+ExitOnOutOfMemoryError` is set as a backstop, and the CI job caps
 itself with `timeout-minutes` rather than relying on GitHub's 6-hour limit.
 
-## Other scripts
+## Group chat local preview
+
+In **Chats → New group**, search the authenticated `GET /users` directory,
+select at least two other people, and enter a name. Selections survive search
+changes. The mixed chat list shows group names and unread badges; tapping a
+group opens its own restorable navigation route. Direct chats/calls are unchanged.
+
+### Default mock and opt-in live transport
+
+New groups default to **local mocks**, scoped to the signed-in account and
+signaling server. Creation, renaming, admin-only add/remove, leaving, messages,
+drafts, and per-member read summaries use the existing SQLite chat store.
+Offline group sends reuse the existing durable outbox, original message IDs,
+retry policy, and flush-before-send gate. Reconnecting completes mock sends
+locally; it does **not** deliver them to another device. Leaving disables sends
+and automatic replay while retaining failed queued bubbles.
+Queued groups retain their membership snapshots even beyond the normal
+conversation retention window, so a restored send never becomes a direct send.
+
+To create real server groups, set `GROUP_TRANSPORT=live` when starting Metro
+(restart/reset its cache after changing the flag), or when building the JS bundle:
+
+```bash
+GROUP_TRANSPORT=live npm start -- --reset-cache
+```
+
+The creation sheet clearly labels live invitations. Existing mock groups stay
+local even with this flag; they are never automatically promoted or uploaded.
+Existing server groups discovered by REST always use live transport.
+
+The server **already implements** group create/update/leave and group-call
+lifecycle handlers in `server/src/signaling/conversationHandlers.ts`. Live
+creation, renaming and leaving validate the handlers' `{ conversation }`
+acknowledgements using the frozen snapshot schema. Live calls likewise consume
+the implemented `{ call, participants }` acknowledgement and validated broadcasts.
+No role/member-mutation wire fields are invented.
+
+`GET /conversations` returns direct summaries in `conversations` and bare group
+snapshots in `groupConversations`; both populate the mixed list. Live group
+history/refresh/pagination use the implemented
+`GET /conversations/:conversationId/messages` endpoint, including `before` and
+`beforeMessageId`. Offline live sends reuse the same durable outbox but deliver
+to the server using only `conversationId`.
+
+**Members** exposes clearly labeled local simulations for another member's
+typing, read receipt, and incoming message. Typing expires automatically.
+Admin UI gates mean the snapshot's `creatorId`; no new role or member-mutation
+wire format is inferred. The mock does not transfer creator privileges.
+The live server maintains owner/admin roles and transfers ownership internally,
+but its exposed snapshots do not contain those roles: the mobile gate therefore
+remains conservatively creator-only rather than inferring a successor's rights.
+
+**Group call preview** follows the actual frozen `schemas.ts` contract:
+`conversation.call.start` (`conversationId`, optional `mediaType`) and
+`conversation.call.accept/decline/leave` (`callId`), all with `version: 2`.
+Validated `conversation.call.updated` snapshots drive the participant grid,
+including `ringing/accepted/declined/left`, participant timestamps, and call
+`stateVersion`. Types are derived from that schema, not the stale shared README.
+Mock groups produce these same validated snapshots locally; remote groups use
+the real lifecycle signaling and may notify other participants. There is still
+**no actual media**, microphone/camera access, or WebRTC connection. Mute is a
+local-only simulation, never a new wire field/event. Other-member lifecycle
+simulation is available only in local mock groups. Peer-call events are never
+used. Closing the sheet does not leave a call; use **Leave preview**.
+Preview call snapshots are ephemeral and account-scoped; restoring an already
+active call after a cold launch and actual media remain follow-up integration work.
+
+The mobile client accepts validated `conversation.updated` snapshots and
+conversation-scoped message/typing/read events. Non-mock sends and typing
+target exactly `conversationId`; direct sends continue to target only
+`recipientId`. The remaining limitations are **group read synchronization,
+member add/remove, role exposure, cold-start active-call recovery, and actual
+group media**, not the existing creation/history/lifecycle handlers.
+The implemented `POST /messages/read` endpoint is direct-only, and REST group
+snapshots do not supply last-message or unread totals. Group unread counters
+and read watermarks are local (plus any received conversation-scoped receipts),
+not server-authoritative cross-device read state; the client never posts a
+group ID as `peerId`. The shared contracts are unchanged.
+
+Security boundary: the local adapter checks membership/admin gates independently
+of disabled UI controls, mock flags never cross the wire, stale membership
+snapshots are ignored, and SQLite scopes isolate accounts/servers. Server-side
+authorization remains mandatory for all future remote member operations.
+
+## Validation scripts
 
 ```bash
 npm run lint       # eslint
+npm run typecheck  # TypeScript
 npm test           # jest
 ```

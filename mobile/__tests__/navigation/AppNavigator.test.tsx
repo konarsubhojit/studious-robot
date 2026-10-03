@@ -16,7 +16,7 @@ import RNFS from 'react-native-fs';
 import { BackHandler, Platform, Text } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import AppNavigator from '../../src/navigation/AppNavigator';
-import { openChatConversation } from '../../src/navigation/navigationRef';
+import { closeChatConversation, openChatConversation, openGroupConversation } from '../../src/navigation/navigationRef';
 import { TABS } from '../../src/navigation/routes';
 
 function findByTestID(tree: any, testID: any) {
@@ -43,6 +43,21 @@ async function renderNavigator(overrides = {}) {
 }
 
 describe('AppNavigator', () => {
+  test('group navigation renders with a group marker, persists and returns to the mixed list', async () => {
+    const onRouteChange = jest.fn();
+    const conversation = jest.fn((id: string, options: { isGroup?: boolean }) =>
+      <Text testID="screen-group">{options.isGroup ? `Group ${id}` : `Peer ${id}`}</Text>);
+    const tree = await renderNavigator({ onRouteChange, renderChatConversation: conversation });
+    await act(async () => { openGroupConversation('mock-group-1'); });
+    expect(findByTestID(tree, 'screen-group').props.children).toBe('Group mock-group-1');
+    expect(onRouteChange).toHaveBeenLastCalledWith({
+      activeTab: TABS.CHATS, chatPeerId: 'mock-group-1', chatGroupId: 'mock-group-1',
+    });
+    const writes = (RNFS.writeFile as jest.Mock).mock.calls;
+    expect(writes[writes.length - 1][1]).toContain('groupConversation');
+    await act(async () => { closeChatConversation(); });
+    expect(findByTestID(tree, 'screen-chat-list')).toBeDefined();
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();

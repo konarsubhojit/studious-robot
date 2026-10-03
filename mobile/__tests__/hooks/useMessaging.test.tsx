@@ -12,6 +12,8 @@ import { displayMessageReceivedInApp } from '../../src/pushNotifications';
 import * as chatDb from '../../src/storage/chatDb';
 import { triggerHapticUnlessSilent } from '../../src/haptics';
 import { evictCachedAttachmentsForMessage } from '../../src/attachmentCache';
+import { createMockGroup } from '../../src/chat/groupMockAdapter';
+import { startMockGroupCall, transitionMockGroupCall } from '../../src/chat/groupCallAdapter';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -56,8 +58,12 @@ function TestHook({ resultRef, params }: any) {
 }
 
 function makeSocket({ connected = true, ackResponse = { ok: true, message: null } }: any = {}) {
+  const listeners = new Map<string, Function>();
   return {
     connected,
+    on: jest.fn((event, handler) => { listeners.set(event, handler); }),
+    off: jest.fn((event) => { listeners.delete(event); }),
+    receive: (event: string, payload: object) => listeners.get(event)?.(payload),
     emit: jest.fn((event, payload, callback) => {
       if (typeof callback === 'function') callback(ackResponse);
     }),
@@ -107,6 +113,404 @@ afterEach(() => {
 });
 
 describe('useMessaging', () => {
+  test('mock group calls use frozen participant snapshots and never emit peer or group wire events', async () => {
+    const { resultRef, params } = setup({ socketRef: { current: makeSocket({ connected: false }) } });
+    let id!: string;
+    await act(async () => {
+      id = await resultRef.current.groupActions.create('Team', ['bob', 'carol']);
+      await resultRef.current.groupCallActions.start(id, 'video');
+      await resultRef.current.groupCallActions.simulate(id, 'bob', 'accept');
+      await resultRef.current.groupCallActions.simulate(id, 'carol', 'decline');
+      await resultRef.current.groupCallActions.simulate(id, 'bob', 'leave');
+      await resultRef.current.groupCallActions.transition(id, 'leave');
+    });
+    const snapshot = resultRef.current.groupCalls[id];
+    expect(snapshot.call).toMatchObject({ mediaType: 'video', status: 'ended', stateVersion: 5 });
+    expect(snapshot.participants.map((person: any) => person.status)).toEqual(['left', 'left', 'declined']);
+    expect(snapshot.participants.every((person: any) => person.callId === snapshot.callId && person.invitedAt)).toBe(true);
+    expect(params.socketRef.current.emit).not.toHaveBeenCalled();
+  });
+
+  test('remote group lifecycle sends exact call requests and consumes authoritative versioned snapshots', async () => {
+    const { resultRef, params } = setup();
+    const row = createMockGroup('alice', 'Remote', ['bob', 'carol'], 'remote-group');
+    let serverSnapshot = startMockGroupCall(row, 'alice', 'remote-call', 'video', '2026-10-03T06:00:00Z');
+    params.socketRef.current.emit.mockImplementation((event: string, _payload: object, ack: Function) => {
+      const action = event.split('.').pop();
+      if (action !== 'start') {
+        serverSnapshot = transitionMockGroupCall(serverSnapshot, 'alice', action as 'accept' | 'decline' | 'leave',
+          '2026-10-03T06:01:00Z');
+      }
+      ack({ ok: true, version: 2, call: serverSnapshot.call, participants: serverSnapshot.participants });
+    });
+    await act(async () => { resultRef.current.handleSocketConnected(); });
+    await act(async () => {
+      params.socketRef.current.receive('conversation.updated', { conversation: row.group, updatedBy: 'alice' });
+      await resultRef.current.groupCallActions.start('remote-group', 'video');
+    });
+    expect(resultRef.current.groupCalls['remote-group'].participants[0].status).toBe('accepted');
+    await act(async () => { await resultRef.current.groupCallActions.transition('remote-group', 'leave'); });
+    let snapshot = startMockGroupCall(row, 'bob', 'remote-incoming', 'video', '2026-10-03T06:00:00Z');
+    serverSnapshot = snapshot;
+    await act(async () => {
+      params.socketRef.current.receive('conversation.call.updated', snapshot);
+      await resultRef.current.groupCallActions.transition('remote-group', 'accept');
+    });
+    expect(resultRef.current.groupCalls['remote-group'].participants[0].status).toBe('accepted');
+    snapshot = transitionMockGroupCall(snapshot, 'alice', 'accept', '2026-10-03T06:01:00Z');
+    await act(async () => {
+      params.socketRef.current.receive('conversation.call.updated', snapshot);
+      params.socketRef.current.receive('conversation.call.updated', { ...snapshot, call: { ...snapshot.call, stateVersion: 1 } });
+      params.socketRef.current.receive('conversation.call.updated', { ...snapshot, callId: 'mismatch' });
+      await resultRef.current.groupCallActions.transition('remote-group', 'leave');
+    });
+    expect(resultRef.current.groupCalls['remote-group'].call.stateVersion).toBe(3);
+    const nextCall = startMockGroupCall(row, 'bob', 'remote-call-next', 'audio', '2026-10-03T06:02:00Z');
+    serverSnapshot = nextCall;
+    await act(async () => {
+      params.socketRef.current.receive('conversation.call.updated', nextCall);
+      params.socketRef.current.receive('conversation.call.updated', { ...snapshot, call: { ...snapshot.call, stateVersion: 100 } });
+      await resultRef.current.groupCallActions.transition('remote-group', 'decline');
+    });
+    expect(resultRef.current.groupCalls['remote-group'].callId).toBe('remote-call-next');
+    expect(params.socketRef.current.emit.mock.calls.map(([event, payload]: any[]) => [event, payload])).toEqual([
+      ['conversation.call.start', { version: 2, conversationId: 'remote-group', mediaType: 'video' }],
+      ['conversation.call.leave', { version: 2, callId: 'remote-call' }],
+      ['conversation.call.accept', { version: 2, callId: 'remote-incoming' }],
+      ['conversation.call.leave', { version: 2, callId: 'remote-incoming' }],
+      ['conversation.call.decline', { version: 2, callId: 'remote-call-next' }],
+    ]);
+    await expect(resultRef.current.groupCallActions.simulate('remote-group', 'bob', 'leave')).rejects.toThrow('local preview');
+    params.socketRef.current.connected = false;
+    await expect(resultRef.current.groupCallActions.transition('remote-group', 'decline')).rejects.toThrow('Connect');
+  });
+
+  test('live mode creates, discovers, pages, sends, renames and leaves with actual server wire and REST shapes', async () => {
+    const { resultRef, params } = setup({ groupTransport: 'live' });
+    let group = createMockGroup('alice', 'Team', ['bob', 'carol'], 'server-group').group!;
+    params.socketRef.current.emit.mockImplementation((event: string, payload: any, ack: Function) => {
+      if (event === 'conversation.update') group = { ...group, name: payload.name, membershipVersion: 2 };
+      if (event === 'conversation.leave') group = { ...group, memberIds: ['bob', 'carol'], membershipVersion: 3 };
+      if (event === 'message.send') {
+        ack({ ok: true, version: 2, message: {
+          messageId: payload.messageId, conversationId: group.conversationId, senderId: 'alice',
+          recipientId: group.conversationId, body: payload.body, createdAt: '2026-10-03T06:01:00Z',
+        } });
+      } else ack({ ok: true, version: 2, conversation: group });
+    });
+    let id!: string;
+    await act(async () => { id = await resultRef.current.groupActions.create(' Team ', ['alice', 'bob', 'bob', 'carol']); });
+    expect(id).toBe('server-group');
+    expect(resultRef.current.groupActions.mode).toBe('live');
+    expect(resultRef.current.conversations[0]).toMatchObject({ peerId: id, group, localMock: false });
+    params.authedFetchRef.current.mockResolvedValueOnce({ ok: true, json: async () => ({
+      conversations: [{ peerId: 'dave', unreadCount: 2 }], groupConversations: [group],
+    }) });
+    await act(async () => { await resultRef.current.fetchConversations(); });
+    expect(resultRef.current.conversations).toHaveLength(2);
+    const history = { messageId: 'history-new', conversationId: id, senderId: 'bob', recipientId: id,
+      body: 'from server history', createdAt: '2026-10-03T06:00:00Z' };
+    params.authedFetchRef.current
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ conversationId: id, messages: [history], hasMore: true }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [{ ...history, messageId: 'history-old', createdAt: '2026-10-03T05:00:00Z' }] }) });
+    await act(async () => {
+      await resultRef.current.fetchMessagesForPeer(id);
+      await resultRef.current.fetchMessagesForPeer(id, {
+        cursor: { before: history.createdAt, beforeType: 'message', beforeMessageId: history.messageId },
+      });
+    });
+    const requests = params.authedFetchRef.current.mock.calls.map(([factory]: any[]) => factory('session-token'));
+    expect(requests[1].url).toBe('https://signal.example.com/conversations/server-group/messages?limit=20');
+    expect(requests[2].url).toContain('beforeMessageId=history-new');
+    expect(requests[2].url).not.toContain('peerId=');
+    expect(resultRef.current.messagesByPeer[id].map((message: any) => message.messageId)).toEqual(['history-new', 'history-old']);
+    params.socketRef.current.connected = false;
+    await act(async () => { await resultRef.current.sendMessage(id, 'durable live send'); });
+    const queuedId = (chatDb as any).__snapshot.outbox[0].messageId;
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ conversationId: id, targetKind: 'group', localMock: false });
+    params.authedFetchRef.current.mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [history] }) });
+    await act(async () => { await resultRef.current.fetchMessagesForPeer(id); });
+    expect(resultRef.current.messagesByPeer[id]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ messageId: queuedId, body: 'durable live send', pending: true }),
+    ]));
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    params.socketRef.current.connected = true;
+    await act(async () => {
+      await resultRef.current.drainOutbox();
+      await resultRef.current.groupActions.rename(id, 'Renamed');
+    });
+    expect(resultRef.current.conversations.find((row: any) => row.peerId === id).group.name).toBe('Renamed');
+    await expect(resultRef.current.groupActions.members(id, { type: 'add', userIds: ['dave'] })).rejects.toThrow('local preview');
+    await act(async () => { await resultRef.current.groupActions.leave(id); });
+    expect(resultRef.current.conversations.find((row: any) => row.peerId === id))
+      .toMatchObject({ group: { membershipVersion: 3, memberIds: ['bob', 'carol'] }, left: true });
+    expect(params.socketRef.current.emit.mock.calls.map(([event, payload]: any[]) => [event, payload])).toEqual([
+      ['conversation.create', { version: 2, name: 'Team', inviteeIds: ['bob', 'carol'] }],
+      ['message.send', { version: 2, conversationId: id, body: 'durable live send', messageId: queuedId }],
+      ['conversation.update', { version: 2, conversationId: id, name: 'Renamed' }],
+      ['conversation.leave', { version: 2, conversationId: id }],
+    ]);
+  });
+
+  test('REST group discovery hydrates groups without peerId and malformed lists do not crash or erase valid rows', async () => {
+    const { resultRef, params } = setup();
+    const group = createMockGroup('alice', 'Server group', ['bob', 'carol'], 'server-group').group!;
+    params.authedFetchRef.current.mockResolvedValueOnce({ ok: true, json: async () => ({
+      conversations: [{ peerId: 'bob', unreadCount: 1 }], groupConversations: [group],
+    }) });
+    await act(async () => { await resultRef.current.fetchConversations(); });
+    expect(resultRef.current.conversations[0]).toMatchObject({ peerId: 'server-group', group, localMock: false });
+    params.authedFetchRef.current.mockResolvedValueOnce({ ok: true, json: async () => ({
+      conversations: [], groupConversations: [{ conversationId: 'bad' }],
+    }) });
+    await act(async () => { await resultRef.current.fetchConversations(); });
+    expect(resultRef.current.conversations).toHaveLength(2);
+  });
+
+  test('a group message arriving before REST bootstrap discovers its group without creating a direct thread', async () => {
+    const { resultRef, params } = setup();
+    const group = createMockGroup('alice', 'Server group', ['bob', 'carol'], 'server-group').group!;
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({
+      conversations: [], groupConversations: [group],
+    }) });
+    const message = { messageId: 'early-group-message', conversationId: group.conversationId,
+      senderId: 'bob', recipientId: group.conversationId, body: 'early', createdAt: '2026-10-03T06:00:00Z' };
+    await act(async () => {
+      resultRef.current.handleMessageReceived(message);
+      await new Promise(resolve => setImmediate(resolve));
+    });
+    expect(resultRef.current.conversations).toHaveLength(1);
+    expect(resultRef.current.conversations[0]).toMatchObject({ peerId: group.conversationId, unreadCount: 1 });
+    expect(resultRef.current.messagesByPeer[group.conversationId])
+      .toEqual([{ ...message, createdAt: new Date(message.createdAt).toISOString() }]);
+    expect(resultRef.current.messagesByPeer.bob).toBeUndefined();
+    expect(params.authedFetchRef.current).toHaveBeenCalledTimes(1);
+  });
+
+  test('live lifecycle rejects missing and miscorrelated acknowledgements without synthetic membership changes', async () => {
+    const { resultRef, params } = setup({ groupTransport: 'live' });
+    await expect(resultRef.current.groupActions.create('Team', ['bob', 'carol'])).rejects.toThrow();
+    expect(resultRef.current.conversations).toEqual([]);
+    await act(async () => { resultRef.current.handleSocketConnected(); });
+    const group = createMockGroup('alice', 'Team', ['bob', 'carol'], 'server-group').group!;
+    await act(async () => { params.socketRef.current.receive('conversation.updated', { conversation: group, updatedBy: 'alice' }); });
+    params.socketRef.current.emit.mockImplementation((_event: string, _payload: object, ack: Function) => {
+      ack({ ok: true, conversation: { ...group, conversationId: 'wrong-group' } });
+    });
+    await expect(resultRef.current.groupActions.rename('server-group', 'New name')).rejects.toThrow('different group');
+    expect(resultRef.current.conversations).toHaveLength(1);
+    expect(resultRef.current.conversations[0].group.name).toBe('Team');
+  });
+
+  test('live creation is explicitly opt-in and never silently falls back to a mock after a wire/storage failure', async () => {
+    const offline = setup({ groupTransport: 'live', socketRef: { current: makeSocket({ connected: false }) } });
+    await expect(offline.resultRef.current.groupActions.create('Team', ['bob', 'carol'])).rejects.toThrow('Connect');
+    expect(offline.resultRef.current.conversations).toEqual([]);
+    const group = createMockGroup('alice', 'Team', ['bob', 'carol'], 'server-group').group!;
+    const live = setup({ groupTransport: 'live', socketRef: { current: makeSocket({ ackResponse: { ok: true, conversation: group } }) } });
+    await act(async () => { await Promise.resolve(); });
+    (chatDb.flushChatDb as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+    await act(async () => {
+      expect(await live.resultRef.current.groupActions.create('Team', ['bob', 'carol'])).toBe('server-group');
+    });
+    expect(live.params.updateStatus).toHaveBeenCalledWith(expect.stringContaining('updated on the server'), 'error');
+    expect(live.params.socketRef.current.emit).toHaveBeenCalledTimes(1);
+    expect(live.resultRef.current.conversations[0].localMock).toBe(false);
+  });
+
+  test('local creation cannot return an old account route when the account changes during its durable flush', async () => {
+    const { resultRef, params, tree } = setup();
+    let finish!: () => void;
+    (chatDb.flushChatDb as jest.Mock).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    let creation!: Promise<string>;
+    await act(async () => { creation = resultRef.current.groupActions.create('Team', ['bob', 'carol']); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} params={{ ...params, userId: 'bob' }} />); });
+    await act(async () => {
+      finish();
+      await expect(creation).rejects.toThrow('Account changed');
+    });
+  });
+
+  test('group call snapshots and listeners are scoped to the account and reject late callbacks after switching', async () => {
+    const { resultRef, params, tree } = setup();
+    const row = createMockGroup('alice', 'Remote', ['bob', 'carol'], 'remote-group');
+    await act(async () => { resultRef.current.handleSocketConnected(); });
+    const oldListener = params.socketRef.current.on.mock.calls.find(([event]: any[]) => event === 'conversation.call.updated')[1];
+    const snapshot = startMockGroupCall(row, 'alice', 'remote-call', 'audio', '2026-10-03T06:00:00Z');
+    await act(async () => {
+      params.socketRef.current.receive('conversation.updated', { conversation: row.group, updatedBy: 'alice' });
+      params.socketRef.current.receive('conversation.call.updated', snapshot);
+    });
+    expect(resultRef.current.groupCalls['remote-group'].callId).toBe('remote-call');
+    await act(async () => {
+      tree.update(<TestHook resultRef={resultRef} params={{ ...params, userId: 'bob' }} />);
+    });
+    act(() => oldListener(snapshot));
+    expect(resultRef.current.groupCalls).toEqual({});
+    expect(params.socketRef.current.off).toHaveBeenCalledWith('conversation.call.updated', expect.any(Function));
+  });
+
+  test('mock group sends queue durably offline, survive remount, then drain locally with the same id', async () => {
+    const socket = makeSocket({ connected: false });
+    const first = setup({ socketRef: { current: socket } });
+    let id!: string;
+    await act(async () => {
+      id = await first.resultRef.current.groupActions.create('Team', ['bob', 'carol']);
+      await first.resultRef.current.sendMessage(id, 'offline group message');
+    });
+    const item = (chatDb as any).__snapshot.outbox[0];
+    expect(item).toMatchObject({ recipientId: id, conversationId: id, targetKind: 'group', localMock: true, attempts: 0 });
+    expect(chatDb.flushChatDb).toHaveBeenCalled();
+    expect(socket.emit).not.toHaveBeenCalled();
+    act(() => first.tree.unmount());
+    const second = setup({ socketRef: { current: socket } });
+    await act(async () => { await Promise.resolve(); });
+    expect(second.resultRef.current.messagesByPeer[id][0]).toMatchObject({ messageId: item.messageId, pending: true });
+    socket.connected = true;
+    await act(async () => {
+      second.resultRef.current.handleSocketConnected();
+      await second.resultRef.current.drainOutbox();
+      await Promise.resolve();
+    });
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    expect(second.resultRef.current.messagesByPeer[id][0]).toMatchObject({ messageId: item.messageId, pending: false });
+    expect(second.resultRef.current.messagesByPeer[id]).toHaveLength(1);
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  test('refresh retains local groups beside direct rows and member actions are durable', async () => {
+    const { resultRef, params } = setup();
+    let id!: string;
+    await act(async () => {
+      id = await resultRef.current.groupActions.create('Team', ['bob', 'carol']);
+      await resultRef.current.groupActions.members(id, { type: 'add', userIds: ['dave'] });
+      await resultRef.current.groupActions.members(id, { type: 'remove', userId: 'bob' });
+      await resultRef.current.groupActions.rename(id, 'Friends');
+    });
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({
+      conversations: [{ peerId: 'bob', conversationId: 'alice:bob', unreadCount: 2 }],
+    }) });
+    await act(async () => { await resultRef.current.fetchConversations(); });
+    expect(resultRef.current.conversations).toHaveLength(2);
+    expect(resultRef.current.conversations[0].group).toMatchObject({ name: 'Friends', memberIds: ['alice', 'carol', 'dave'] });
+    expect((chatDb as any).__snapshot.conversations[0].group.name).toBe('Friends');
+    expect(resultRef.current.unreadTotal).toBe(2);
+    expect(params.socketRef.current.emit).not.toHaveBeenCalled();
+  });
+
+  test('leaving stops queued group replay and sending without dropping the failed bubble', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    let id!: string;
+    await act(async () => {
+      id = await resultRef.current.groupActions.create('Team', ['bob', 'carol']);
+      await resultRef.current.sendMessage(id, 'unsent');
+      await resultRef.current.groupActions.leave(id);
+      await resultRef.current.sendMessage(id, 'must not queue');
+    });
+    expect(resultRef.current.messagesByPeer[id]).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer[id][0].failed).toBe(true);
+    expect((chatDb as any).__snapshot.outbox[0].attempts).toBe(5);
+    expect((chatDb as any).__snapshot.messagesByPeer[id][0]).toMatchObject({ failed: true, pending: false });
+    await act(async () => {
+      await resultRef.current.retryMessage(id, resultRef.current.messagesByPeer[id][0].messageId);
+    });
+    expect((chatDb as any).__snapshot.outbox[0].attempts).toBe(5);
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  test('non-admin membership changes are rejected in the hook', async () => {
+    (chatDb as any).__snapshot.conversations = [createMockGroup('bob', 'Team', ['alice', 'carol'], 'mock-group-1')];
+    const { resultRef } = setup();
+    await act(async () => { await Promise.resolve(); });
+    await expect(resultRef.current.groupActions.members('mock-group-1', { type: 'remove', userId: 'carol' }))
+      .rejects.toThrow('admin');
+    await expect(resultRef.current.groupActions.rename('mock-group-1', 'No')).rejects.toThrow('admin');
+  });
+
+  test('authoritative group events route messages, per-member typing/read, and sends by conversation only', async () => {
+    const { resultRef, params } = setup();
+    await act(async () => { resultRef.current.handleSocketConnected(); });
+    const snapshot = createMockGroup('alice', 'Live group', ['bob', 'carol'], 'group-live').group!;
+    await act(async () => {
+      params.socketRef.current.receive('conversation.updated', { conversation: snapshot, updatedBy: 'alice' });
+      resultRef.current.handleMessageReceived({
+        messageId: 'incoming', conversationId: 'group-live', senderId: 'bob', recipientId: 'alice',
+        body: 'hello group', createdAt: '2026-10-03T01:00:00Z',
+      });
+      resultRef.current.handleMessageReceived({
+        messageId: 'incoming', conversationId: 'group-live', senderId: 'bob', recipientId: 'alice',
+        body: 'hello group', createdAt: '2026-10-03T01:00:00Z',
+      });
+      resultRef.current.handleTypingEvent({ conversationId: 'group-live', senderId: 'bob', isTyping: true });
+      resultRef.current.handleTypingEvent({ conversationId: 'group-live', senderId: 'carol', isTyping: true });
+      resultRef.current.handleMessageRead({ conversationId: 'group-live', readerId: 'carol', readAt: '2026-10-03T02:00:00Z' });
+      await resultRef.current.sendMessage('group-live', 'live group send');
+      resultRef.current.sendTypingIndicator('group-live', true);
+    });
+    expect(resultRef.current.conversations[0]).toMatchObject({ peerId: 'group-live', unreadCount: 1, localMock: false });
+    expect(resultRef.current.conversations[0].readByMember).toEqual({ carol: '2026-10-03T02:00:00Z' });
+    expect(resultRef.current.groupTyping['group-live']).toEqual({ bob: true, carol: true });
+    expect(resultRef.current.typingByPeer.bob).toBeUndefined();
+    expect(resultRef.current.messagesByPeer['group-live']).toHaveLength(2);
+    expect(resultRef.current.messagesByPeer.bob).toBeUndefined();
+    const send = params.socketRef.current.emit.mock.calls.find((args: any[]) => args[0] === 'message.send')[1];
+    const typing = params.socketRef.current.emit.mock.calls.find((args: any[]) => args[0] === 'message.typing')[1];
+    expect(send).toMatchObject({ version: 2, conversationId: 'group-live' });
+    expect(send).not.toHaveProperty('recipientId');
+    expect(typing).toEqual({ version: 2, conversationId: 'group-live', isTyping: true });
+    await act(async () => { await resultRef.current.markConversationRead('group-live'); });
+    expect(params.authedFetchRef.current).not.toHaveBeenCalled();
+  });
+
+  test('storage failure prevents mock send completion and keeps the group outbox recoverable', async () => {
+    const { resultRef, params } = setup();
+    let id!: string;
+    await act(async () => { id = await resultRef.current.groupActions.create('Team', ['bob', 'carol']); });
+    (chatDb.flushChatDb as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+    await act(async () => { await resultRef.current.sendMessage(id, 'keep me'); });
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer[id][0].pending).toBe(true);
+    expect(params.socketRef.current.emit).not.toHaveBeenCalled();
+  });
+
+  test('failed group creation rolls back the snapshot so retry does not create duplicate groups', async () => {
+    const { resultRef } = setup();
+    await act(async () => { await Promise.resolve(); });
+    (chatDb.flushChatDb as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+    await act(async () => {
+      await expect(resultRef.current.groupActions.create('Team', ['bob', 'carol'])).rejects.toThrow('disk full');
+    });
+    expect(resultRef.current.conversations).toEqual([]);
+    expect((chatDb as any).__snapshot.conversations).toEqual([]);
+    await act(async () => { await resultRef.current.groupActions.create('Team', ['bob', 'carol']); });
+    expect(resultRef.current.conversations).toHaveLength(1);
+  });
+
+  test('per-member typing expires independently and old/non-member receipts cannot advance read summaries', async () => {
+    jest.useFakeTimers();
+    const { resultRef } = setup();
+    let id!: string;
+    await act(async () => { id = await resultRef.current.groupActions.create('Team', ['bob', 'carol']); });
+    act(() => {
+      resultRef.current.handleTypingEvent({ conversationId: id, senderId: 'bob', isTyping: true });
+      resultRef.current.handleTypingEvent({ conversationId: id, senderId: 'carol', isTyping: true });
+      resultRef.current.handleTypingEvent({ conversationId: id, senderId: 'bob', isTyping: false });
+      resultRef.current.handleTypingEvent({ conversationId: id, senderId: 'eve', isTyping: true });
+      resultRef.current.handleMessageRead({ conversationId: id, readerId: 'bob', readAt: '2026-10-03T03:00:00Z' });
+      resultRef.current.handleMessageRead({ conversationId: id, readerId: 'bob', readAt: '2026-10-03T01:00:00Z' });
+      resultRef.current.handleMessageRead({ conversationId: id, readerId: 'eve', readAt: '2026-10-03T04:00:00Z' });
+    });
+    expect(resultRef.current.groupTyping[id]).toEqual({ bob: false, carol: true });
+    expect(resultRef.current.conversations[0].readByMember).toEqual({ bob: '2026-10-03T03:00:00Z' });
+    act(() => { jest.advanceTimersByTime(6000); });
+    expect(resultRef.current.groupTyping[id]).toEqual({ bob: false, carol: false });
+    act(() => { mountedTrees.splice(0).forEach((tree: renderer.ReactTestRenderer) => tree.unmount()); });
+    jest.useRealTimers();
+  });
+
   test('fetchConversations is a no-op when there is no session', async () => {
     const { resultRef, params } = setup({ sessionIdRef: { current: null } });
     await act(async () => {

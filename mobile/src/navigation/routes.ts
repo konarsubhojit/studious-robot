@@ -15,6 +15,7 @@ export const TABS: { CHATS: 'chats'; CALLS: 'calls'; SETTINGS: 'settings'; } = {
 export const CHAT_SCREENS = {
   LIST: 'chatList',
   CONVERSATION: 'chatConversation',
+  GROUP: 'groupConversation',
   /** Full-screen unified search (contacts, conversations, messages, calls). */
   SEARCH: 'search',
   /** Per-contact screen: presence, call actions, block/mute. */
@@ -31,7 +32,7 @@ export const DEFAULT_TAB = TABS.CHATS;
  * @param state navigation state
  *   of the tab navigator.
  */
-export function deriveShellRoute(state: { index?: number; routes?: any[]; } | undefined): { activeTab: string; chatPeerId: string | null; } {
+export function deriveShellRoute(state: { index?: number; routes?: any[]; } | undefined): { activeTab: string; chatPeerId: string | null; chatGroupId?: string | null; } {
   const routes = state?.routes;
   if (!Array.isArray(routes) || routes.length === 0) {
     return { activeTab: DEFAULT_TAB, chatPeerId: null };
@@ -48,6 +49,10 @@ export function deriveShellRoute(state: { index?: number; routes?: any[]; } | un
   const chatRoute = Array.isArray(chatRoutes)
     ? chatRoutes[tabRoute.state.index ?? chatRoutes.length - 1]
     : null;
+  if (chatRoute?.name === CHAT_SCREENS.GROUP) {
+    const id = chatRoute?.params?.peerId || null;
+    return { activeTab: TABS.CHATS, chatPeerId: id, chatGroupId: id };
+  }
   const peerId = chatRoute?.name === CHAT_SCREENS.CONVERSATION ? chatRoute?.params?.peerId : null;
   return { activeTab: TABS.CHATS, chatPeerId: peerId || null };
 }

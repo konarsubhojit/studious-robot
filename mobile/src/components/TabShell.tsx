@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
 import { resolveAttachmentDownloadUrl } from '../attachmentAccess';
@@ -24,6 +24,7 @@ import {
   closeChatConversation,
   goBack,
   openChatConversation,
+  openGroupConversation,
   openPeerProfile,
   openSearch,
   openTab,
@@ -34,6 +35,7 @@ import { TABS } from '../navigation/routes';
 import CallsScreen from './CallsScreen';
 import ChatConversationScreen from './ChatConversationScreen';
 import ChatListScreen from './ChatListScreen';
+import GroupConversationScreen from './GroupConversationScreen';
 import PeerProfileScreen from './PeerProfileScreen';
 import SearchScreen from './SearchScreen';
 import SettingsScreen from './SettingsScreen';
@@ -138,6 +140,9 @@ function TabShell() {
     saveDraft,
     sendMessage,
     sendTypingIndicator,
+    groupActions,
+    groupCallActions,
+    markConversationRead,
     setPeerMuted,
     startRecordingVoiceNote,
     stopRecordingVoiceNoteAndSend,
@@ -162,10 +167,31 @@ function TabShell() {
     revokeAllDevices,
   } = useDevices({ signalingUrl, authedFetch, updateStatus });
 
-  const renderChatConversation = useCallback((peerId: string | null, { messageId }: { messageId?: string | null; } = {}) => {
+  const handleOpenConversation = useCallback((id: string, options?: { messageId?: string | null }) => {
+    if (chat.conversations.find(row => row.peerId === id)?.group) openGroupConversation(id);
+    else openChatConversation(id, options);
+  }, [chat.conversations]);
+
+  const renderChatConversation = useCallback((peerId: string | null, { messageId, isGroup }: {
+    messageId?: string | null; isGroup?: boolean;
+  } = {}) => {
     // A conversation route always carries its peer; without one there is
     // nothing to render (and every handler below would target no peer).
     if (!peerId) return null;
+    const conversation = chat.conversations.find(row => row.peerId === peerId);
+    if (isGroup || conversation?.group) {
+      if (!conversation?.group) return <View><Text>Loading group…</Text></View>;
+      return <GroupConversationScreen key={peerId} conversation={conversation}
+        messages={chat.messagesByPeer[peerId] ?? []} currentUserId={chat.currentUserId}
+        typing={chat.groupTyping[peerId] ?? {}} actions={groupActions} onSearchUsers={chat.searchUsers}
+        callSnapshot={chat.groupCalls[peerId]} callActions={groupCallActions}
+        onRefresh={chat.handleRefreshMessages} onLoadOlder={chat.handleLoadOlderMessages}
+        isRefreshing={chat.isRefreshingMessages}
+        onSend={body => sendMessage(peerId, body)} onRetry={id => retryMessage(peerId, id)}
+        onTyping={typing => sendTypingIndicator(peerId, typing)} onRead={() => markConversationRead(peerId)}
+        onBack={closeChatConversation} draft={chat.drafts[peerId]?.text ?? ''}
+        onDraft={text => saveDraft(peerId, text)} offline={chat.isChatOffline} />;
+    }
     return (
       <AttachmentUriProvider
         resolve={attachmentUrl =>
@@ -280,6 +306,12 @@ function TabShell() {
     chat.messagesByPeer,
     chat.peerPresence,
     chat.typingByPeer,
+    chat.groupTyping,
+    markConversationRead,
+    chat.searchUsers,
+    groupActions,
+    groupCallActions,
+    chat.groupCalls,
     clearDraft,
     deleteMessage,
     insets.top,
@@ -316,7 +348,10 @@ function TabShell() {
   const renderChatList = useCallback(() => (
     <ChatListScreen
       conversations={chat.conversations}
-      onOpenConversation={openChatConversation}
+      onOpenConversation={handleOpenConversation}
+      onOpenGroup={openGroupConversation}
+      onCreateGroup={groupActions.create}
+      groupTransport={groupActions.mode}
       onSearchUsers={chat.searchUsers}
       onRefresh={chat.handleRefreshConversations}
       isRefreshing={chat.isRefreshingConversations}
@@ -334,6 +369,8 @@ function TabShell() {
   ), [
     chat.currentUserId,
     chat.conversations,
+    groupActions,
+    handleOpenConversation,
     chat.drafts,
     isPeerMuted,
     setPeerMuted,
@@ -352,8 +389,8 @@ function TabShell() {
       conversations={chat.conversations}
       callHistory={callHistory}
       currentUserId={chat.currentUserId}
-      onOpenConversation={openChatConversation}
-      onOpenMessage={({ peerId, messageId }) => openChatConversation(peerId, { messageId })}
+      onOpenConversation={handleOpenConversation}
+      onOpenMessage={({ peerId, messageId }) => handleOpenConversation(peerId, { messageId })}
       onOpenProfile={openPeerProfile}
       onBack={goBack}
       isServerUnreachable={isServerUnreachable}
@@ -367,6 +404,7 @@ function TabShell() {
     chat.currentUserId,
     chat.searchMessages,
     chat.searchUsers,
+    handleOpenConversation,
     clearSearches,
     isServerUnreachable,
     recentSearches,

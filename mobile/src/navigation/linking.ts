@@ -30,6 +30,7 @@ const linking = {
         screens: {
           [CHAT_SCREENS.LIST]: '',
           [CHAT_SCREENS.CONVERSATION]: 'peer/:peerId',
+          [CHAT_SCREENS.GROUP]: 'group/:peerId',
           [CHAT_SCREENS.SEARCH]: 'search',
           [CHAT_SCREENS.PROFILE]: 'profile/:peerId',
         },

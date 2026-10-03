@@ -17,6 +17,8 @@ export type { PeerPresence };
  */
 export type UseChatSyncParams = {
   chatPeerId: string | null;
+  isGroup?: boolean;
+  syncGroupHistory?: boolean;
   isRegistered: boolean;
   messagesByPeer: Record<string, Array<{ createdAt?: string; messageId?: string; callId?: string; type?: string; }>>;
   fetchConversations: () => Promise<void>;
@@ -41,6 +43,8 @@ function cursorFromOldest(
 
 export default function useChatSync({
   chatPeerId,
+  isGroup = false,
+  syncGroupHistory = false,
   isRegistered,
   messagesByPeer,
   fetchConversations,
@@ -86,7 +90,7 @@ export default function useChatSync({
   useEffect(() => {
     setActiveChatPeerId(chatPeerId);
     let cancelled = false;
-    if (chatPeerId) {
+    if (chatPeerId && (!isGroup || syncGroupHistory)) {
       setIsLoadingMessages(true);
       Promise.resolve(fetchMessagesForPeer(chatPeerId))
         .catch(() => {})
@@ -102,12 +106,12 @@ export default function useChatSync({
       setActiveChatPeerId(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatPeerId]);
+  }, [chatPeerId, isGroup, syncGroupHistory]);
 
   // Fetch presence for the peer of the currently open conversation.
   useEffect(() => {
     let cancelled = false;
-    if (!chatPeerId) {
+    if (!chatPeerId || isGroup) {
       setPeerPresence(null);
       return undefined;
     }
@@ -118,7 +122,7 @@ export default function useChatSync({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatPeerId]);
+  }, [chatPeerId, isGroup]);
 
   const handleRefreshConversations = useCallback(async () => {
     setIsRefreshingConversations(true);
@@ -130,7 +134,7 @@ export default function useChatSync({
   }, [fetchConversations]);
 
   const handleRefreshMessages = useCallback(async () => {
-    if (!chatPeerId) return;
+    if (!chatPeerId || (isGroup && !syncGroupHistory)) return;
     setIsRefreshingMessages(true);
     try {
       await fetchMessagesForPeer(chatPeerId);
@@ -138,17 +142,17 @@ export default function useChatSync({
     } finally {
       setIsRefreshingMessages(false);
     }
-  }, [chatPeerId, fetchMessagesForPeer, markConversationRead]);
+  }, [chatPeerId, isGroup, syncGroupHistory, fetchMessagesForPeer, markConversationRead]);
 
   const handleLoadOlderMessages = useCallback(() => {
-    if (!chatPeerId) return;
+    if (!chatPeerId || (isGroup && !syncGroupHistory)) return;
     const existing = messagesByPeer[chatPeerId] ?? [];
     const oldest = existing[existing.length - 1];
     const cursor = cursorFromOldest(oldest);
     if (cursor) {
       fetchMessagesForPeer(chatPeerId, { cursor });
     }
-  }, [chatPeerId, messagesByPeer, fetchMessagesForPeer]);
+  }, [chatPeerId, isGroup, syncGroupHistory, messagesByPeer, fetchMessagesForPeer]);
 
   return {
     peerPresence,

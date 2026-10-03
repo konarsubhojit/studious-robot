@@ -2,6 +2,21 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import SettingsScreen from '../../src/components/SettingsScreen';
 import ThemeContext, { buildTheme } from '../../src/ThemeContext';
+const originalCreate = renderer.create;
+const mountedTrees: renderer.ReactTestRenderer[] = [];
+let createSpy: jest.SpyInstance;
+
+beforeEach(() => {
+  createSpy = jest.spyOn(renderer, 'create').mockImplementation((...args) => {
+    const tree = originalCreate(...args);
+    mountedTrees.push(tree);
+    return tree;
+  });
+});
+afterEach(() => {
+  act(() => { mountedTrees.splice(0).forEach(tree => tree.unmount()); });
+  createSpy.mockRestore();
+});
 
 jest.mock(
   '../../src/components/AppButton',
