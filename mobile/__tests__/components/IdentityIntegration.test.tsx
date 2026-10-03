@@ -307,6 +307,8 @@ test('peer profile actions and mute/block controls keep raw IDs', async () => {
       onToggleMute={onToggleMute} onBlock={onBlock} />,
   );
   expect(texts(tree)).toContain(name);
+  expect(node(tree, 'peer-profile-user-id').props.children)
+    .toBe(`Username (stable identity): ${peerId}`);
   act(() => { button(tree, 'peer-profile-message').props.onPress(); });
   act(() => { button(tree, 'peer-profile-audio-call').props.onPress(); });
   const mute = tree.root.findAll(n => n.props.testID === 'peer-profile-mute' && n.props.onValueChange)[0];
@@ -323,7 +325,8 @@ test('settings self/muted/blocked names resolve, retain raw account ID, and deny
   const onUnblockUser = jest.fn();
   const transport = makeTransport();
   const screen = <SettingsScreen userId="self-id" signalingUrl="https://signal.example"
-    onSaveSignalingUrl={jest.fn()} onSignOut={jest.fn()} onClose={jest.fn()} mutedPeers={[peerId]}
+    onSaveSignalingUrl={jest.fn()} onSaveDisplayName={jest.fn().mockResolvedValue(null)}
+    onSignOut={jest.fn()} onClose={jest.fn()} mutedPeers={[peerId]}
     blockedUsers={[peerId]} onUnmutePeer={onUnmutePeer} onUnblockUser={onUnblockUser} />;
   const tree = await renderProfile(screen, transport);
   await act(async () => {
