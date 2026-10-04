@@ -1970,6 +1970,50 @@ describe('useMessaging searchMessages', () => {
     );
   });
 
+  test('reconnect runs a delta sync per direct conversation from its stored cursor without duplicating a pending send', async () => {
+    (chatDb as any).__snapshot.conversations = [{ conversationId: 'alice:bob', peerId: 'bob', unreadCount: 0 }];
+    (chatDb as any).__snapshot.outbox = [{
+      messageId: 'client-1', clientMessageId: 'client-1', recipientId: 'bob', body: 'queued',
+      createdAt: '2024-01-05T00:00:00.000Z', attempts: 0, state: 'pending',
+    }];
+    (resourceCache.readResource as jest.Mock).mockImplementation(async (_scope: string, key: string) =>
+      key === 'messages:delta:bob' ? { value: 'stored-cursor', updatedAt: 1 } : null);
+    const { resultRef, params } = setup({ socketRef: { current: makeSocket({ connected: false }) } });
+    await act(async () => { await Promise.resolve(); });
+    params.authedFetchRef.current.mockImplementation(async (buildRequest: Function) => {
+      const { url } = buildRequest('sess-1');
+      if (!url.includes('/messages/delta?')) {
+        return { ok: true, json: async () => ({ changes: [], nextCursor: null, hasMore: false }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          conversationId: 'alice:bob',
+          changes: [
+            { type: 'new', message: { messageId: 'server-1', clientMessageId: 'client-1', senderId: 'alice', recipientId: 'bob', body: 'queued', createdAt: '2024-01-05T00:00:01.000Z' } },
+            { type: 'new', message: { messageId: 'missed', senderId: 'bob', recipientId: 'alice', body: 'while offline', createdAt: '2024-01-05T00:00:02.000Z' } },
+          ],
+          limit: 2, nextCursor: null, hasMore: false, cursor: 'after-reconnect',
+        }),
+      };
+    });
+
+    await act(async () => {
+      resultRef.current.handleSocketConnected();
+      await resultRef.current.syncConversationDeltas();
+    });
+
+    const deltaCall = params.authedFetchRef.current.mock.calls
+      .map((call: any[]) => call[0]('sess-1').url)
+      .find((url: string) => url.includes('/messages/delta?'));
+    expect(deltaCall).toContain('peerId=bob');
+    expect(deltaCall).toContain('cursor=stored-cursor');
+    const bob = resultRef.current.messagesByPeer.bob;
+    expect(bob.filter((entry: any) => entry.clientMessageId === 'client-1')).toHaveLength(1);
+    expect(bob.map((entry: any) => entry.messageId)).toEqual(['missed', 'server-1']);
+    expect(resourceCache.writeResource).toHaveBeenCalledWith(expect.any(String), 'messages:delta:bob', 'after-reconnect');
+  });
+
   test('returns nothing for a blank term, without calling the server', async () => {
     const { resultRef, params } = setup();
     await act(async () => {

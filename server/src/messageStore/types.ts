@@ -58,7 +58,7 @@ export type SearchMessagesOptions = {
 
 export type MessageChange = {
   changeId: string;
-  type: 'new' | 'edited' | 'deleted' | 'reactions';
+  type: 'new' | 'edited' | 'deleted' | 'reactions' | 'read';
   changedAt: string;
   message: StoredMessage;
 };
@@ -69,6 +69,15 @@ export type ListMessageChangesOptions = {
   afterChangedAt?: string;
   afterChangeId?: string;
   excludedUserIds?: string[];
+  createdAtAfter?: string;
+  limit?: unknown;
+};
+
+export type ListConversationChangesOptions = {
+  conversationId: string;
+  /** Exclusive `(changedAt, changeId)` position; omit both to start at the beginning. */
+  afterChangedAt?: string;
+  afterChangeId?: string;
   createdAtAfter?: string;
   limit?: unknown;
 };
@@ -113,6 +122,12 @@ export type MessageStore = {
   getMessage: (conversationId: string, messageId: string) => Promise<StoredMessage | null>;
   searchMessages: (opts?: SearchMessagesOptions) => Promise<StoredMessage[]>;
   listMessageChanges?: (opts: ListMessageChangesOptions) => Promise<MessageChange[]>;
+  /**
+   * One conversation's change log in `(changedAt, changeId)` order. Unlike
+   * `listMessageChanges`, each change carries the message's *current* state,
+   * so a change recorded before a deletion never re-exposes deleted content.
+   */
+  listConversationChanges?: (opts: ListConversationChangesOptions) => Promise<MessageChange[]>;
   /** Bounded export page containing every participant message, including tombstones. */
   listUserMessages?: (opts?: ListUserMessagesOptions) => Promise<StoredMessage[]>;
   /**

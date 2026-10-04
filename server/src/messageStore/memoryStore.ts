@@ -160,6 +160,38 @@ export function createMemoryMessageStore(): MessageStore {
         .map((change) => ({ ...change, message: cloneMessage(change.message) }));
     },
 
+    async listConversationChanges({
+      conversationId,
+      afterChangedAt,
+      afterChangeId,
+      createdAtAfter,
+      limit,
+    }) {
+      const live = new Map(
+        messages
+          .filter((message) => message.conversationId === conversationId)
+          .map((message) => [message.messageId, message])
+      );
+      return changes
+        .filter((change) => change.message.conversationId === conversationId)
+        .filter((change) =>
+          !afterChangedAt || !afterChangeId ||
+          change.changedAt > afterChangedAt ||
+          (change.changedAt === afterChangedAt && BigInt(change.changeId) > BigInt(afterChangeId))
+        )
+        .sort((a, b) =>
+          a.changedAt === b.changedAt
+            ? a.changeId.localeCompare(b.changeId, undefined, { numeric: true })
+            : a.changedAt.localeCompare(b.changedAt)
+        )
+        .flatMap((change) => {
+          const current = live.get(change.message.messageId);
+          if (!current || (createdAtAfter && current.createdAt < createdAtAfter)) return [];
+          return [{ ...change, message: cloneMessage(current) }];
+        })
+        .slice(0, clampExportReadLimit(limit));
+    },
+
     async listUserMessages({ userId, limit, before, beforeMessageId } = {}) {
       if (!userId) return [];
       return messages
@@ -232,6 +264,7 @@ export function createMemoryMessageStore(): MessageStore {
             message.deliveredTo.push(userId);
           }
           updated += 1;
+          recordChange(message, 'read', now);
         }
       }
       return updated;

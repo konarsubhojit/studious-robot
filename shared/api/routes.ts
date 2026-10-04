@@ -31,6 +31,8 @@ const API_ROUTES = Object.freeze({
   MESSAGES_SEARCH: '/messages/search',
   /** Cursor-paginated message change feed. */
   MESSAGES_SYNC: '/messages/sync',
+  /** Per-conversation, cursor-based delta for reconnect reconciliation. */
+  MESSAGES_DELTA: '/messages/delta',
   ATTACHMENTS_PRESIGN: '/attachments/presign',
   ATTACHMENTS_DOWNLOAD: '/attachments/download',
   AVATAR: '/avatar',

@@ -162,6 +162,13 @@
       "when": 1791078242308,
       "tag": "0022_group_attachment_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791088774540,
+      "tag": "0023_message_changes_conversation_cursor",
+      "breakpoints": true
     }
   ]
 }

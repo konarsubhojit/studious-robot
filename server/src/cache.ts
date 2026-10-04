@@ -21,6 +21,7 @@ import { timeQuery } from './lib/queryTiming.ts';
  * ─────────────────────────────────────────────────────────
  *   conv::<userId>                      → listConversations(userId)
  *   msg::<conversationId>::<limit>      → first page of listMessages
+ *   msg::<conversationId>::delta::<cursor>::<limit> → GET /messages/delta page
  *   callhist::<userId>::<status>::<limit> → GET /calls payload
  *
  * Deep pagination (`before` present) is deliberately not cached: it is rare,
@@ -69,6 +70,15 @@ function messagesCacheKey(conversationId: string, limit: number): string {
  */
 function messagesFirstPageCacheKey(conversationId: string): string {
   return `msg::${conversationId}::first`;
+}
+
+/**
+ * @returns Cache key for one delta-sync page. Nested under
+ *   {@link messagesCachePrefix} so every write that already evicts a
+ *   conversation's history (send, delete, react, read) evicts its deltas too.
+ */
+function messagesDeltaCacheKey(conversationId: string, cursor: string | null, limit: number): string {
+  return `${messagesCachePrefix(conversationId)}delta::${cursor ?? 'start'}::${limit}`;
 }
 
 /**
@@ -436,6 +446,7 @@ export {
   messagesCacheKey,
   messagesFirstPageCacheKey,
   messagesCachePrefix,
+  messagesDeltaCacheKey,
   callHistoryCacheKey,
   callHistoryCachePrefix,
   invalidationMarkerKey,
