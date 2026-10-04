@@ -27,7 +27,7 @@ export const OUTBOX_MAX_RETRY_MS = 60_000;
  * True while a queued message may still be sent automatically.
  */
 export function isRetryable(item: OutboxItem): boolean {
-  return item.state !== 'failed' && (item?.attempts ?? 0) < OUTBOX_MAX_ATTEMPTS;
+  return Boolean(item.discarded) || (item.state !== 'failed' && (item?.attempts ?? 0) < OUTBOX_MAX_ATTEMPTS);
 }
 
 /** Only structured permanent rejections are terminal; unknown/network errors get a bounded retry budget. */
@@ -44,8 +44,8 @@ export function nextOutboxDeadline(outbox: OutboxItem[], now = Date.now()): numb
   const peers = new Set<string>();
   let deadline: number | null = null;
   for (const item of drainOrder(outbox)) {
-    if (peers.has(item.recipientId)) continue;
-    peers.add(item.recipientId);
+    if (!item.discarded && peers.has(item.recipientId)) continue;
+    if (!item.discarded) peers.add(item.recipientId);
     const due = Math.max(now, item.nextAttemptAt ?? now);
     deadline = deadline === null ? due : Math.min(deadline, due);
   }
@@ -70,7 +70,8 @@ export function nextDrainDelayMs(attempt: number, jitter: number = Math.random()
  * automatically, oldest first so queued sends keep their composition order.
  */
 export function drainOrder(outbox: OutboxItem[]): OutboxItem[] {
-  return [...outbox.filter(isRetryable)].sort(byOldestFirst);
+  return [...outbox.filter(isRetryable)].sort((a, b) =>
+    Number(Boolean(b.discarded)) - Number(Boolean(a.discarded)) || byOldestFirst(a, b));
 }
 
 /** The outbox without a given message — it is delivered, discarded or failed
@@ -279,14 +280,14 @@ export async function drainQueuedMessages(
   for (const item of queue) {
     if (waitingPeers.has(item.recipientId)) continue;
     if ((item.nextAttemptAt ?? 0) > Date.now()) {
-      waitingPeers.add(item.recipientId);
+      if (!item.discarded) waitingPeers.add(item.recipientId);
       allSent = false;
       continue;
     }
     const result = await send(item);
     if (result === true) continue;
     allSent = false;
-    if (result === 'waiting' || result === false) waitingPeers.add(item.recipientId);
+    if (!item.discarded && (result === 'waiting' || result === false)) waitingPeers.add(item.recipientId);
   }
   return allSent;
 }
@@ -297,17 +298,30 @@ export function restoreOutboxMessages(messages: MessagesByPeer, outbox: OutboxIt
   for (const item of outbox) {
     const matches = (entry: ChatMessage) => entry.messageId === item.messageId ||
       Boolean(item.clientMessageId && entry.senderId === senderId && entry.clientMessageId === item.clientMessageId);
-    if (restored[item.recipientId]?.some(matches)) {
-      if (!isRetryable(item)) {
-        restored = { ...restored, [item.recipientId]: restored[item.recipientId].map(entry =>
-          matches(entry) ? asFailed(entry) : entry) };
+    if (item.discarded) {
+      restored = { ...restored, [item.recipientId]: (restored[item.recipientId] ?? []).filter(entry =>
+        !matches(entry)) };
+      continue;
+    }
+    const restoreUpload = (entry: ChatMessage): ChatMessage => {
+      if (!item.upload) return entry;
+      if (item.upload.completed) {
+        return {
+          ...entry, attachment: { ...item.attachment!, url: item.upload.key ?? item.attachment!.url },
+          uploadState: undefined, uploadProgress: undefined, uploadError: null,
+        };
       }
+      return { ...entry, uploadState: isRetryable(item) ? 'uploading' : 'failed', uploadProgress: item.upload.progress };
+    };
+    if (restored[item.recipientId]?.some(matches)) {
+      restored = { ...restored, [item.recipientId]: restored[item.recipientId].map(entry =>
+        matches(entry) ? restoreUpload(isRetryable(item) ? entry : asFailed(entry)) : entry) };
       continue;
     }
     const message = buildOptimisticMessage({
       ...item, senderId, createdAt: item.createdAt ?? new Date(0).toISOString(),
     });
-    restored = prependMessage(restored, item.recipientId, isRetryable(item) ? message : asFailed(message));
+    restored = prependMessage(restored, item.recipientId, restoreUpload(isRetryable(item) ? message : asFailed(message)));
   }
   return restored;
 }

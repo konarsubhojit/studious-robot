@@ -175,6 +175,22 @@ REDIS_SLOW_QUERY_MS=100        # Redis cache slow-query threshold, default shown
 > `FCM_SERVICE_ACCOUNT_JSON` is required because the server also uses it to
 > verify Firebase authentication tokens.
 
+Queued attachments are copied to app-owned storage and uploaded only when the
+outbox drains. Objects above 5 MiB use multipart uploads; completed parts and
+bubble progress survive restarts. Expired upload grants are renewed, and signed
+URLs are never persisted. The existing `/attachments/presign` remains available
+for older clients; queued uploads use `/attachments/upload`.
+
+Keep the R2 bucket private (no `r2.dev` or custom-domain public bindings). Its
+credential must permit listing multipart uploads/parts, initiating, completing
+and aborting multipart uploads, and reading, writing and deleting objects.
+Expose `ETag` in CORS for web clients. Discard immediately aborts uploaded parts
+when connected; offline cleanup is durable and resumes for the same account.
+A final sweep waits out existing grants (currently up to 62 minutes). Retain
+the zero-byte `.discarded` fences to prevent discarded identities being reused.
+An incomplete-multipart lifecycle abort rule can additionally protect against
+uninstalled clients; its window must not expire uploads still eligible to resume.
+
 ### Database (Postgres / Neon)
 
 1. Create a Postgres database (local or [Neon free tier](https://neon.tech)).

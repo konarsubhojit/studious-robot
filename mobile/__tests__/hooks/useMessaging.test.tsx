@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { AppState } from 'react-native';
+import RNFS from 'react-native-fs';
 import useMessaging from '../../src/hooks/useMessaging';
 import { createSignalingClient } from '../../src/signalingClient';
 import {
@@ -103,6 +104,425 @@ function setup(overrides = {}) {
 /** Rendered hooks, unmounted after each test so the outbox retry timer that
  * an unsent message arms cannot outlive the test that queued it. */
 const mountedTrees: any = [];
+
+describe('durable attachment outbox', () => {
+  const attachment = { url: 'file:///photo.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
+  const response = (body: object) => ({ ok: true, json: async () => body });
+
+  test('compose offline queues an app-owned file and progress; only the drain calls prepare', async () => {
+    const socket = makeSocket({ connected: false });
+    const authedFetch = jest.fn(async build => {
+      const body = JSON.parse(build('session').options.body);
+      expect(body).toMatchObject({ action: 'prepare', peerId: 'bob', sizeBytes: 123 });
+      return response({ key: 'chatblobs/alice_bob/photo.jpg', reference: 'chatblobs/alice_bob/photo.jpg', completed: true });
+    });
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      resultRef.current.updateAttachmentUploadProgress('bob', id, 0.25);
+    });
+    const stored = (chatDb as any).__snapshot.outbox[0];
+    expect(stored).toMatchObject({ messageId: id, body: '', upload: { progress: 0.25, parts: [] } });
+    expect(stored.upload.uri).toContain(`/wetalk-upload-${id}`);
+    expect(JSON.stringify(stored)).not.toMatch(/X-Amz-|https:\/\//);
+    expect(authedFetch).not.toHaveBeenCalled();
+    expect(socket.emit).not.toHaveBeenCalled();
+    expect(chatDb.flushChatDb).toHaveBeenCalled();
+    expect(resultRef.current.pendingSendCount).toBe(1);
+    expect(resultRef.current.messagesByPeer.bob[0].deliveryState).toBe('queued');
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(authedFetch).toHaveBeenCalledTimes(1);
+    expect(socket.emit).toHaveBeenCalledWith('message.send',
+      expect.objectContaining({ clientMessageId: id, attachment: { ...attachment, url: 'chatblobs/alice_bob/photo.jpg' } }),
+      expect.any(Function));
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
+    expect(resultRef.current.pendingSendCount).toBe(0);
+    expect(resultRef.current.messagesByPeer.bob[0].deliveryState).toBe('sent');
+  });
+
+  test.each(['original', 'client', 'server'])(
+    'resumable attachment retry and discard resolve %s without changing upload identity', async identity => {
+      const createdAt = '2026-10-03T06:00:00.000Z';
+      const original = {
+        messageId: 'original', clientMessageId: 'client', recipientId: 'bob', createdAt,
+        type: 'image', attachment, state: 'failed', attempts: 5,
+        upload: { uri: 'file:///documents/wetalk-upload-original', uploadId: 'multipart',
+          parts: [{ partNumber: 1, etag: 'etag-1', sizeBytes: 60 }], progress: 60 / 123 },
+      };
+      const unrelated = { ...original, recipientId: 'carol', messageId: 'other', clientMessageId: 'other' };
+      (chatDb as any).__snapshot.outbox = [original, unrelated];
+      (chatDb as any).__snapshot.messagesByPeer = { bob: [{
+        ...original, messageId: 'server', senderId: 'alice', uploadState: 'failed', uploadError: 'network failure',
+      }] };
+      const socket = makeSocket({ connected: false });
+      const authedFetch = jest.fn(async build => {
+        const body = JSON.parse(build('session').options.body);
+        expect(body).toMatchObject({ action: 'abort', clientId: 'client', peerId: 'bob', uploadId: 'multipart' });
+        return response({ cleanupComplete: true });
+      });
+      const first = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+      await act(async () => {});
+      expect(first.resultRef.current.pendingSendCount).toBe(0);
+      await act(async () => {
+        await first.resultRef.current.finishAttachmentUpload('bob', identity, 'image', attachment);
+      });
+      expect((chatDb as any).__snapshot.outbox).toHaveLength(2);
+      expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({
+        messageId: 'original', clientMessageId: 'client', state: 'pending', attempts: 0, upload: original.upload,
+      });
+      expect(first.resultRef.current.pendingSendCount).toBe(1);
+      expect(first.resultRef.current.messagesByPeer.bob).toHaveLength(1);
+      expect(first.resultRef.current.messagesByPeer.bob[0]).toMatchObject({
+        messageId: 'server', clientMessageId: 'client', deliveryState: 'queued', uploadState: 'uploading',
+        uploadProgress: original.upload.progress, uploadError: null,
+      });
+      // Worker progress uses the original outbox id even after history reconciliation.
+      act(() => first.resultRef.current.updateAttachmentUploadProgress('bob', 'original', 0.75));
+      expect(first.resultRef.current.messagesByPeer.bob[0].uploadProgress).toBe(0.75);
+      act(() => first.resultRef.current.discardMessage('bob', identity));
+      expect(first.resultRef.current.messagesByPeer.bob).toEqual([]);
+      expect(first.resultRef.current.pendingSendCount).toBe(0);
+      expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true, upload: { progress: 0.75 } });
+      expect((chatDb as any).__snapshot.outbox[1]).toEqual(unrelated);
+      await act(async () => {
+        await first.resultRef.current.finishAttachmentUpload('bob', identity, 'image', attachment);
+        await first.resultRef.current.retryMessage('bob', identity);
+      });
+      expect((chatDb as any).__snapshot.outbox[0].discarded).toBe(true);
+      expect(authedFetch).not.toHaveBeenCalled();
+      act(() => first.tree.unmount());
+      const restarted = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+      await act(async () => {});
+      expect(restarted.resultRef.current.messagesByPeer.bob).toEqual([]);
+      expect(restarted.resultRef.current.pendingSendCount).toBe(0);
+      socket.connected = true;
+      await act(async () => { await restarted.resultRef.current.drainOutbox(); });
+      expect((chatDb as any).__snapshot.outbox).toEqual([unrelated]);
+      expect(socket.emit).not.toHaveBeenCalled();
+    },
+  );
+
+  test('attachment retry without an upload checkpoint retains reconciled client identity and compose time', async () => {
+    const createdAt = '2026-10-03T06:00:00.000Z';
+    const original = {
+      messageId: 'original', clientMessageId: 'client', recipientId: 'bob', createdAt,
+      type: 'image', attachment, state: 'failed', attempts: 5,
+    };
+    (chatDb as any).__snapshot.outbox = [original];
+    (chatDb as any).__snapshot.messagesByPeer = { bob: [{
+      ...original, messageId: 'server', senderId: 'alice', uploadState: 'failed',
+    }] };
+    const { resultRef } = setup({ socketRef: { current: makeSocket({ connected: false }) } });
+    await act(async () => {});
+    const uploaded = { ...attachment, url: 'chatblobs/alice_bob/photo.jpg' };
+    await act(async () => { await resultRef.current.finishAttachmentUpload('bob', 'server', 'image', uploaded); });
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({
+      messageId: 'original', clientMessageId: 'client', createdAt, state: 'pending', attempts: 0, attachment: uploaded,
+    });
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
+      messageId: 'server', deliveryState: 'queued', uploadState: undefined, attachment: uploaded,
+    });
+    expect(resultRef.current.pendingSendCount).toBe(1);
+  });
+
+  test.each(['direct', 'group'])('resumable %s retry transitions from queued through sending to sent under the original client id', async kind => {
+    const peerId = kind === 'group' ? 'live-group' : 'bob';
+    const createdAt = '2026-10-03T06:00:00.000Z';
+    const reference = `chatblobs/${peerId}/photo.jpg`;
+    if (kind === 'group') {
+      const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+      row.localMock = false;
+      (chatDb as any).__snapshot.conversations = [row];
+    }
+    const original = {
+      messageId: 'original', clientMessageId: 'client', recipientId: peerId, createdAt,
+      type: 'image', attachment, state: 'failed', attempts: 5,
+      upload: { uri: 'file:///documents/wetalk-upload-original', parts: [], progress: 0.5 },
+      ...(kind === 'group' ? { targetKind: 'group', conversationId: peerId } : {}),
+    };
+    (chatDb as any).__snapshot.outbox = [original];
+    (chatDb as any).__snapshot.messagesByPeer = { [peerId]: [{
+      ...original, messageId: 'server', senderId: 'alice', uploadState: 'failed', uploadError: 'offline',
+    }] };
+    const socket = makeSocket({ connected: false });
+    let acknowledge!: (value: object) => void;
+    let sent!: () => void;
+    const sentPromise = new Promise<void>(resolve => { sent = resolve; });
+    socket.emit.mockImplementation((_event, _payload, ack) => { acknowledge = ack; sent(); });
+    const authedFetch = jest.fn(async build => {
+      expect(JSON.parse(build('session').options.body)).toMatchObject({
+        action: 'prepare', clientId: 'client',
+        ...(kind === 'group' ? { groupId: peerId } : { peerId }),
+      });
+      return response({ key: reference, reference, completed: true });
+    });
+    const { resultRef } = setup({
+      socketRef: { current: socket }, authedFetchRef: { current: authedFetch }, groupTransport: 'live',
+    });
+    await act(async () => {});
+    await act(async () => { await resultRef.current.retryMessage(peerId, 'server'); });
+    expect(resultRef.current.pendingSendCount).toBe(1);
+    expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({
+      deliveryState: 'queued', uploadState: 'uploading', uploadError: null,
+    });
+    expect(authedFetch).not.toHaveBeenCalled();
+    socket.connected = true;
+    let draining!: Promise<void>;
+    await act(async () => { draining = resultRef.current.drainOutbox(); await sentPromise; });
+    expect(socket.emit).toHaveBeenCalledTimes(1);
+    expect(socket.emit).toHaveBeenCalledWith('message.send', expect.objectContaining({
+      clientMessageId: 'client', attachment: { ...attachment, url: reference },
+      ...(kind === 'group' ? { conversationId: peerId } : { recipientId: peerId }),
+    }), expect.any(Function));
+    expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({
+      messageId: 'server', deliveryState: 'sending', uploadState: undefined,
+    });
+    expect(resultRef.current.pendingSendCount).toBe(1);
+    await act(async () => {
+      acknowledge({ ok: true, message: {
+        messageId: 'server', clientMessageId: 'client', senderId: 'alice', recipientId: peerId, createdAt,
+      } });
+      await draining;
+    });
+    expect(resultRef.current.messagesByPeer[peerId]).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({ messageId: 'server', deliveryState: 'sent' });
+    expect(resultRef.current.pendingSendCount).toBe(0);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('offline discard survives restart and retries cleanup before a durable delayed final sweep', async () => {
+    const socket = makeSocket({ connected: false });
+    const cleanupAfter = Date.now() + 60_000;
+    const actions: string[] = [];
+    const authedFetch = jest.fn(async build => {
+      actions.push(JSON.parse(build('session').options.body).action);
+      return response({ aborted: true, cleanupAfter });
+    });
+    const first = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = first.resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await first.resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      first.resultRef.current.discardMessage('bob', id);
+    });
+    expect(first.resultRef.current.messagesByPeer.bob).toEqual([]);
+    expect(first.resultRef.current.pendingSendCount).toBe(0);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true, upload: { parts: [] } });
+    expect(authedFetch).not.toHaveBeenCalled();
+    act(() => first.tree.unmount());
+    const restarted = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    await act(async () => { await Promise.resolve(); });
+    expect(restarted.resultRef.current.messagesByPeer.bob).toEqual([]);
+    socket.connected = true;
+    await act(async () => { await restarted.resultRef.current.drainOutbox(); });
+    expect(actions).toEqual(['abort']);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true, cleanupAfter, nextAttemptAt: cleanupAfter });
+    act(() => restarted.resultRef.current.discardMessage('bob', id));
+    await act(async () => { await restarted.resultRef.current.drainOutbox(); });
+    expect(actions).toEqual(['abort']);
+    expect((chatDb as any).__snapshot.outbox[0].nextAttemptAt).toBe(cleanupAfter);
+    expect(socket.emit).not.toHaveBeenCalled();
+    await drainAtNextDeadline(restarted.resultRef);
+    expect(actions).toEqual(['abort', 'abort']);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  test('discard during a delayed prepare cannot resurrect an attachment or emit its message', async () => {
+    const socket = makeSocket({ connected: true });
+    let release!: (value: any) => void;
+    let started!: () => void;
+    const startedPromise = new Promise<void>(resolve => { started = resolve; });
+    const actions: string[] = [];
+    const authedFetch = jest.fn(build => {
+      const action = JSON.parse(build('session').options.body).action;
+      actions.push(action);
+      if (action === 'prepare') {
+        started();
+        return new Promise(resolve => { release = resolve; });
+      }
+      return Promise.resolve(response({ aborted: true, cleanupAfter: Date.now() + 60_000 }));
+    });
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      await startedPromise;
+      socket.connected = false;
+      resultRef.current.discardMessage('bob', id);
+      release(response({ key: 'chatblobs/alice_bob/photo.jpg', reference: 'chatblobs/alice_bob/photo.jpg', completed: true }));
+      await Promise.resolve();
+    });
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true });
+    expect(socket.emit).not.toHaveBeenCalled();
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(actions).toEqual(['prepare', 'abort']);
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  test('a late send acknowledgement preserves discard until reconciliation deletes the server message before storage', async () => {
+    const socket = makeSocket({ connected: false });
+    let acknowledge!: (value: any) => void;
+    socket.emit.mockImplementation((_event, _payload, ack) => { acknowledge = ack; });
+    const authedFetch = jest.fn(async () => response({
+      key: 'chatblobs/alice_bob/photo.jpg', reference: 'chatblobs/alice_bob/photo.jpg', completed: true,
+    }));
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+    });
+    socket.connected = true;
+    let drain!: Promise<void>;
+    await act(async () => {
+      drain = resultRef.current.drainOutbox();
+      for (let i = 0; i < 30 && !acknowledge; i++) await Promise.resolve();
+    });
+    expect(acknowledge).toBeDefined();
+    await act(async () => {
+      socket.connected = false;
+      resultRef.current.discardMessage('bob', id);
+      acknowledge({ ok: true, message: { messageId: 'accepted-remotely', clientMessageId: id } });
+      await drain;
+    });
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ messageId: id, discarded: true });
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    const operations: string[] = [];
+    socket.emit.mockImplementation((event, payload, ack) => {
+      operations.push(event);
+      if (event === 'message.send') {
+        expect(payload.clientMessageId).toBe(id);
+        ack({ ok: true, message: { messageId: 'accepted-remotely', clientMessageId: id } });
+      } else {
+        expect(payload.messageId).toBe('accepted-remotely');
+        ack({ ok: true });
+      }
+    });
+    authedFetch.mockImplementation(async () => {
+      operations.push('abort');
+      return response({ cleanupComplete: true });
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(operations).toEqual(['message.send', 'message.delete', 'abort']);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('acknowledged source cleanup failure retains the completed row for a source-free retry', async () => {
+    const socket = makeSocket({ connected: false });
+    const authedFetch = jest.fn(async () => response({
+      key: 'chatblobs/alice_bob/photo.jpg', reference: 'chatblobs/alice_bob/photo.jpg', completed: true,
+    }));
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    await act(async () => {
+      const id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+    });
+    (RNFS.unlink as jest.Mock).mockRejectedValueOnce(new Error('disk busy'));
+    (RNFS.exists as jest.Mock).mockResolvedValueOnce(true);
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ upload: { completed: true } });
+    await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    expect(authedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('lost send/delete acknowledgements never allow storage cleanup before a confirmed server tombstone', async () => {
+    (chatDb as any).__snapshot.outbox = [{
+      messageId: 'discarded-client', clientMessageId: 'discarded-client', recipientId: 'bob',
+      body: '', type: 'image', discarded: true,
+      attachment: { ...attachment, url: 'file:///photo.jpg' },
+      upload: { uri: 'file:///photo.jpg', key: 'chatblobs/alice_bob/photo.jpg', completed: true, parts: [], progress: 1 },
+    }];
+    const request = jest.fn()
+      .mockResolvedValueOnce({ message: { messageId: 'server-id' } })
+      .mockRejectedValueOnce(new Error('delete ack lost'))
+      .mockResolvedValueOnce({ message: { messageId: 'server-id', deletedAt: '2026-10-04T00:00:00Z' } });
+    const authedFetch = jest.fn(async () => response({ cleanupComplete: true }));
+    const { resultRef } = setup({
+      signalingRef: { current: { request, on: jest.fn(() => jest.fn()) } },
+      authedFetchRef: { current: authedFetch },
+    });
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(authedFetch).not.toHaveBeenCalled();
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    expect(request.mock.calls[0][1].attachment.url).toBe('chatblobs/alice_bob/photo.jpg');
+    await drainAtNextDeadline(resultRef);
+    expect(request.mock.calls.map(([event]) => event)).toEqual(['message.send', 'message.delete', 'message.send']);
+    expect(authedFetch).toHaveBeenCalledTimes(1);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('discard cleanup failure retains the durable row until local unlink succeeds', async () => {
+    const socket = makeSocket({ connected: false });
+    const authedFetch = jest.fn(async () => response({ cleanupComplete: true }));
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    await act(async () => {
+      const id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      resultRef.current.discardMessage('bob', id);
+    });
+    (RNFS.unlink as jest.Mock).mockRejectedValueOnce(new Error('disk busy'));
+    (RNFS.exists as jest.Mock).mockResolvedValueOnce(true);
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true });
+    await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('upload throttling waits for the server delay without exhausting send attempts', async () => {
+    const socket = makeSocket({ connected: false });
+    const authedFetch = jest.fn(async () => ({
+      ok: false, status: 429, json: async () => ({ retryAfter: 60 }),
+    }));
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    await act(async () => {
+      const id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    for (let i = 0; i < 5; i++) await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ attempts: 0, state: 'pending' });
+    expect((chatDb as any).__snapshot.outbox[0].nextAttemptAt).toBeGreaterThan(Date.now() + 50_000);
+  });
+
+  test('server cleanup approval and relative delays protect against device clock skew', async () => {
+    const socket = makeSocket({ connected: false });
+    let cleanupCalls = 0;
+    const authedFetch = jest.fn(async () => {
+      cleanupCalls++;
+      return response({ aborted: true, cleanupAfter: 1, retryAfterMs: cleanupCalls < 3 ? 5000 : 0,
+        cleanupComplete: cleanupCalls >= 3 });
+    });
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      resultRef.current.discardMessage('bob', id);
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect((chatDb as any).__snapshot.outbox[0].cleanupAfter).toBeGreaterThan(Date.now());
+    await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    expect(cleanupCalls).toBe(3);
+  });
+});
 
 /** Retry tests advance the wall clock to the persisted deadline instead of bypassing backoff. */
 async function drainAtNextDeadline(resultRef: { current: any }) {
@@ -259,7 +679,7 @@ describe('useMessaging', () => {
     expect((chatDb as any).__snapshot.outbox.map((item: any) => item.body)).toEqual(['reply', 'following']);
     await act(async () => {
       await resultRef.current.finishAttachmentUpload('bob', parentKey, 'image',
-        { url: 'https://media.test/parent.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
+        { url: 'chatblobs/alice_bob/parent.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
     });
     expect(sent).toEqual(['independent', 'attachment', 'reply', 'following']);
     expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
@@ -403,7 +823,7 @@ describe('useMessaging', () => {
     await act(async () => {
       key = resultRef.current.beginAttachmentUpload('upload-group', 'image', { url: 'file://preview.jpg' });
       await resultRef.current.finishAttachmentUpload('upload-group', key, 'image',
-        { url: 'https://media.test/group.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
+        { url: 'chatblobs/group_upload-group/group.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
     });
     expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ clientMessageId: key, targetKind: 'group', conversationId: 'upload-group' });
     socket.connected = true;
@@ -1287,7 +1707,10 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
       failed: true,
       syncState: 'failed',
+      deliveryState: 'failed',
     });
+    const original = { ...(chatDb as any).__snapshot.outbox[0] };
+    expect(resultRef.current.pendingSendCount).toBe(0);
     expect(params.updateStatus).toHaveBeenCalledWith('Message failed to send', 'error');
 
     await act(async () => {
@@ -1299,12 +1722,234 @@ describe('useMessaging', () => {
       expect.objectContaining({ clientMessageId: messageId }),
       expect.any(Function),
     );
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({
+      messageId: original.messageId, clientMessageId: original.clientMessageId,
+      recipientId: original.recipientId, body: original.body,
+    });
+    expect(resultRef.current.messagesByPeer.bob[0].deliveryState).toBe('queued');
+    expect(resultRef.current.pendingSendCount).toBe(1);
 
     act(() => {
       resultRef.current.discardMessage('bob', messageId);
     });
     expect(resultRef.current.messagesByPeer.bob).toEqual([]);
     expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test.each(['direct', 'group'].flatMap(kind =>
+    ['server-id', 'original-id', 'client-id'].flatMap(identity =>
+      ['retry', 'discard'].map(action => ({ kind, identity, action })))))
+  ('$kind $action resolves $identity after history reconciliation without duplicating or orphaning the queue',
+    async ({ kind, identity, action }) => {
+      const peerId = kind === 'group' ? 'live-group' : 'bob';
+      const createdAt = '2026-10-03T06:00:00.000Z';
+      if (kind === 'group') {
+        const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+        row.localMock = false;
+        (chatDb as any).__snapshot.conversations = [row];
+      }
+      const original = {
+        messageId: 'original-id', clientMessageId: 'client-id', recipientId: peerId,
+        body: 'lost ack', createdAt, attempts: 5, state: 'failed',
+        lastAttemptAt: createdAt, lastError: 'ack timeout', nextAttemptAt: Date.now() + 60000,
+        ...(kind === 'group' ? { conversationId: peerId, targetKind: 'group' } : {}),
+      };
+      const unrelated = { ...original, recipientId: 'other-peer', messageId: 'other-id' };
+      (chatDb as any).__snapshot.outbox = [original, unrelated];
+      (chatDb as any).__snapshot.messagesByPeer = { [peerId]: [{
+        ...original, senderId: 'alice', pending: true, syncState: 'pending',
+      }] };
+      const socket = makeSocket({ connected: false, ackResponse: { ok: false, error: { message: 'ack timeout' } } });
+      const { resultRef, params } = setup({ socketRef: { current: socket }, groupTransport: 'live' });
+      await act(async () => {});
+      const confirmed = {
+        messageId: 'server-id', clientMessageId: 'client-id', senderId: 'alice', recipientId: peerId,
+        body: original.body, createdAt, conversationId: kind === 'group' ? peerId : 'direct-conversation',
+        ...(kind === 'group' ? { readBy: ['bob'] } : { readAt: createdAt }),
+      };
+      params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ messages: [confirmed] }) });
+      await act(async () => { await resultRef.current.fetchMessagesForPeer(peerId); });
+      expect(resultRef.current.messagesByPeer[peerId]).toHaveLength(1);
+      expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({
+        messageId: 'server-id', clientMessageId: 'client-id', deliveryState: 'failed',
+      });
+
+      if (action === 'retry') {
+        await act(async () => { await resultRef.current.retryMessage(peerId, identity); });
+        expect((chatDb as any).__snapshot.outbox).toEqual([
+          { ...original, attempts: 0, state: 'pending', lastAttemptAt: null, lastError: null, nextAttemptAt: null },
+          unrelated,
+        ]);
+        expect(resultRef.current.messagesByPeer[peerId]).toHaveLength(1);
+        // History keeps the server copy synced; the reset outbox owns delivery state.
+        expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({
+          messageId: 'server-id', clientMessageId: 'client-id', pending: false, failed: false,
+          syncState: 'synced', deliveryState: 'queued',
+        });
+        socket.connected = true;
+        await act(async () => { await resultRef.current.drainOutbox(); });
+        expect(socket.emit).toHaveBeenCalledTimes(1);
+        expect(socket.emit).toHaveBeenCalledWith('message.send', expect.objectContaining({
+          clientMessageId: 'client-id', body: original.body,
+          ...(kind === 'group' ? { conversationId: peerId } : { recipientId: peerId }),
+        }), expect.any(Function));
+        expect(resultRef.current.messagesByPeer[peerId]).toHaveLength(1);
+        expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({
+          messageId: 'original-id', clientMessageId: 'client-id', attempts: 1,
+        });
+      }
+      act(() => resultRef.current.discardMessage(peerId, identity));
+      expect(resultRef.current.messagesByPeer[peerId]).toEqual([]);
+      expect((chatDb as any).__snapshot.outbox).toEqual([unrelated]);
+      await act(async () => { await resultRef.current.drainOutbox(); });
+      expect((chatDb as any).__snapshot.outbox).toEqual([unrelated]);
+    });
+
+  test.each([
+    { readBy: ['alice'], expected: 'sent' },
+    { readBy: ['outsider'], expected: 'sent' },
+    { readBy: ['alice', 'outsider'], expected: 'sent' },
+    { readBy: ['alice', 'outsider', 'bob'], expected: 'read' },
+  ])('live group history readers $readBy yield $expected without a local read watermark', async ({ readBy, expected }) => {
+    const peerId = 'live-group';
+    const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+    row.localMock = false;
+    (chatDb as any).__snapshot.conversations = [row];
+    const { resultRef, params } = setup({ socketRef: { current: makeSocket({ connected: false }) }, groupTransport: 'live' });
+    await act(async () => {});
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ messages: [{
+      messageId: 'server-history', conversationId: peerId, recipientId: peerId, senderId: 'alice',
+      body: 'persisted readers', createdAt: '2026-10-03T06:00:00Z', readBy,
+    }] }) });
+    await act(async () => { await resultRef.current.fetchMessagesForPeer(peerId); });
+    expect(resultRef.current.conversations[0].readByMember).toBeUndefined();
+    expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({ readBy, deliveryState: expected });
+  });
+
+  test.each(['direct', 'group'])('%s history reconciliation during an active request stays sending until ack', async kind => {
+    const peerId = kind === 'group' ? 'live-group' : 'bob';
+    if (kind === 'group') {
+      const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+      row.localMock = false;
+      (chatDb as any).__snapshot.conversations = [row];
+    }
+    const socket = makeSocket();
+    let acknowledge!: (response: any) => void;
+    socket.emit.mockImplementation((_event, _payload, callback) => { acknowledge = callback; });
+    const { resultRef, params } = setup({ socketRef: { current: socket }, groupTransport: 'live' });
+    await act(async () => {});
+    let sending!: Promise<unknown>;
+    await act(async () => { sending = resultRef.current.sendMessage(peerId, 'active send'); });
+    const original = resultRef.current.messagesByPeer[peerId][0];
+    expect(original.deliveryState).toBe('sending');
+    expect(acknowledge).toEqual(expect.any(Function));
+    const confirmed = {
+      messageId: 'server-active', clientMessageId: original.clientMessageId,
+      conversationId: kind === 'group' ? peerId : 'alice:bob',
+      senderId: 'alice', recipientId: peerId, body: original.body, createdAt: original.createdAt,
+    };
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ messages: [confirmed] }) });
+    await act(async () => { await resultRef.current.fetchMessagesForPeer(peerId); });
+    expect((chatDb as any).__snapshot.outbox).toEqual([
+      expect.objectContaining({ messageId: original.messageId, clientMessageId: original.clientMessageId }),
+    ]);
+    expect(resultRef.current.messagesByPeer[peerId]).toEqual([
+      expect.objectContaining({ messageId: 'server-active', deliveryState: 'sending' }),
+    ]);
+    expect(socket.emit).toHaveBeenCalledTimes(1);
+    await act(async () => { acknowledge({ ok: true, message: confirmed }); await sending; });
+    expect(resultRef.current.messagesByPeer[peerId]).toEqual([
+      expect.objectContaining({ messageId: 'server-active', deliveryState: 'sent' }),
+    ]);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test.each(['direct', 'group'])('%s delivery is sending only during the actual request, then uses server receipts', async kind => {
+    const peerId = kind === 'group' ? 'live-group' : 'bob';
+    if (kind === 'group') {
+      const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+      row.localMock = false;
+      (chatDb as any).__snapshot.conversations = [row];
+    }
+    const socket = makeSocket({ connected: false });
+    let acknowledge!: (response: any) => void;
+    socket.emit.mockImplementation((_event, _payload, callback) => { acknowledge = callback; });
+    const { resultRef } = setup({ socketRef: { current: socket }, groupTransport: 'live' });
+    await act(async () => {
+      await Promise.resolve();
+      resultRef.current.handleSocketDisconnected();
+      await resultRef.current.sendMessage(peerId, 'first');
+      await resultRef.current.sendMessage(peerId, 'waiting behind first');
+    });
+    const first = resultRef.current.messagesByPeer[peerId].find((message: any) => message.body === 'first');
+    expect(first.deliveryState).toBe('queued');
+    expect(resultRef.current.pendingSendCount).toBe(2);
+    expect(socket.emit).not.toHaveBeenCalled();
+    socket.connected = true;
+    await act(async () => { resultRef.current.handleSocketConnected(); await Promise.resolve(); });
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.body === 'first').deliveryState)
+      .toBe('sending');
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.body !== 'first').deliveryState)
+      .toBe('queued');
+    expect((chatDb as any).__snapshot.messagesByPeer[peerId].every((message: any) => !message.deliveryState)).toBe(true);
+    const confirmed = { ...first, messageId: 'server-first', pending: false, syncState: 'synced',
+      deliveryState: undefined, ...(kind === 'group' ? {
+        conversationId: peerId, recipientId: undefined, deliveredTo: ['alice'],
+      } : {}) };
+    await act(async () => { acknowledge({ ok: true, message: confirmed }); await Promise.resolve(); });
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
+      .toBe('sent');
+    await act(async () => {
+      resultRef.current.handleMessageDelivered({ ...confirmed, deliveredTo: ['bob'] });
+    });
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
+      .toBe('delivered');
+    if (kind === 'group') {
+      act(() => resultRef.current.handleMessageRead({ readerId: 'alice',
+        readAt: new Date(Date.now() + 1000).toISOString(), conversationId: peerId }));
+      expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
+        .toBe('delivered');
+    }
+    act(() => resultRef.current.handleMessageRead({ readerId: 'bob', readAt: new Date(Date.now() + 1000).toISOString(),
+      ...(kind === 'group' ? { conversationId: peerId } : {}) }));
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
+      .toBe('read');
+    socket.connected = false;
+    act(() => resultRef.current.handleSocketDisconnected());
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.body !== 'first').deliveryState)
+      .toBe('queued');
+    await act(async () => { acknowledge({ ok: false, error: { message: 'disconnected' } }); });
+    expect(resultRef.current.pendingSendCount).toBe(1);
+  });
+
+  test('offline depth excludes terminal outbox failures and failed uploads and reacts to retry/discard', async () => {
+    const createdAt = '2026-10-03T06:00:00Z';
+    (chatDb as any).__snapshot.outbox = [
+      { messageId: 'queued', recipientId: 'bob', state: 'pending', attempts: 0, createdAt },
+      { messageId: 'failed', recipientId: 'bob', state: 'failed', attempts: 1, createdAt },
+      { messageId: 'exhausted', recipientId: 'bob', attempts: 5, createdAt },
+    ];
+    (chatDb as any).__snapshot.messagesByPeer = { bob: [
+      { messageId: 'queued', senderId: 'alice', pending: true, createdAt },
+      { messageId: 'failed', senderId: 'alice', failed: true, createdAt },
+      { messageId: 'exhausted', senderId: 'alice', failed: true, createdAt },
+      { messageId: 'upload', senderId: 'alice', uploadState: 'failed', failed: true, createdAt },
+    ] };
+    const { resultRef } = setup({ socketRef: { current: makeSocket({ connected: false }) } });
+    await act(async () => { await Promise.resolve(); resultRef.current.handleSocketDisconnected(); });
+    expect(resultRef.current.isOffline).toBe(true);
+    expect(resultRef.current.pendingSendCount).toBe(1);
+    await act(async () => { await resultRef.current.retryMessage('bob', 'failed'); });
+    expect(resultRef.current.pendingSendCount).toBe(2);
+    expect(resultRef.current.messagesByPeer.bob.find((message: any) => message.messageId === 'failed').deliveryState)
+      .toBe('queued');
+    act(() => resultRef.current.discardMessage('bob', 'queued'));
+    expect(resultRef.current.pendingSendCount).toBe(1);
+    act(() => resultRef.current.discardMessage('bob', 'failed'));
+    expect(resultRef.current.pendingSendCount).toBe(0);
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(2);
   });
 
   test('deleteMessage tombstones a sent message on the server and locally', async () => {
@@ -2076,7 +2721,7 @@ describe('useMessaging searchMessages', () => {
     });
     expect(resultRef.current.messagesByPeer.bob[0].uploadProgress).toBe(0.5);
 
-    const uploaded = { url: 'https://media.test/photo.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
+    const uploaded = { url: 'chatblobs/alice_bob/photo.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
     await act(async () => {
       await resultRef.current.finishAttachmentUpload('bob', messageId, 'image', uploaded);
     });

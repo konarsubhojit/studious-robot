@@ -277,7 +277,7 @@ describe('attachmentUpload', () => {
 
       xhr.status = 200;
       xhr.onload();
-      await expect(promise).resolves.toBeUndefined();
+      await expect(promise).resolves.toBe('');
       expect(onProgress).toHaveBeenCalledWith(1);
     });
 

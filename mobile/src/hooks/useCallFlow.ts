@@ -681,6 +681,7 @@ export default function useCallFlow({
     updateAttachmentUploadProgress: messaging.updateAttachmentUploadProgress,
     finishAttachmentUpload: messaging.finishAttachmentUpload,
     failAttachmentUpload: messaging.failAttachmentUpload,
+    discardAttachmentUpload: messaging.discardMessage,
     updateStatus,
   });
 

@@ -45,6 +45,8 @@ export type ChatContextValue = {
   currentUserId: CallFlow['userId'];
   sendMessage: CallFlow['sendMessage'];
   retryMessage: CallFlow['retryMessage'];
+  discardMessage: CallFlow['discardMessage'];
+  pendingSendCount: CallFlow['pendingSendCount'];
   retryAttachmentUpload: CallFlow['retryAttachmentUpload'];
   deleteMessage: CallFlow['deleteMessage'];
   reactToMessage: CallFlow['reactToMessage'];
@@ -125,6 +127,8 @@ const selectChatSlice = (state: CallContextValue) => ({
   reactToMessage: state.callFlow.reactToMessage,
   retryAttachmentUpload: state.callFlow.retryAttachmentUpload,
   retryMessage: state.callFlow.retryMessage,
+  discardMessage: state.callFlow.discardMessage,
+  pendingSendCount: state.callFlow.pendingSendCount,
   saveDraft: state.callFlow.saveDraft,
   searchMessages: state.callFlow.searchMessages,
   searchLocalMessages: state.callFlow.searchLocalMessages,
@@ -251,6 +255,8 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       currentUserId: callFlow.userId,
       sendMessage: callFlow.sendMessage,
       retryMessage: callFlow.retryMessage,
+      discardMessage: callFlow.discardMessage,
+      pendingSendCount: callFlow.pendingSendCount,
       retryAttachmentUpload: callFlow.retryAttachmentUpload,
       deleteMessage: callFlow.deleteMessage,
       reactToMessage: callFlow.reactToMessage,
@@ -307,6 +313,8 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.isChatOffline,
       callFlow.retryAttachmentUpload,
       callFlow.retryMessage,
+      callFlow.discardMessage,
+      callFlow.pendingSendCount,
       callFlow.reactToMessage,
       callFlow.sendMessage,
       callFlow.sendTypingIndicator,

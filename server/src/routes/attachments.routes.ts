@@ -1,4 +1,5 @@
 import express from 'express';
+import { attachmentUploadOperation, queuedAttachmentKey, ATTACHMENT_PART_BYTES } from '../attachmentMultipart.ts';
 import { API_ROUTES } from '../../../shared/index.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
@@ -161,6 +162,66 @@ function createAttachmentsRouter({ state, env = process.env }: {
     });
 
     res.status(200).json({ conversationId, ...presigned });
+  });
+
+  const validUploadOperation = (body: Record<string, unknown>) =>
+    ['prepare', 'part', 'complete', 'abort'].includes(String(body.action)) &&
+    typeof body.clientId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(body.clientId) &&
+    (body.uploadId === undefined || (typeof body.uploadId === 'string' && body.uploadId.length <= 2048));
+  const safeUploadTarget = (id: string | null) =>
+    !id || (id.length <= 128 && !/[/\\\u0000-\u001f\u007f]/.test(id));
+  const authorizeUploadTarget = async (groupId: string | null, peerId: string | null, userId: string, res: express.Response) => {
+    if (groupId) return authorizeGroupUpload(groupId, userId, res);
+    if (await isBlockedAsync(state, peerId!, userId) || await isBlockedAsync(state, userId, peerId!)) {
+      res.status(403).json({ error: 'blocked' }); return false;
+    }
+    return true;
+  };
+
+  router.post(API_ROUTES.ATTACHMENTS_UPLOAD, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const session = await getSessionFromRequestAsync(req, state).catch(() => null);
+    if (!session) { res.status(401).json({ error: 'invalid session' }); return; }
+    if (!config) { res.status(503).json({ error: 'attachment uploads are not configured' }); return; }
+    const { action, clientId, uploadId, partNumber } = req.body ?? {};
+    if (!validUploadOperation(req.body ?? {})) {
+      res.status(400).json({ error: 'invalid upload operation' }); return;
+    }
+    const validated = validateAttachmentRequest(req.body ?? {});
+    if ('error' in validated) { res.status(400).json({ error: validated.error }); return; }
+    const groupId = normaliseId(req.body?.groupId);
+    const peerId = normaliseId(req.body?.peerId);
+    if (![session.userId, groupId, peerId].every(safeUploadTarget)) {
+      res.status(400).json({ error: 'invalid upload target' }); return;
+    }
+    if (!groupId && (!peerId || peerId === session.userId)) {
+      res.status(400).json({ error: 'peerId must be another user' }); return;
+    }
+    // Cleanup remains available to the original uploader after a block or
+    // group departure. The identity includes the authenticated actor, never a
+    // caller-supplied key, so this cannot delete another participant's bytes.
+    if (action !== 'abort' && !await authorizeUploadTarget(groupId, peerId, session.userId, res)) return;
+    const rate = await state.attachmentUploadRateLimiter.check(session.userId);
+    if (!rate.allowed) {
+      const retryAfter = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+      res.set('Retry-After', String(retryAfter));
+      res.status(429).json({ error: 'too many requests', retryAfter });
+      return;
+    }
+    if (action === 'part' && (!Number.isInteger(partNumber) || partNumber < 1 ||
+      partNumber > Math.ceil(validated.sizeBytes / ATTACHMENT_PART_BYTES))) {
+      res.status(400).json({ error: 'invalid part number' }); return;
+    }
+    const conversationId = groupId ? `group_${groupId}` : deriveConversationId(session.userId, peerId!);
+    const key = queuedAttachmentKey(conversationId, session.userId, clientId, validated.mimeType, validated.sizeBytes);
+    try {
+      const result = await attachmentUploadOperation({
+        config, key, ...validated, action, uploadId, partNumber,
+      });
+      res.json(result);
+    } catch {
+      res.status(503).json({ error: 'could not process attachment upload' });
+    }
   });
 
   /**

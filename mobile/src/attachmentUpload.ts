@@ -193,10 +193,12 @@ export function putAttachment({ uploadUrl, headers, body, onProgress, onAbortHan
         body: Blob | { uri: string; type?: string; name?: string; };
         onProgress?: (fraction: number) => void;
         onAbortHandle?: (abort: () => void) => void;
-    }): Promise<void> {
+    }): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', uploadUrl, true);
+    xhr.timeout = 120_000;
+    xhr.ontimeout = () => reject(new AttachmentError('Upload timed out'));
     Object.entries(headers ?? {}).forEach(([name, value]) => {
       xhr.setRequestHeader(name, value);
     });
@@ -211,7 +213,7 @@ export function putAttachment({ uploadUrl, headers, body, onProgress, onAbortHan
       if (xhr.status >= 200 && xhr.status < 300) {
         logInfo('[Attachments] upload completed', { status: xhr.status });
         onProgress?.(1);
-        resolve();
+        resolve(xhr.getResponseHeader?.('ETag') ?? '');
         return;
       }
       logWarn('[Attachments] upload rejected by storage', { status: xhr.status });

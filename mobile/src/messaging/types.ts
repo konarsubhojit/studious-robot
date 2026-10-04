@@ -1,4 +1,5 @@
 import type { AttachmentRecord, ConversationRecord, MessageRecord } from '../../../shared/signaling/schemas';
+import type { DeliveryState } from './deliveryState';
 
 /**
  * The vocabulary the messaging client is written in: the shapes every
@@ -17,6 +18,8 @@ import type { AttachmentRecord, ConversationRecord, MessageRecord } from '../../
 export type ChatMessage = Omit<MessageRecord, 'conversationId'> & {
   conversationId?: string | null;
   status?: string;
+  /** Derived at the hook boundary; never persisted as an in-flight state. */
+  deliveryState?: DeliveryState;
   peerId?: string;
   localId?: string;
   clientCreatedAt?: string;
@@ -57,6 +60,22 @@ export type OutboxItem = {
   state?: 'pending' | 'failed';
   /** Persisted wall-clock deadline in milliseconds; null means ready immediately. */
   nextAttemptAt?: number | null;
+  /** Local-only upload checkpoint. Signed URLs/credentials never belong here. */
+  upload?: {
+    uri: string;
+    key?: string;
+    uploadId?: string;
+    partSize?: number;
+    parts: { partNumber: number; etag: string; sizeBytes: number }[];
+    progress: number;
+    completed?: boolean;
+  };
+  /** Hidden from the timeline while server reconciliation and cleanup retry. */
+  discarded?: boolean;
+  /** Server tombstone confirmed before storage cleanup; survives cleanup retries. */
+  serverMessageDeleted?: boolean;
+  /** Final sweep after any pre-discard single-PUT grant and request can expire. */
+  cleanupAfter?: number;
 };
 
 export type TimelineCursor = {

@@ -21,6 +21,7 @@ import {
   withUploadProgress,
   withoutMessage,
 } from '../../src/messaging/sendPipeline';
+import { deriveDeliveryState } from '../../src/messaging/deliveryState';
 
 /**
  * The send pipeline's pure half, exercised without mounting `useMessaging`:
@@ -46,7 +47,72 @@ const queued = (overrides: any = {}): any => ({
   ...overrides,
 });
 
+describe('delivery state', () => {
+  test('authoritative outbox determines waiting, in-flight and terminal states despite stale flags', () => {
+    const message = draft({ failed: true, pending: true, readAt: '2026-08-25T10:31:00Z' });
+    expect(deriveDeliveryState(message, queued())).toBe('queued');
+    expect(deriveDeliveryState(message, queued(), true)).toBe('sending');
+    expect(deriveDeliveryState(message, queued({ state: 'failed' }), true)).toBe('failed');
+    expect(deriveDeliveryState(message, queued({ attempts: OUTBOX_MAX_ATTEMPTS }))).toBe('failed');
+  });
+
+  test('server receipts determine sent, delivered and read after reconciliation', () => {
+    expect(deriveDeliveryState(draft())).toBe('sent');
+    expect(deriveDeliveryState(draft({ deliveredTo: ['other'] }))).toBe('sent');
+    expect(deriveDeliveryState(draft({ deliveredTo: ['bob'], pending: true }))).toBe('delivered');
+    expect(deriveDeliveryState(draft({ readAt: '2026-08-25T10:31:00Z', failed: true }))).toBe('read');
+    expect(deriveDeliveryState(draft({ recipientId: undefined, deliveredTo: ['bob'] }))).toBe('delivered');
+  });
+
+  test('legacy optimistic rows never imply an in-flight emit and failed uploads remain failed', () => {
+    expect(deriveDeliveryState(draft({ pending: true }))).toBe('queued');
+    expect(deriveDeliveryState(draft({ syncState: 'pending' }))).toBe('queued');
+    expect(deriveDeliveryState(draft({ uploadState: 'failed' }), queued(), true)).toBe('failed');
+  });
+
+  test('persisted group readers exclude the sender and cannot override the outbox', () => {
+    const message = draft({ recipientId: undefined, readBy: ['alice'] });
+    expect(deriveDeliveryState(message)).toBe('sent');
+    message.readBy.push('bob');
+    expect(deriveDeliveryState(message)).toBe('read');
+    expect(deriveDeliveryState(message, queued())).toBe('queued');
+    expect(deriveDeliveryState(message, queued(), true)).toBe('sending');
+    expect(deriveDeliveryState(message, queued({ state: 'failed' }))).toBe('failed');
+  });
+});
+
 describe('optimistic send', () => {
+  test('discarded uploads hide reconciled server identities without hiding another sender', () => {
+    const item = queued({ messageId: 'original', clientMessageId: 'client', discarded: true });
+    const server = draft({ messageId: 'server', clientMessageId: 'client' });
+    const peer = { ...server, messageId: 'peer-message', senderId: 'bob' };
+    expect(restoreOutboxMessages({ bob: [server, peer] }, [item], 'alice').bob).toEqual([peer]);
+  });
+  test('cleanup tombstones stay retryable and do not block later sends during the final sweep delay', async () => {
+    const discarded = queued({
+      discarded: true, state: 'failed', attempts: 99, nextAttemptAt: Date.now() + 60_000,
+    });
+    const next = queued({ messageId: 'm2', createdAt: '2026-08-25T10:31:00.000Z' });
+    expect(isRetryable(discarded)).toBe(true);
+    const queue = drainOrder([next, discarded]);
+    expect(queue[0]).toBe(discarded);
+    expect(nextOutboxDeadline(queue)).toBeLessThanOrEqual(Date.now());
+    const send = jest.fn(async () => true);
+    await drainQueuedMessages(queue, send);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(next);
+  });
+  test('a completion checkpoint restores the opaque reference even if its UI mirror was interrupted', () => {
+    const item = queued({
+      body: '', type: 'file', attachment: { url: 'file:///docs/source', mimeType: 'application/pdf', sizeBytes: 10 },
+      upload: { uri: 'file:///docs/source', parts: [], completed: true, progress: 1, key: 'chatblobs/alice_bob/file.pdf' },
+    });
+    const stale = buildUploadingMessage(draft({ body: '', type: 'file', attachment: item.attachment }));
+    const restored = restoreOutboxMessages({ bob: [stale] }, [item], 'alice');
+    expect(restored.bob[0]).toMatchObject({
+      attachment: { url: 'chatblobs/alice_bob/file.pdf' }, uploadState: undefined, uploadProgress: undefined,
+    });
+  });
   test('an optimistic message is pending and carries the composed content', () => {
     const message = buildOptimisticMessage(draft({ replyTo: 'm0' }));
     expect(message).toMatchObject({

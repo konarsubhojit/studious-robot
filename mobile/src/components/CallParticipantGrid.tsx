@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
 import { getParticipantGridLayout, orderParticipantsBySpeaker } from '../call/participantGrid';
 import { useThemedStyles } from '../ThemeContext';
-import { radius, spacing, typography } from '../theme';
+import { overlay, radius, spacing, typography } from '../theme';
 import { Avatar } from './primitives';
 import type { ThemeColors } from '../theme';
 
@@ -118,7 +118,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     right: 0,
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xs,
-    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    backgroundColor: overlay.scrimStrong,
   },
   name: { ...typography.caption, fontWeight: '700', color: colors.onOverlay },
   meta: { ...typography.caption, color: colors.onOverlay },

@@ -459,6 +459,8 @@ describe('ChatConversationScreen', () => {
 
   test('shows a pending indicator for optimistic messages and a failed/retry indicator for failed ones', () => {
     const onSendMessage = jest.fn();
+    const onRetryMessage = jest.fn();
+    const onDiscardMessage = jest.fn();
     const tree = render({
       peerId: 'user-bob',
       messages: [
@@ -466,6 +468,8 @@ describe('ChatConversationScreen', () => {
         makeMessage({ messageId: 'failed-1', senderId: 'user-alice', body: 'oops', failed: true }),
       ],
       onSendMessage,
+      onRetryMessage,
+      onDiscardMessage,
       onBack: jest.fn(),
       currentUserId: 'user-alice',
     });
@@ -480,7 +484,8 @@ describe('ChatConversationScreen', () => {
     act(() => {
       retryLabel.props.onPress();
     });
-    expect(onSendMessage).toHaveBeenCalledWith('oops');
+    expect(onRetryMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'failed-1' }));
+    expect(onSendMessage).not.toHaveBeenCalled();
 
     // Retry is not wired to the bubble itself: a touch handler spanning the
     // whole drag surface is the same class of conflict a `Pressable` used to
@@ -501,7 +506,9 @@ describe('ChatConversationScreen', () => {
     act(() => {
       findByTestId(tree, 'chat-message-failed').props.onPress();
     });
-    expect(onSendMessage).toHaveBeenCalledTimes(2);
+    expect(onRetryMessage).toHaveBeenCalledTimes(2);
+    act(() => findByTestId(tree, 'chat-message-discard').props.onPress());
+    expect(onDiscardMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'failed-1' }));
   });
 
   test('every delivery state renders in the same footer slot', () => {
@@ -513,6 +520,7 @@ describe('ChatConversationScreen', () => {
         peerId: 'user-bob',
         messages: [message],
         onSendMessage: jest.fn(),
+        onRetryMessage: jest.fn(),
         onBack: jest.fn(),
         currentUserId: 'user-alice',
       });
@@ -530,7 +538,7 @@ describe('ChatConversationScreen', () => {
     expect(footerOf(makeMessage({ senderId: 'user-alice' }))).toEqual(['chat-message-tick']);
   });
 
-  test("a pending message says 'Queued' rather than 'Sending…' while offline", () => {
+  test("a pending message stays queued even online unless an emit is in flight", () => {
     const pending = makeMessage({ senderId: 'user-alice', pending: true });
     const props = {
       peerId: 'user-bob',
@@ -540,10 +548,42 @@ describe('ChatConversationScreen', () => {
       currentUserId: 'user-alice',
     };
 
-    expect(findByTestId(render(props), 'chat-message-pending').props.children).toBe('Sending…');
+    expect(findByTestId(render(props), 'chat-message-pending').props.children).toBe('Queued');
+    expect(findByTestId(render({ ...props, messages: [{ ...pending, deliveryState: 'sending' }] }),
+      'chat-message-pending').props.children).toBe('Sending…');
     expect(
       findByTestId(render({ ...props, isOffline: true }), 'chat-message-pending').props.children,
     ).toBe('Queued');
+  });
+
+  test.each([
+    ['queued', 'Queued', 'Queued'],
+    ['sending', 'Sending', 'Sending…'],
+    ['sent', 'Sent', '✓'],
+    ['delivered', 'Delivered', '✓✓'],
+    ['read', 'Read', '✓✓ Read'],
+    ['failed', 'Failed', 'Failed'],
+  ])('renders an accessible, distinct %s indicator', (deliveryState, label, indicator) => {
+    const tree = render({
+      peerId: 'user-bob', currentUserId: 'user-alice',
+      messages: [makeMessage({ senderId: 'user-alice', deliveryState })],
+      onSendMessage: jest.fn(), onRetryMessage: jest.fn(), onDiscardMessage: jest.fn(), onBack: jest.fn(),
+    });
+    const status = tree.root.findAll((node: renderer.ReactTestInstance) =>
+      node.type === Text && node.props.accessibilityLabel === label)[0];
+    expect(status).toBeDefined();
+    expect(status.props.children).toBe(indicator);
+  });
+
+  test('retry without a retry adapter never creates a new send identity', () => {
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob', currentUserId: 'user-alice',
+      messages: [makeMessage({ senderId: 'user-alice', failed: true })],
+      onSendMessage, onBack: jest.fn(),
+    });
+    act(() => findByTestId(tree, 'chat-message-failed').props.onPress());
+    expect(onSendMessage).not.toHaveBeenCalled();
   });
 
   test("a peer's message never shows a delivery state — it isn't ours to report", () => {
@@ -596,13 +636,14 @@ describe('ChatConversationScreen', () => {
     expect(onRetryMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'failed-1' }));
   });
 
-  test('shows the offline notice only while offline', () => {
+  test('offline banner reacts to connectivity and retryable depth with correct plural', () => {
     const props = {
       peerId: 'user-bob',
       messages: [makeMessage()],
       onSendMessage: jest.fn(),
       onBack: jest.fn(),
       currentUserId: 'user-alice',
+      pendingSendCount: 3,
     };
 
     const online = render(props);
@@ -614,7 +655,16 @@ describe('ChatConversationScreen', () => {
     const offline = render({ ...props, isOffline: true });
     const notice = findByTestId(offline, 'chat-offline-notice');
     const text = notice.findAll((n: any) => typeof n.props?.children === 'string');
-    expect(text.some((n: any) => n.props.children.includes('Offline'))).toBe(true);
+    expect(text.some((n: any) => n.props.children === "3 messages will send when you're back online")).toBe(true);
+    act(() => offline.update(<ChatConversationScreen {...props} isOffline pendingSendCount={1} />));
+    expect(findByTestId(offline, 'chat-offline-notice').findAll((n: any) =>
+      n.props.children === "1 message will send when you're back online").length).toBeGreaterThan(0);
+    act(() => offline.update(<ChatConversationScreen {...props} isOffline pendingSendCount={0} />));
+    expect(findByTestId(offline, 'chat-offline-notice')).toBeNull();
+    act(() => offline.update(<ChatConversationScreen {...props} isOffline />));
+    expect(findByTestId(offline, 'chat-offline-notice')).not.toBeNull();
+    act(() => offline.update(<ChatConversationScreen {...props} isOffline={false} />));
+    expect(findByTestId(offline, 'chat-offline-notice')).toBeNull();
   });
 
   test('scrolling to the top calls onLoadOlder', () => {
@@ -653,7 +703,7 @@ describe('ChatConversationScreen', () => {
     expect(dateItems[0].label).toBe('Today');
   });
 
-  test('only the last message of a consecutive same-sender group shows a timestamp/tick', () => {
+  test('every outgoing message has a delivery indicator even within a consecutive same-sender group', () => {
     const now = new Date();
     const tree = render({
       peerId: 'user-bob',
@@ -675,10 +725,10 @@ describe('ChatConversationScreen', () => {
     expect(messageItems.map((item: any) => item.isGroupEnd)).toEqual([true, false]);
 
     const ticks = findAllByTestId(tree, 'chat-message-tick');
-    expect(ticks).toHaveLength(1);
+    expect(ticks).toHaveLength(2);
   });
 
-  test('renders a read tick (✓✓) for own read messages and a sent tick (✓) otherwise', () => {
+  test('renders a non-color-only read indicator for own read messages', () => {
     const tree = render({
       peerId: 'user-bob',
       messages: [
@@ -693,7 +743,7 @@ describe('ChatConversationScreen', () => {
       currentUserId: 'user-alice',
     });
     const tick = findByTestId(tree, 'chat-message-tick');
-    expect(tick.props.children).toBe('✓✓');
+    expect(tick.props.children).toBe('✓✓ Read');
     expect(tick.props.accessibilityLabel).toBe('Read');
   });
 
@@ -2888,6 +2938,7 @@ describe('ChatConversationScreen upload cancellation', () => {
       cancel.props.onPress();
     });
     expect(onCancelAttachmentUpload).toHaveBeenCalledTimes(1);
+    expect(onCancelAttachmentUpload).toHaveBeenCalledWith(expect.objectContaining({ uploadState: 'uploading' }));
   });
 
   test('omits the cancel control when cancelling is not wired up', () => {
