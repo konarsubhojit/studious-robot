@@ -1,8 +1,8 @@
-import { RTC_ACTIVE_CALL_STATES, CONNECTED_CALL_STATUS } from '../config.ts';
+import { RTC_ACTIVE_CALL_STATES, CONNECTED_CALL_STATUS, TERMINAL_CALL_STATES } from '../config.ts';
 import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
 import { isCallOwnedByAnotherDevice, recordCallHeartbeat } from '../domain/calls.ts';
 import { notifyCallTransition, emitVersionedCallEvent, emitVersionedRtcSignal, callWithParticipants } from '../domain/notifications.ts';
-import { hydrateCallFromShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
+import { hydrateCallFromShared, participantActionWithShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
 import { userRoom } from '../lib/state.ts';
 import { describeError } from '../lib/errors.ts';
 import { verboseLog } from '../lib/verbose.ts';
@@ -210,7 +210,9 @@ function holdOrRejectRtcSignal(socket: import('socket.io').Socket, ack: Function
       eventName: options.eventName,
       dataKey: options.dataKey,
       fromUserId: userId,
-      toUserId: call.callerId === userId ? call.calleeId : call.callerId,
+      toUserId: call.participants?.find(({ userId: id, state }) => id !== userId &&
+        (state === 'joined' || state === 'ringing' || state === 'invited'))?.userId ??
+        (call.callerId === userId ? call.calleeId : call.callerId),
       value,
     });
   if (buffered) {
@@ -265,15 +267,102 @@ function resolveCallPeerId(
   userId: string,
   requestedPeerId?: string
 ): string | null {
-  const participants = call.participants?.map(({ userId: participantId }) => participantId) ?? [call.callerId, call.calleeId];
-  const expectedPeerId = call.callerId === userId ? call.calleeId : call.callerId;
-  const peerId = requestedPeerId ?? expectedPeerId;
-  return participants.includes(userId) &&
-    participants.includes(peerId) &&
-    peerId !== userId &&
-    peerId === expectedPeerId
-    ? peerId
-    : null;
+  const allMembers = call.participants
+    ? call.participants.map(({ userId: participantId }) => participantId)
+    : [call.callerId, call.calleeId];
+  const activeMembers = call.participants
+    ? call.participants.filter(isRtcEligibleParticipant).map(({ userId: participantId }) => participantId)
+    : allMembers;
+  const isTerminal = TERMINAL_CALL_STATES.has(call.status);
+  const peerId = requestedPeerId ?? (isTerminal ? allMembers : activeMembers).find((id) => id !== userId);
+  return isRtcPeerAllowed(allMembers, activeMembers, userId, peerId, isTerminal) ? peerId : null;
+}
+
+function isRtcEligibleParticipant(participant: NonNullable<import('../stores/contracts.ts').CallRecord['participants']>[number]): boolean {
+  return participant.state === 'joined' || participant.state === 'ringing' || participant.state === 'invited';
+}
+
+function isRtcPeerAllowed(
+  allMembers: string[],
+  activeMembers: string[],
+  userId: string,
+  peerId: string | undefined,
+  isTerminal: boolean
+): peerId is string {
+  if (!allMembers.includes(userId) || !peerId || peerId === userId || !allMembers.includes(peerId)) return false;
+  return isTerminal || activeMembers.includes(peerId);
+}
+
+function rejectActionFromNonOwnerDevice(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  options: {
+    state: import('../stores/contracts.ts').ServerState;
+    eventName: string;
+    action: 'join' | 'leave' | 'decline';
+  },
+  call: import('../stores/contracts.ts').CallRecord,
+  callId: string,
+  userId: string,
+  deviceId: string | null
+): boolean {
+  if (options.action === 'decline' || !isCallOwnedByAnotherDevice(call, userId, deviceId)) return false;
+  const message = 'this call is active on another device';
+  console.log(
+    `[signaling] ${options.eventName} rejected callId=${sanitizeForLog(callId)}` +
+      ` actor=${sanitizeForLog(userId)}` +
+      (deviceId ? ` actorDevice=${sanitizeForLog(deviceId)}` : '') +
+      ` reason=${sanitizeForLog(message)}`
+  );
+  acknowledgeError(socket, ack, options.eventName, ERROR_CODES.ANSWERED_ELSEWHERE, message, options.state);
+  return true;
+}
+
+async function handleSocketParticipantAction(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  payload: object,
+  options: {
+    state: import('../stores/contracts.ts').ServerState;
+    io: any;
+    eventName: string;
+    action: 'join' | 'leave' | 'decline';
+  }
+): Promise<void> {
+  if (!requireSocketSession(socket, ack, options.eventName)) return;
+  if (!validateSignalingVersion(socket, payload, ack, options.eventName)) return;
+  const parsed = parseInboundPayload(socket, ack, options.eventName, payload, options.state);
+  if (!parsed) return;
+
+  const callId = normaliseId(parsed.callId) as string;
+  const userId = socket.data.identity.userId;
+  const deviceId = normaliseId(socket.data.identity.deviceId) ?? null;
+  const call = await hydrateCallFromShared(options.state, callId);
+  if (!call) {
+    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found', options.state);
+    return;
+  }
+  if (rejectActionFromNonOwnerDevice(socket, ack, options, call, callId, userId, deviceId)) return;
+  const previousStatus = call.status;
+  const result = await participantActionWithShared(options.state, callId, userId, options.action, deviceId);
+  if (!result.ok) {
+    const code = result.status === 403 ? ERROR_CODES.FORBIDDEN : 'invalid_state';
+    acknowledgeError(socket, ack, options.eventName, code, result.message ?? result.error, options.state);
+    return;
+  }
+  if (!result.stale) {
+    const reason = options.action === 'decline' ? 'declined' : options.action === 'leave' ? 'user_hangup' : null;
+    notifyCallTransition(options.io, options.state, result.call, {
+      previousStatus,
+      actor: userId,
+      reason,
+      actorDeviceId: deviceId,
+      actorSocketId: socket.id,
+      source: 'socket',
+    });
+    flushBufferedRtcSignals(options.io, options.state, callId, result.call.status);
+  }
+  acknowledgeSuccess(socket, ack, options.eventName, { call: callWithParticipants(result.call) });
 }
 
 function rtcRelayEventNames(eventName: string): {
@@ -583,7 +672,8 @@ async function handleCallConnected(socket: import('socket.io').Socket, ack: Func
         : { nextStatus: CONNECTED_CALL_STATUS, reason: null, iceState };
     },
     authorize: (call, userId) => {
-      if (call.callerId !== userId && call.calleeId !== userId) {
+      if (!(call.participants?.some((participant) => participant.userId === userId && participant.state === 'joined') ??
+        (call.callerId === userId || call.calleeId === userId))) {
         return 'not a participant in this call';
       }
       return isCallOwnedByAnotherDevice(call, userId, socket.data.identity.deviceId ?? null)
@@ -635,7 +725,8 @@ async function handleCallStats(
     acknowledgeError(socket, ack, eventName, 'call_not_found', 'call not found', state);
     return;
   }
-  if (call.callerId !== userId && call.calleeId !== userId) {
+  if (!(call.participants?.some((participant) => participant.userId === userId && participant.state === 'joined') ??
+    (call.callerId === userId || call.calleeId === userId))) {
     acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'not a participant in this call', state);
     return;
   }
@@ -665,6 +756,7 @@ async function handleCallStats(
 
 export {
   handleSocketCallTransition,
+  handleSocketParticipantAction,
   handleRtcRelay,
   handleCallConnected,
   handleCallStats,

@@ -49,7 +49,12 @@ function createSharedBackends() {
         const active: CallRecord[] = [];
         for (const call of calls.values()) {
           if (TERMINAL.has(call.status)) continue;
-          if (call.callerId === userId || call.calleeId === userId) active.push({ ...call });
+          const participant = call.participants?.find(({ userId: id }) => id === userId);
+          if (participant
+            ? participant.state === 'joined' || participant.state === 'ringing' || participant.state === 'invited'
+            : call.callerId === userId || call.calleeId === userId) {
+            active.push({ ...call });
+          }
         }
         return active;
       },
@@ -173,6 +178,8 @@ test('a transition handled by another instance updates this instance\'s cached r
     assert.equal((await getJson(a.url, `/calls/${callId}`, callerSession)).body.status, 'accepted');
 
     assert.equal(await postJson(b.url, `/calls/${callId}/end`, {}, calleeSession).then(r => r.status), 200);
+    assert.equal((await getJson(a.url, `/calls/${callId}`, callerSession)).body.status, 'accepted');
+    await postJson(a.url, `/calls/${callId}/end`, {}, callerSession);
     await settle();
     assert.equal((await getJson(a.url, `/calls/${callId}`, callerSession)).body.status, 'ended');
   } finally {
@@ -196,6 +203,7 @@ test('a call ended on another instance does not make the caller busy', async () 
     const callId = created.body.callId;
     await postJson(b.url, `/calls/${callId}/accept`, {}, calleeSession);
     await postJson(b.url, `/calls/${callId}/end`, {}, calleeSession);
+    await postJson(a.url, `/calls/${callId}/end`, {}, callerSession);
 
     const next = await postJson(a.url, '/calls', { calleeId: 'user-b' }, callerSession);
     assert.equal(next.status, 201, 'the finished call must not block the next one');

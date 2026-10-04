@@ -36,6 +36,24 @@ function mirrorCallToShared(state: ServerState, call: CallRecord): void {
   });
 }
 
+function resolveInitialInviteeStates(
+  state: ServerState,
+  invitees: string[],
+  ringingTimeoutMs: number
+): { states: Map<string, 'ringing' | 'busy' | 'unreachable'>; status: string; reason: string | null } {
+  const states = new Map<string, 'ringing' | 'busy' | 'unreachable'>();
+  for (const invitee of invitees) {
+    const busy = getActiveCallsForUser(state, invitee, { staleAfterMs: ringingTimeoutMs }).length > 0;
+    const unreachable = isSingleInstanceMode(state) && isCalleeUnreachable(state, invitee);
+    states.set(invitee, busy ? 'busy' : unreachable ? 'unreachable' : 'ringing');
+  }
+  const allBusy = invitees.every((invitee) => states.get(invitee) === 'busy');
+  const noneRinging = invitees.every((invitee) => states.get(invitee) !== 'ringing');
+  if (allBusy) return { states, status: 'busy', reason: 'busy' };
+  if (noneRinging) return { states, status: 'unreachable', reason: 'unreachable' };
+  return { states, status: 'ringing', reason: null };
+}
+
 /**
  * Create a new call record and append the initial `created` event.
  *
@@ -43,46 +61,32 @@ function mirrorCallToShared(state: ServerState, call: CallRecord): void {
  * (non-terminal) call, or to `unreachable` when the callee has no reachable
  * channels at all; otherwise starts in `ringing`.
  */
-function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeoutMs, callerDeviceId = null, mediaType = 'video' }: { callerId: string; calleeId: string; ringingTimeoutMs: number; callerDeviceId?: string | null; mediaType?: 'audio' | 'video'; }): CallRecord {
+function createCallRecord(state: ServerState, { callerId, calleeId, calleeIds, ringingTimeoutMs, callerDeviceId = null, mediaType = 'video' }: { callerId: string; calleeId?: string; calleeIds?: string[]; ringingTimeoutMs: number; callerDeviceId?: string | null; mediaType?: 'audio' | 'video'; }): CallRecord {
+  const invitees = Array.from(new Set(calleeIds?.length ? calleeIds : calleeId ? [calleeId] : []));
+  const firstCalleeId = calleeId ?? invitees[0];
+  if (!firstCalleeId) throw new Error('at least one callee is required');
   const callId = randomUUID();
   const now = new Date().toISOString();
 
-  // Determine initial status.
-  let status = 'ringing';
-  let endReason = null;
+  const { states: inviteeStates, status, reason: endReason } =
+    resolveInitialInviteeStates(state, invitees, ringingTimeoutMs);
 
-  // A record that has shown no sign of life for longer than a whole ring is one
-  // the sweep is due to end; it must not be able to report the callee as busy.
-  if (getActiveCallsForUser(state, calleeId, { staleAfterMs: ringingTimeoutMs }).length > 0) {
-    status = 'busy';
-    endReason = 'busy';
-    // Name the offender: a `busy` rejection is otherwise undiagnosable, and the
-    // usual cause is a stale call the callee never actually hung up. `staleMs`
-    // is the diagnostic one: `ageMs` measures the call's whole life, so a long
-    // healthy conversation and a fossil from the same minute look identical.
-    const blockers = describeActiveCallsForUser(state, calleeId)
-      .map(
-        (blocker) =>
-          `${blocker.callId}(status=${blocker.status} ageMs=${blocker.ageMs}` +
-          ` staleMs=${blocker.staleMs} caller=${blocker.callerId} callee=${blocker.calleeId})`
-      )
-      .join(',');
-    console.log(
-      `[calls] busy callerId=${callerId} calleeId=${calleeId} blockedBy=${blockers}`
-    );
-    // In single-instance mode (no cross-instance bus), we can safely short-circuit
-    // unknown callees as `unreachable`. In multi-instance mode, the callee may be
-    // connected to another node, so we allow ringing delivery via user-room fanout.
-  } else if (isSingleInstanceMode(state) && isCalleeUnreachable(state, calleeId)) {
-    status = 'unreachable';
-    endReason = 'unreachable';
-  }
-
-  const call = {
+  const participants: NonNullable<CallRecord['participants']> = [
+    { userId: callerId, state: 'joined', joinedAt: now, deviceId: callerDeviceId },
+    ...invitees.map((userId) => ({
+      userId,
+      state: inviteeStates.get(userId) ?? 'ringing',
+      ringTimeoutAt: inviteeStates.get(userId) === 'ringing'
+        ? new Date(Date.now() + ringingTimeoutMs).toISOString()
+        : null,
+    })),
+  ];
+  const call: CallRecord = {
     callId,
     mediaType,
     callerId,
-    calleeId,
+    calleeId: firstCalleeId,
+    participants,
     status,
     endReason,
     createdAt: now,
@@ -103,7 +107,7 @@ function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeo
   // No `mirrorCallToShared` here: `createCallRecordWithShared` awaits the same
   // save, and it is the awaited one the callee's instance depends on.
   state.callEvents.set(callId, []);
-  invalidateCallHistoryCache(state, callerId, calleeId);
+  invalidateCallHistoryCache(state, callerId, ...invitees);
   const persistedCall = persistCallRecord(state.db, call);
   appendCallEvent(state, callId, 'created', callerId, null, persistedCall);
   if (status !== 'ringing') {
@@ -201,6 +205,13 @@ function transitionCall(state: ServerState, callId: string, toStatus: string, { 
   if (isTerminal) {
     call.ringTimeoutAt = null;
     call.durationSeconds = durationSeconds;
+    for (const participant of call.participants ?? []) {
+      if (participant.state === 'joined' || participant.state === 'ringing' || participant.state === 'invited') {
+        participant.state = 'left';
+        participant.leftAt = call.updatedAt;
+        participant.ringTimeoutAt = null;
+      }
+    }
   }
 
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
@@ -274,7 +285,10 @@ function getActiveCallsForUser(
   const active = [];
   for (const call of state.calls.values()) {
     if (TERMINAL_CALL_STATES.has(call.status)) continue;
-    if (call.callerId !== userId && call.calleeId !== userId) continue;
+    if (!isCallParticipant(call, userId)) continue;
+    const participant = call.participants?.find(({ userId: id }) => id === userId);
+    if (participant && participant.state !== 'joined' &&
+      participant.state !== 'ringing' && participant.state !== 'invited') continue;
     if (staleAfterMs > 0 && now - lastActivityAt(call, now) > staleAfterMs) continue;
     active.push(call);
   }
@@ -285,7 +299,45 @@ function getActiveCallsForUser(
  * The other participant in `call`, from `userId`'s point of view.
  */
 function callPeerId(call: CallRecord, userId: string): string {
-  return call.callerId === userId ? call.calleeId : call.callerId;
+  return call.participants?.find((participant) =>
+    participant.userId !== userId &&
+    (participant.state === 'joined' || participant.state === 'ringing' || participant.state === 'invited')
+  )?.userId ?? (call.callerId === userId ? call.calleeId : call.callerId);
+}
+
+function isCallParticipant(call: CallRecord, userId: string): boolean {
+  return call.participants?.some(({ userId: id }) => id === userId) ??
+    (call.callerId === userId || call.calleeId === userId);
+}
+
+function updateCallParticipant(
+  state: ServerState,
+  call: CallRecord,
+  userId: string,
+  participantState: 'joined' | 'left' | 'declined' | 'missed',
+  deviceId: string | null = null,
+  mirrorShared = true
+): void {
+  call.participants ??= [
+    { userId: call.callerId, state: 'joined', joinedAt: call.createdAt },
+    { userId: call.calleeId, state: call.status === 'ringing' ? 'ringing' : 'joined' },
+  ];
+  const participant = call.participants.find(({ userId: id }) => id === userId);
+  if (!participant) return;
+  const now = new Date().toISOString();
+  call.updatedAt = now;
+  participant.state = participantState;
+  participant.ringTimeoutAt = null;
+  if (participantState === 'joined') {
+    participant.joinedAt ??= now;
+    if (deviceId) participant.deviceId = deviceId;
+  } else {
+    participant.leftAt = now;
+  }
+  invalidateCallHistoryCache(state, ...call.participants.map(({ userId: id }) => id));
+  void persistCallRecord(state.db, call);
+  appendCallEvent(state, call.callId, `participant_${participantState}`, userId, null);
+  if (mirrorShared) mirrorCallToShared(state, call);
 }
 
 /**
@@ -296,6 +348,8 @@ function callPeerId(call: CallRecord, userId: string): string {
  * tracked. Callers must treat that as *unknown*, never as "no device".
  */
 function ownerDeviceIdForUser(call: CallRecord, userId: string): string | null {
+  const participant = call.participants?.find(({ userId: id }) => id === userId);
+  if (participant?.deviceId) return participant.deviceId;
   if (call.callerId === userId) return call.callerDeviceId ?? null;
   if (call.calleeId === userId) return call.calleeDeviceId ?? null;
   return null;
@@ -420,6 +474,30 @@ function recordCallHeartbeat(state: ServerState, callId: string, now: number = D
   return true;
 }
 
+function expireRingingParticipants(
+  state: ServerState,
+  call: CallRecord,
+  now: number,
+  callback?: (call: CallRecord, userId: string) => void
+): boolean {
+  let timedOut = false;
+  for (const participant of call.participants ?? []) {
+    if (participant.state !== 'ringing' || !participant.ringTimeoutAt) continue;
+    if (Date.parse(participant.ringTimeoutAt) > now) continue;
+    updateCallParticipant(state, call, participant.userId, 'missed');
+    callback?.(call, participant.userId);
+    timedOut = true;
+  }
+  return timedOut;
+}
+
+function hasPendingCallInvitee(call: CallRecord): boolean {
+  return call.participants?.some((participant) =>
+    participant.userId !== call.callerId &&
+    (participant.state === 'ringing' || participant.state === 'invited' || participant.state === 'joined')
+  ) ?? false;
+}
+
 /**
  * Advance every `ringing` call whose `ringTimeoutAt` is ≤ `now` to `missed`,
  * and force-end every other **non-terminal** call that has been stuck in its
@@ -434,9 +512,18 @@ function recordCallHeartbeat(state: ServerState, callId: string, now: number = D
  * @param now - Unix timestamp in ms.
  * @returns Number of calls transitioned.
  */
-function tickRingingTimeouts(state: ServerState, now: number, onTransition?: (call: CallRecord, previousStatus: string, reason: string) => void, options: { ringingTimeoutMs?: number; mediaConnectTimeoutMs?: number; maxCallDurationMs?: number; heartbeatTimeoutMs?: number; } = {}): number {
+function tickRingingTimeouts(state: ServerState, now: number, onTransition?: (call: CallRecord, previousStatus: string, reason: string) => void, options: { ringingTimeoutMs?: number; mediaConnectTimeoutMs?: number; maxCallDurationMs?: number; heartbeatTimeoutMs?: number; onParticipantTimeout?: (call: CallRecord, userId: string) => void; } = {}): number {
   let count = 0;
   for (const call of state.calls.values()) {
+    const timedOut = expireRingingParticipants(state, call, now, options.onParticipantTimeout);
+    if (timedOut && call.status === 'ringing' && hasPendingCallInvitee(call)) continue;
+    if (timedOut && call.status === 'ringing' && !hasPendingCallInvitee(call)) {
+      const previousStatus = finalizeCall(state, call, 'missed', 'timeout', now);
+      state.telemetry?.recordCallTransition(call, previousStatus);
+      onTransition?.(call, previousStatus, 'timeout');
+      count++;
+      continue;
+    }
     const expiry = getCallExpiry(call, options);
     if (!expiry) continue;
     if (expiry.deadlineMs > now) continue;
@@ -756,6 +843,13 @@ function finalizeCall(state: ServerState, call: CallRecord, status: string, reas
   call.updatedAt = new Date(now).toISOString();
   call.ringTimeoutAt = null;
   call.durationSeconds = durationSeconds;
+  for (const participant of call.participants ?? []) {
+    if (participant.state === 'joined' || participant.state === 'ringing' || participant.state === 'invited') {
+      participant.state = 'left';
+      participant.leftAt = call.updatedAt;
+      participant.ringTimeoutAt = null;
+    }
+  }
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
   void persistCallRecord(state.db, call);
   mirrorCallToShared(state, call);
@@ -776,6 +870,8 @@ export {
   supersedeRedialledCalls,
   isCalleeUnreachable,
   isSingleInstanceMode,
+  isCallParticipant,
+  updateCallParticipant,
   recordCallHeartbeat,
   pruneTerminalCalls,
   // Exported for the state-machine invariant test, which asserts every

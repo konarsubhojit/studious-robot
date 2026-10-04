@@ -12,6 +12,7 @@ import {
 import {
   hydrateCallFromShared,
   placeCallWithShared,
+  participantActionWithShared,
   transitionCallWithShared,
 } from '../domain/sharedCalls.ts';
 import { readCallHistory } from '../domain/callHistory.ts';
@@ -53,28 +54,37 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       res.status(400).json({ error: 'mediaType must be audio or video' });
       return;
     }
-    const calleeId = normaliseId(req.body?.calleeId);
-    if (!calleeId) {
+    const rawCallees: unknown[] = Array.isArray(req.body?.calleeIds) ? req.body.calleeIds : [req.body?.calleeId];
+    const calleeIds: string[] = Array.from(new Set(rawCallees
+      .map((value: unknown) => normaliseId(value))
+      .filter((id: string | null): id is string => Boolean(id))));
+    const calleeId = calleeIds[0];
+    if (!calleeId || calleeIds.length !== rawCallees.length) {
       res.status(400).json({ error: 'calleeId is required' });
       return;
     }
 
-    if (calleeId === session.userId) {
+    if (calleeIds.includes(session.userId)) {
       res.status(400).json({ error: 'cannot call yourself' });
       return;
     }
 
-    // Blocklist: reject when the callee has blocked the caller.
-    if (await isBlockedAsync(state, calleeId, session.userId)) {
+    // A blocked invitee is rejected before the call is created; never silently
+    // omit a requested participant from a group ring.
+    const blockedCallee = await (async () => {
+      for (const id of calleeIds) if (await isBlockedAsync(state, id, session.userId)) return id;
+      return null;
+    })();
+    if (blockedCallee) {
       state.auditLog.record({
         event: 'call.blocked',
         actor: session.userId,
-        target: calleeId,
+        target: blockedCallee,
         outcome: 'rejected',
         details: { via: 'http' },
       });
       console.log(
-        `[security] call.blocked callerId=${session.userId} calleeId=${calleeId} via=http`
+        `[security] call.blocked callerId=${session.userId} calleeId=${blockedCallee} via=http`
       );
       res.status(403).json({ error: 'blocked' });
       return;
@@ -101,6 +111,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       callerId: session.userId,
       mediaType,
       calleeId,
+      calleeIds,
       ringingTimeoutMs,
       callerDeviceId: session.deviceId ?? null,
       onSuperseded: (superseded, previousStatus, reason) => {
@@ -146,7 +157,8 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
-    if (call.callerId !== session.userId && call.calleeId !== session.userId) {
+    if (!(call.participants?.some(({ userId }) => userId === session.userId) ??
+      (call.callerId === session.userId || call.calleeId === session.userId))) {
       res.status(403).json({ error: 'not a participant in this call' });
       return;
     }
@@ -176,7 +188,8 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
-    if (call.callerId !== session.userId && call.calleeId !== session.userId) {
+    if (!(call.participants?.some(({ userId }) => userId === session.userId) ??
+      (call.callerId === session.userId || call.calleeId === session.userId))) {
       res.status(403).json({ error: 'not a participant in this call' });
       return;
     }
@@ -269,7 +282,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     res.status(200).json({ userId, activeCalls, total: activeCalls.length });
   });
 
-  router.post('/calls/:callId/accept', async (req, res) => {
+  router.post(['/calls/:callId/accept', '/calls/:callId/join'], async (req, res) => {
     const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -282,8 +295,9 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
-    if (call.calleeId !== session.userId) {
-      res.status(403).json({ error: 'only the callee can accept a call' });
+    if (call.callerId === session.userId ||
+      !(call.participants?.some(({ userId }) => userId === session.userId) ?? call.calleeId === session.userId)) {
+      res.status(403).json({ error: 'only an invited participant can join a call' });
       return;
     }
 
@@ -297,15 +311,12 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     }
 
     const previousStatus = call.status;
-    const result = await transitionCallWithShared(state, call.callId, 'accepted', {
-      actor: session.userId,
-      actorDeviceId: session.deviceId ?? null,
-    });
+    const result = await participantActionWithShared(state, call.callId, session.userId, 'join', session.deviceId ?? null);
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
       return;
     }
-    if (!result.stale && previousStatus !== result.call.status) {
+    if (!result.stale) {
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,
@@ -331,22 +342,19 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
-    if (call.calleeId !== session.userId) {
-      res.status(403).json({ error: 'only the callee can decline a call' });
+    if (call.callerId === session.userId ||
+      !(call.participants?.some(({ userId }) => userId === session.userId) ?? call.calleeId === session.userId)) {
+      res.status(403).json({ error: 'only an invited participant can decline a call' });
       return;
     }
 
     const previousStatus = call.status;
-    const result = await transitionCallWithShared(state, call.callId, 'declined', {
-      actor: session.userId,
-      reason: 'declined',
-      actorDeviceId: session.deviceId ?? null,
-    });
+    const result = await participantActionWithShared(state, call.callId, session.userId, 'decline', session.deviceId ?? null);
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
       return;
     }
-    if (!result.stale && previousStatus !== result.call.status) {
+    if (!result.stale) {
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,
@@ -400,7 +408,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       res.status(result.status).json({ error: result.message || result.error });
       return;
     }
-    if (!result.stale && previousStatus !== result.call.status) {
+    if (!result.stale) {
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,
@@ -429,7 +437,8 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
-    if (call.callerId !== session.userId && call.calleeId !== session.userId) {
+    if (!(call.participants?.some(({ userId }) => userId === session.userId) ??
+      (call.callerId === session.userId || call.calleeId === session.userId))) {
       res.status(403).json({ error: 'not a participant in this call' });
       return;
     }
@@ -445,16 +454,12 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     }
 
     const previousStatus = call.status;
-    const result = await transitionCallWithShared(state, call.callId, 'ended', {
-      actor: session.userId,
-      reason: 'user_hangup',
-      actorDeviceId: session.deviceId ?? null,
-    });
+    const result = await participantActionWithShared(state, call.callId, session.userId, 'leave', session.deviceId ?? null);
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
       return;
     }
-    if (!result.stale && previousStatus !== result.call.status) {
+    if (!result.stale) {
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,

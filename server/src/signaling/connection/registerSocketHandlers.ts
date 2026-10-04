@@ -7,11 +7,10 @@ import {
   reconcileClientCallState,
   describeActiveCallsForUser,
   isCallOwnedByAnotherDevice,
-  ownerDeviceIdForUser,
 } from '../../domain/calls.ts';
 import { placeCallWithShared } from '../../domain/sharedCalls.ts';
 import { notifyCallCreated, notifyIncomingCallAcknowledged, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice, notifyCallTransition, callWithParticipants } from '../../domain/notifications.ts';
-import { handleSocketCallTransition, handleRtcRelay, handleCallConnected, handleCallStats } from '../callHandlers.ts';
+import { handleSocketCallTransition, handleSocketParticipantAction, handleRtcRelay, handleCallConnected, handleCallStats } from '../callHandlers.ts';
 import { registerMessageHandlers } from '../messageHandlers.ts';
 import { registerConversationHandlers } from '../conversationHandlers.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from '../ack.ts';
@@ -275,40 +274,22 @@ function registerSocketHandlers(
     });
 
     socket.on(CLIENT_EVENTS.CALL_ACCEPT, (payload = {}, ack) => {
-      void handleSocketCallTransition(socket, ack, payload, {
+      void handleSocketParticipantAction(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.CALL_ACCEPT,
-        nextStatus: 'accepted',
-        authorize: (call, userId, { deviceId }) => {
-          if (call.calleeId !== userId) return 'only the callee can accept a call';
-          const owner = ownerDeviceIdForUser(call, userId);
-          // `transitionCall` treats accepted→accepted as success, so without
-          // this a second device answering the same ring was told it had joined
-          // a call it would never receive media for — the "accept does nothing"
-          // symptom — while its stray `rtc.answer` broke the real one.
-          if (owner && deviceId && owner !== deviceId) {
-            return {
-              code: ERROR_CODES.ANSWERED_ELSEWHERE,
-              message: 'this call was answered on another device',
-            };
-          }
-          return null;
-        },
+        action: 'join',
       }).catch((error) => {
         console.error('[signaling] call.accept handler failed:', (error as any)?.message);
       });
     });
 
     socket.on(CLIENT_EVENTS.CALL_DECLINE, (payload = {}, ack) => {
-      void handleSocketCallTransition(socket, ack, payload, {
+      void handleSocketParticipantAction(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.CALL_DECLINE,
-        nextStatus: 'declined',
-        reason: 'declined',
-        authorize: (call, userId) =>
-          call.calleeId === userId ? null : 'only the callee can decline a call',
+        action: 'decline',
       }).catch((error) => {
         console.error('[signaling] call.decline handler failed:', (error as any)?.message);
       });
@@ -333,20 +314,11 @@ function registerSocketHandlers(
     });
 
     socket.on(CLIENT_EVENTS.CALL_END, (payload = {}, ack) => {
-      void handleSocketCallTransition(socket, ack, payload, {
+      void handleSocketParticipantAction(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.CALL_END,
-        nextStatus: 'ended',
-        reason: 'user_hangup',
-        authorize: (call, userId, { deviceId }) => {
-          if (call.callerId !== userId && call.calleeId !== userId) {
-            return 'not a participant in this call';
-          }
-          return isCallOwnedByAnotherDevice(call, userId, deviceId)
-            ? 'this call is active on another device'
-            : null;
-        },
+        action: 'leave',
       }).catch((error) => {
         console.error('[signaling] call.end handler failed:', (error as any)?.message);
       });

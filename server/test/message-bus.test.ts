@@ -28,7 +28,82 @@ function createFakeRedis() {
   const broker: {
       subs: Map<string, Set<(message: string, channel: string) => void>>;
       published: { channel: string; message: string; }[];
-  } = { subs: new Map(), published: [] };
+      values: Map<string, string>;
+      sets: Map<string, Set<string>>;
+  } = { subs: new Map(), published: [], values: new Map(), sets: new Map() };
+
+  function setFor(key: string): Set<string> {
+    let values = broker.sets.get(key);
+    if (!values) {
+      values = new Set();
+      broker.sets.set(key, values);
+    }
+    return values;
+  }
+
+  function isTerminal(status: string): boolean {
+    return ['ended', 'declined', 'missed', 'busy', 'unreachable'].includes(status);
+  }
+
+  async function evaluateSave(keys: string[], args: string[]) {
+    const call = JSON.parse(args[0]);
+    broker.values.set(keys[0], JSON.stringify(call));
+    const active = new Set((call.participants ?? [])
+      .filter((participant: { state: string }) => ['joined', 'ringing', 'invited'].includes(participant.state))
+      .map((participant: { userId: string }) => participant.userId));
+    if (!call.participants?.length) {
+      active.add(call.callerId);
+      active.add(call.calleeId);
+    }
+    for (let index = 1; index < keys.length; index++) {
+      const userId = args[index + 3];
+      const callId = args[3];
+      if (args[2] === '1' || !active.has(userId)) {
+        setFor(keys[index]).delete(callId);
+      } else {
+        setFor(keys[index]).add(callId);
+      }
+    }
+    return 1;
+  }
+
+  async function evaluateTransition(keys: string[], args: string[]) {
+    const raw = broker.values.get(keys[0]);
+    if (!raw) return JSON.stringify({ ok: false, error: 'not_found' });
+    const call = JSON.parse(raw);
+    if (call.status === args[1]) return JSON.stringify({ ok: true, idempotent: true, call });
+    if (call.status !== args[0]) return JSON.stringify({ ok: false, error: 'stale_call_state' });
+    call.status = args[1];
+    call.updatedAt = args[2];
+    if (args[3]) call.endReason = args[3];
+    broker.values.set(keys[0], JSON.stringify(call));
+    if (isTerminal(call.status)) {
+      for (const key of keys.slice(1)) setFor(key).clear();
+    }
+    return JSON.stringify({ ok: true, idempotent: false, call });
+  }
+
+  async function evaluateList(key: string) {
+    const calls: any[] = [];
+    for (const callId of [...setFor(key)]) {
+      const raw = broker.values.get(`signaling:call:${callId}`);
+      if (!raw) {
+        setFor(key).delete(callId);
+        continue;
+      }
+      const call = JSON.parse(raw);
+      if (isTerminal(call.status)) setFor(key).delete(callId);
+      else calls.push(call);
+    }
+    return JSON.stringify(calls);
+  }
+
+  async function evaluate(script: string, keys: string[], args: string[]) {
+    if (script.includes('local participants = {}')) return evaluateSave(keys, args);
+    if (script.includes('local fromStatus = ARGV[1]')) return evaluateTransition(keys, args);
+    if (script.includes("local ids = redis.call('SMEMBERS'")) return evaluateList(keys[0]);
+    throw new Error('unexpected Redis script');
+  }
 
   function makeClient() {
     return {
@@ -42,6 +117,34 @@ function createFakeRedis() {
       },
       async quit() {
         this.quit_called = true;
+      },
+      async get(key: string) {
+        return broker.values.get(key) ?? null;
+      },
+      async set(key: string, value: string) {
+        broker.values.set(key, value);
+        return 'OK';
+      },
+      async del(key: string) {
+        return broker.values.delete(key) ? 1 : 0;
+      },
+      async sAdd(key: string, member: string) {
+        const values = setFor(key);
+        const size = values.size;
+        values.add(member);
+        return values.size - size;
+      },
+      async sRem(key: string, member: string) {
+        return setFor(key).delete(member) ? 1 : 0;
+      },
+      async sMembers(key: string) {
+        return [...setFor(key)];
+      },
+      async pExpire(_key: string, _ttl: number) {
+        return true;
+      },
+      async eval(script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) {
+        return evaluate(script, keys, args);
       },
       duplicate() {
         return makeClient();
@@ -82,6 +185,66 @@ test('memory bus delivers published JSON messages to subscribers', async () => {
   assert.deepEqual(received[0].msg, { hello: 'world' });
   assert.equal(received[0].channel, 'chan');
   await bus.close();
+});
+
+test('Redis call state indexes all active participants and clears their indexes on terminal transition', async () => {
+  const { makeClient, broker } = createFakeRedis();
+  const stores = await createRedisPgStores({
+    createClient: makeClient,
+    createAdapter: () => asSocketIoAdapter({}),
+  });
+  const callState = stores.callState;
+  assert.ok(callState);
+  assert.ok(callState.listActiveCallsForUser);
+  const callId = '00000000-0000-0000-0000-000000000526';
+  const participantUsers = ['caller', 'callee-one', 'callee-two'];
+  try {
+    const call = {
+      callId,
+      callerId: 'caller',
+      calleeId: 'callee-one',
+      status: 'ringing',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      participants: [
+        { userId: 'caller', state: 'joined' as const },
+        { userId: 'callee-one', state: 'ringing' as const },
+        { userId: 'callee-two', state: 'ringing' as const },
+      ],
+    };
+    await callState.save(call);
+    for (const userId of participantUsers) {
+      assert.deepEqual([...broker.sets.get(`signaling:user:${userId}:calls`) ?? []], [callId]);
+      assert.deepEqual(
+        (await callState.listActiveCallsForUser!(userId)).map((record) => record.callId),
+        [callId]
+      );
+    }
+
+    await callState.save({
+      ...call,
+      participants: [
+        ...call.participants.slice(0, 2),
+        { userId: 'callee-two', state: 'declined' as const },
+      ],
+    });
+    assert.deepEqual([...broker.sets.get('signaling:user:callee-two:calls') ?? []], []);
+    assert.deepEqual([...broker.sets.get('signaling:user:callee-one:calls') ?? []], [callId]);
+
+    const terminal = await callState.transitionAtomic({
+      callId,
+      fromStatus: 'ringing',
+      toStatus: 'ended',
+      reason: 'user_hangup',
+    });
+    assert.equal(terminal.ok, true);
+    for (const userId of participantUsers) {
+      assert.deepEqual([...broker.sets.get(`signaling:user:${userId}:calls`) ?? []], []);
+      assert.deepEqual(await callState.listActiveCallsForUser!(userId), []);
+    }
+  } finally {
+    await stores.close();
+  }
 });
 
 test('memory bus fans out to multiple subscribers and supports unsubscribe', async () => {
