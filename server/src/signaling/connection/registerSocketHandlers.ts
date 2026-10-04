@@ -2,7 +2,7 @@ import { DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } from '../../config.ts';
 import { normaliseId, sanitizeForLog } from '../../lib/normalize.ts';
 import { isBlockedAsync } from '../../security.ts';
 import { resolveSocketIdentityAsync } from '../../lib/auth.ts';
-import { ensurePresenceRecord, upsertDevice, addConnection, removeConnection, userRoom } from '../../lib/state.ts';
+import { ensurePresenceRecord, upsertDevice, addConnection, removeConnection, userProtocolRoom, userRoom } from '../../lib/state.ts';
 import {
   reconcileClientCallState,
   describeActiveCallsForUser,
@@ -15,7 +15,7 @@ import { handleSocketCallTransition, handleRtcRelay, handleCallConnected, handle
 import { registerMessageHandlers } from '../messageHandlers.ts';
 import { registerConversationHandlers } from '../conversationHandlers.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from '../ack.ts';
-import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, TRANSPORT_EVENTS } from '../../../../shared/index.ts';
+import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, LEGACY_SIGNALING_VERSION, SIGNALING_VERSION, TRANSPORT_EVENTS } from '../../../../shared/index.ts';
 import { verboseLog } from '../../lib/verbose.ts';
 import { normaliseReportedActiveCallIds } from './state.ts';
 import { logCallCorrelation, scheduleParticipantDisconnectCleanup } from './lifecycle.ts';
@@ -42,6 +42,13 @@ function registerSocketHandlers(
 
     const identity = await resolveSocketIdentityAsync(socket, state);
     socket.data.identity = identity;
+    const signalingVersion = socket.handshake.auth?.signalingVersion === SIGNALING_VERSION
+      ? SIGNALING_VERSION
+      : LEGACY_SIGNALING_VERSION;
+    socket.data.signalingVersion = signalingVersion;
+    if (signalingVersion === SIGNALING_VERSION) {
+      await socket.join(userProtocolRoom(identity.userId, SIGNALING_VERSION));
+    }
     const socketDeviceKey = JSON.stringify([identity.userId, identity.deviceId]);
     const disconnectedAt = state.socketDisconnects.get(socketDeviceKey);
     if (typeof disconnectedAt === 'number') {
@@ -59,7 +66,7 @@ function registerSocketHandlers(
       sessionId: identity.sessionId,
       connectedAt: new Date().toISOString(),
     });
-    void socket.join(userRoom(identity.userId));
+    await socket.join(userRoom(identity.userId));
 
     if (identity.sessionDowngraded) {
       socket.emit(SERVER_EVENTS.SESSION_INVALID, { sessionId: identity.presentedSessionId });
@@ -387,6 +394,17 @@ function registerSocketHandlers(
         dataKey: 'candidate',
       }).catch((error) => {
         console.error('[signaling] rtc.candidate handler failed:', (error as any)?.message);
+      });
+    });
+
+    socket.on(CLIENT_EVENTS.RTC_ICE, (payload = {}, ack) => {
+      void handleRtcRelay(socket, ack, payload, {
+        state,
+        io,
+        eventName: CLIENT_EVENTS.RTC_ICE,
+        dataKey: 'candidate',
+      }).catch((error) => {
+        console.error('[signaling] rtc.ice handler failed:', (error as any)?.message);
       });
     });
 

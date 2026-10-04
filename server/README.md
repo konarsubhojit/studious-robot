@@ -54,7 +54,7 @@ With `include=calls` the page becomes a unified conversation timeline: calls bet
 
 ### Socket.IO signaling events
 
-Authenticated signaling uses versioned websocket events (`version: 2`) and Socket.IO acknowledgements. Requests with an older version receive `unsupported_version`.
+Authenticated signaling uses versioned websocket events (`version: 3`) and Socket.IO acknowledgements. Version 2 remains accepted and is translated for deployed clients; server events are sent in the recipient's negotiated version.
 Every `call.*`/`rtc.*` client event requires a socket authenticated with `auth.sessionId`.
 
 #### Client → Server (call contract)
@@ -67,9 +67,9 @@ Every `call.*`/`rtc.*` client event requires a socket authenticated with `auth.s
 | `call.cancel`    | `{ version, callId }`                   | `{ ok, version, event, call }`     | Caller-only. |
 | `call.end`       | `{ version, callId }`                   | `{ ok, version, event, call }`     | Either participant may end an active call. |
 | `call.connected` | `{ version, callId, iceState? }`        | `{ ok, version, event, call }`     | Participants only. Reports the local `RTCPeerConnection` state: `connected`/`completed` advances the call to `in_call` (the first report wins, later ones are idempotent), while `disconnected`/`failed` ends it with `media_failed`. Without this event a call never leaves `connecting_media` and is force-ended by the stale-call sweep with `media_connect_timeout`. |
-| `rtc.offer`      | `{ version, callId, sdp }`              | `{ ok, version, event, callId }`   | Accepted call participants only. |
-| `rtc.answer`     | `{ version, callId, sdp }`              | `{ ok, version, event, callId }`   | Accepted call participants only. |
-| `rtc.candidate`  | `{ version, callId, candidate }`        | `{ ok, version, event, callId }`   | Accepted call participants only. |
+| `rtc.offer`      | `{ version, callId, peerId, sdp }`      | `{ ok, version, event, callId }`   | V3 peer must be another call participant. V2 omits `peerId`. |
+| `rtc.answer`     | `{ version, callId, peerId, sdp }`      | `{ ok, version, event, callId }`   | V3 peer must be another call participant. V2 omits `peerId`. |
+| `rtc.ice`        | `{ version, callId, peerId, candidate }`| `{ ok, version, event, callId }`   | V3 ICE relay. V2 clients use `rtc.candidate` without `peerId`. |
 
 Ack failures return `{ ok: false, version, event, error: { code, message } }` with clean rejection codes such as `unauthorized`, `unsupported_version`, `forbidden`, `call_not_found`, and `stale_call_state`.
 
@@ -84,9 +84,15 @@ Ack failures return `{ ok: false, version, event, error: { code, message } }` wi
 | `call.cancel`        | `{ version, callId, actor, reason, call }` |
 | `call.end`           | `{ version, callId, actor, reason, call }` |
 | `call.state_changed` | `{ version, callId, previousStatus, status, actor, reason, call }` emitted on every call-state transition. |
-| `rtc.offer`          | `{ version, callId, fromUserId, sdp }` relayed only to the other participant. |
-| `rtc.answer`         | `{ version, callId, fromUserId, sdp }` relayed only to the other participant. |
-| `rtc.candidate`      | `{ version, callId, fromUserId, candidate }` relayed only to the other participant. |
+| `call.participant.joined` | `{ version, callId, participantId, state: 'joined' }` |
+| `call.participant.left` | `{ version, callId, participantId, state: 'left' | 'declined' }` |
+| `rtc.offer`          | V3 `{ version, callId, peerId, fromUserId, sdp }`; v2 omits `peerId`. |
+| `rtc.answer`         | V3 `{ version, callId, peerId, fromUserId, sdp }`; v2 omits `peerId`. |
+| `rtc.ice`            | V3 `{ version, callId, peerId, fromUserId, candidate }`; v2 clients receive `rtc.candidate` without `peerId`. |
+
+V3 call records include `participants: [{ userId, state }]`, where participant
+states are `invited`, `ringing`, `joined`, `left`, or `declined`. The current
+one-to-one call path is represented as two participants.
 
 #### Text chat contract
 

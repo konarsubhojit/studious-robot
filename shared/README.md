@@ -28,13 +28,19 @@ Schemas are the source of truth for the types too: each one carries a JSDoc
 typedef, so editors (and `tsc --checkJs`) see the same payload shapes on both
 sides of the wire.
 
-## Signaling contract v2
+## Signaling contract v3
 
-Call, RTC, message, and conversation payloads use protocol version `2`.
-Client-to-server requests require `version: 2`; server-to-client payloads may
-omit the version as advisory metadata, but reject a present mismatch. The server
-rejects requests from older clients with `unsupported_version` instead of
-interpreting them using the new targeting rules.
+Call, RTC, message, and conversation payloads use protocol version `3`. The
+server continues to accept version `2` requests and translates legacy RTC
+targeting to the two-party participant set. Server events are formatted for the
+recipient's negotiated version so deployed v2 clients continue to receive their
+existing payloads.
+
+V3 call records include a participant list with a per-participant state
+(`invited`, `ringing`, `joined`, `left`, or `declined`). V3
+`rtc.offer`/`rtc.answer` and `rtc.ice` payloads name `peerId`; v2
+`rtc.offer`/`rtc.answer`/`rtc.candidate` payloads retain their implicit peer.
+The current 1:1 call path is represented by two participants in this shape.
 
 The four chat requests select exactly one destination: `message.send` and
 `message.typing` use `recipientId` for a direct chat or `conversationId` for a
@@ -51,9 +57,9 @@ the conversation. The server assigns a separate `messageId`; acknowledgements,
 history and message events carry both identities plus `createdAt`. Mobile
 reconciles by `(senderId, clientMessageId)` and uses the server `messageId` for
 receipts, deletes, reactions and persisted reply references. The additive
-optional field stays in v2: legacy sends without it may still supply `messageId`
-as their retry identity. When both are supplied, the explicit key wins and the
-server generates its own identity.
+optional field is accepted from both protocol versions: legacy sends without it
+may still supply `messageId` as their retry identity. When both are supplied,
+the explicit key wins and the server generates its own identity.
 
 Reusing a key for different content, attachment, recipient/conversation or reply
 is rejected without changing the stored row. The key is not an authorization
@@ -64,9 +70,9 @@ After deletion, explicit-key retries return the tombstone under the same server
 ID/timestamp. Erased body/attachment fields are no longer comparable, but the
 retained sender, destination, type and reply reference still must match.
 
-Call and RTC events remain peer-to-peer; group calls are not part of this
-contract. These schemas freeze the wire shapes only; group event handlers and
-client support are separate follow-up work.
+Call and RTC events remain peer-to-peer; multi-party call routing is not part of
+this revision. These schemas freeze the wire shapes only; group event handlers
+and client support are separate follow-up work.
 
 ## Usage
 

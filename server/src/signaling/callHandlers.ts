@@ -1,14 +1,14 @@
-import { RTC_ACTIVE_CALL_STATES, SIGNALING_VERSION, CONNECTED_CALL_STATUS } from '../config.ts';
+import { RTC_ACTIVE_CALL_STATES, CONNECTED_CALL_STATUS } from '../config.ts';
 import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
 import { isCallOwnedByAnotherDevice, recordCallHeartbeat } from '../domain/calls.ts';
-import { notifyCallTransition, emitToUserSockets } from '../domain/notifications.ts';
+import { notifyCallTransition, emitVersionedCallEvent, emitVersionedRtcSignal } from '../domain/notifications.ts';
 import { hydrateCallFromShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
 import { userRoom } from '../lib/state.ts';
 import { describeError } from '../lib/errors.ts';
 import { verboseLog } from '../lib/verbose.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
 import { bufferRtcSignal, countBufferedRtcSignals, flushBufferedRtcSignals, isBufferableSignal } from './rtcBuffer.ts';
-import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
+import { CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS } from '../../../shared/index.ts';
 import { persistCallQualitySample } from '../callQuality.ts';
 
 /**
@@ -260,6 +260,40 @@ async function promoteToConnectingMedia(
   flushBufferedRtcSignals(io, state, callId, result.call.status);
 }
 
+function resolveCallPeerId(
+  call: import('../stores/contracts.ts').CallRecord,
+  userId: string,
+  requestedPeerId?: string
+): string | null {
+  const participants = call.participants?.map(({ userId: participantId }) => participantId) ?? [call.callerId, call.calleeId];
+  const expectedPeerId = call.callerId === userId ? call.calleeId : call.callerId;
+  const peerId = requestedPeerId ?? expectedPeerId;
+  return participants.includes(userId) &&
+    participants.includes(peerId) &&
+    peerId !== userId &&
+    peerId === expectedPeerId
+    ? peerId
+    : null;
+}
+
+function rtcRelayEventNames(eventName: string): {
+  currentEventName: string;
+  legacyEventName: string;
+} {
+  const isIceSignal = eventName === CLIENT_EVENTS.RTC_CANDIDATE || eventName === CLIENT_EVENTS.RTC_ICE;
+  return {
+    currentEventName: isIceSignal ? SERVER_EVENTS.RTC_ICE : eventName,
+    legacyEventName: isIceSignal ? SERVER_EVENTS.RTC_CANDIDATE : eventName,
+  };
+}
+
+function needsVersionedRtcRelay(eventName: string): boolean {
+  return eventName === CLIENT_EVENTS.RTC_OFFER ||
+    eventName === CLIENT_EVENTS.RTC_ANSWER ||
+    eventName === CLIENT_EVENTS.RTC_CANDIDATE ||
+    eventName === CLIENT_EVENTS.RTC_ICE;
+}
+
 /**
  * Events whose delivery is worth an adapter round trip to confirm.
  *
@@ -447,13 +481,14 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
     return;
   }
 
-  if (call.callerId !== userId && call.calleeId !== userId) {
+  const peerUserId = resolveCallPeerId(call, userId, parsed.peerId);
+  if (!peerUserId) {
     acknowledgeError(
       socket,
       ack,
       options.eventName,
       ERROR_CODES.FORBIDDEN,
-      'not a participant in this call',
+      'sender or peer is not a participant in this call',
       options.state
     );
     return;
@@ -493,10 +528,10 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
     recordCallHeartbeat(options.state, callId);
   }
 
-  const peerUserId = current.callerId === userId ? current.calleeId : current.callerId;
+  const { currentEventName, legacyEventName } = rtcRelayEventNames(options.eventName);
   const relayPayload = {
-    version: SIGNALING_VERSION,
     callId,
+    peerId: userId,
     fromUserId: userId,
     [options.dataKey]: value,
   };
@@ -504,7 +539,11 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
   // about to be broadcast into, and awaited only for the SDP frames — see
   // `countRoomRecipients`.
   const recipients = await countRoomRecipients(options.io, peerUserId, options.eventName);
-  emitToUserSockets(options.io, peerUserId, options.eventName, relayPayload);
+  if (needsVersionedRtcRelay(options.eventName)) {
+    emitVersionedRtcSignal(options.io, peerUserId, currentEventName, legacyEventName, relayPayload);
+  } else {
+    emitVersionedCallEvent(options.io, peerUserId, options.eventName, relayPayload);
+  }
   logRtcRelay(options.state, {
     eventName: options.eventName,
     callId,

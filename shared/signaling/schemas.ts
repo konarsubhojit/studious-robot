@@ -1,5 +1,5 @@
 import { s } from '../schema.ts';
-import { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } from './events.ts';
+import { CLIENT_EVENTS, LEGACY_SIGNALING_VERSION, SERVER_EVENTS, SIGNALING_VERSION, SUPPORTED_SIGNALING_VERSIONS } from './events.ts';
 import { KNOWN_MESSAGE_TYPES, MAX_REACTION_LENGTH } from '../messages.ts';
 
 /**
@@ -18,7 +18,12 @@ import { KNOWN_MESSAGE_TYPES, MAX_REACTION_LENGTH } from '../messages.ts';
 /** Maximum accepted chat message body length (mirrors the message store). */
 const MAX_MESSAGE_BODY_LENGTH = 4000;
 
-const versionField = s.literal(SIGNALING_VERSION);
+const versionField = s.union([
+  s.literal(SUPPORTED_SIGNALING_VERSIONS[0]),
+  s.literal(SUPPORTED_SIGNALING_VERSIONS[1]),
+]);
+const legacyVersionField = s.literal(LEGACY_SIGNALING_VERSION);
+const currentVersionField = s.literal(SIGNALING_VERSION);
 /**
  * Server → client payloads treat `version` as advisory metadata: the client
  * does not branch on it, so a payload that omits it is still usable. Requests
@@ -40,17 +45,27 @@ export type CallRecord = {
   mediaType?: 'audio' | 'video';
   callerId: string;
   calleeId: string;
+  participants?: CallParticipant[];
   status: string;
   ringTimeoutAt?: string | null;
   endReason?: string | null;
   createdAt?: string;
 };
+export type CallParticipant = {
+  userId: string;
+  state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined';
+};
+const callParticipant = s.object({
+  userId: idField,
+  state: s.enum(['invited', 'ringing', 'joined', 'left', 'declined']),
+});
 const callRecord = s.object(
   {
     callId: idField,
     mediaType: s.enum(['audio', 'video']).optional(),
     callerId: s.id().optional(),
     calleeId: s.id().optional(),
+    participants: s.array(callParticipant).optional(),
     status: s.string({ min: 1 }).optional(),
   },
   { passthrough: true }
@@ -218,19 +233,23 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     codec: s.string({ min: 1, max: 64, trim: true }),
   }),
 
-  [CLIENT_EVENTS.RTC_OFFER]: s.object({
-    version: versionField,
-    callId: idField,
-    sdp: opaqueObject,
-  }),
-  [CLIENT_EVENTS.RTC_ANSWER]: s.object({
-    version: versionField,
-    callId: idField,
-    sdp: opaqueObject,
-  }),
+  [CLIENT_EVENTS.RTC_OFFER]: s.union([
+    s.object({ version: legacyVersionField, callId: idField, sdp: opaqueObject }),
+    s.object({ version: currentVersionField, callId: idField, peerId: idField, sdp: opaqueObject }),
+  ]),
+  [CLIENT_EVENTS.RTC_ANSWER]: s.union([
+    s.object({ version: legacyVersionField, callId: idField, sdp: opaqueObject }),
+    s.object({ version: currentVersionField, callId: idField, peerId: idField, sdp: opaqueObject }),
+  ]),
   [CLIENT_EVENTS.RTC_CANDIDATE]: s.object({
-    version: versionField,
+    version: legacyVersionField,
     callId: idField,
+    candidate: opaqueObject,
+  }),
+  [CLIENT_EVENTS.RTC_ICE]: s.object({
+    version: currentVersionField,
+    callId: idField,
+    peerId: idField,
     candidate: opaqueObject,
   }),
   [CLIENT_EVENTS.CALL_MEDIA_STATE]: s.object({
@@ -350,21 +369,36 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     call: callRecord.optional().nullable(),
   }),
 
-  [SERVER_EVENTS.RTC_OFFER]: s.object({
-    version: inboundVersionField,
+  [SERVER_EVENTS.CALL_PARTICIPANT_JOINED]: s.object({
+    version: currentVersionField,
     callId: idField,
-    fromUserId: s.id().optional(),
-    sdp: opaqueObject,
+    participantId: idField,
+    state: s.literal('joined'),
   }),
-  [SERVER_EVENTS.RTC_ANSWER]: s.object({
-    version: inboundVersionField,
+  [SERVER_EVENTS.CALL_PARTICIPANT_LEFT]: s.object({
+    version: currentVersionField,
     callId: idField,
-    fromUserId: s.id().optional(),
-    sdp: opaqueObject,
+    participantId: idField,
+    state: s.enum(['left', 'declined']),
   }),
+  [SERVER_EVENTS.RTC_OFFER]: s.union([
+    s.object({ version: legacyVersionField.optional(), callId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),
+    s.object({ version: currentVersionField, callId: idField, peerId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),
+  ]),
+  [SERVER_EVENTS.RTC_ANSWER]: s.union([
+    s.object({ version: legacyVersionField.optional(), callId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),
+    s.object({ version: currentVersionField, callId: idField, peerId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),
+  ]),
   [SERVER_EVENTS.RTC_CANDIDATE]: s.object({
-    version: inboundVersionField,
+    version: legacyVersionField.optional(),
     callId: idField,
+    fromUserId: s.id().optional(),
+    candidate: opaqueObject,
+  }),
+  [SERVER_EVENTS.RTC_ICE]: s.object({
+    version: currentVersionField,
+    callId: idField,
+    peerId: idField,
     fromUserId: s.id().optional(),
     candidate: opaqueObject,
   }),

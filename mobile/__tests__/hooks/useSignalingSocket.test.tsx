@@ -38,6 +38,7 @@ jest.mock('../../src/signalingClient', () => ({
     CALL_CONNECTED: 'call.connected',
     CALL_INCOMING_ACK: 'call.incoming.ack',
     RTC_ANSWER: 'rtc.answer',
+    RTC_ICE: 'rtc.ice',
   },
   SERVER_EVENTS: {
     CALL_INCOMING: 'call.incoming',
@@ -52,6 +53,7 @@ jest.mock('../../src/signalingClient', () => ({
     MESSAGE_TYPING: 'message.typing',
     RTC_ANSWER: 'rtc.answer',
     RTC_CANDIDATE: 'rtc.candidate',
+    RTC_ICE: 'rtc.ice',
     RTC_OFFER: 'rtc.offer',
     SESSION_INVALID: 'session.invalid',
   },
@@ -232,7 +234,7 @@ describe('useSignalingSocket', () => {
     });
     expect(io).toHaveBeenCalledWith('https://signal.example.test', {
       transports: ['websocket'],
-      auth: { sessionId: 'session-1', correlationId: 'corr-1' },
+      auth: { sessionId: 'session-1', correlationId: 'corr-1', signalingVersion: 3 },
     });
     expect(params.socketRef.current).toBe(socket);
     expect(socket.io.on).toHaveBeenCalledWith('ping', expect.any(Function));
@@ -293,7 +295,7 @@ describe('useSignalingSocket', () => {
 
     expect(signaling.emit).toHaveBeenCalledWith(
       'call.incoming.ack',
-      { version: 2, callId: 'call-2', deviceId: 'device-1' },
+      { version: 3, callId: 'call-2', deviceId: 'device-1' },
       expect.any(Function),
     );
     expect(params.incomingCallRef.current).toEqual({ callId: 'call-2', callerId: 'bob' });
@@ -314,7 +316,7 @@ describe('useSignalingSocket', () => {
 
     await act(async () => {
       resultRef.current.connectSocket('session-1');
-      await signaling.handlers.get('rtc.candidate')({
+      await signaling.handlers.get('rtc.ice')({
         callId: 'call-1',
         candidate: { candidate: 'candidate-1' },
       });
@@ -333,6 +335,7 @@ describe('useSignalingSocket', () => {
         resultRef.current.connectSocket('session-1');
         await signaling.handlers.get('rtc.offer')({
           callId: 'call-1',
+          peerId: 'peer-1',
           sdp: { type: 'offer' },
         });
       });

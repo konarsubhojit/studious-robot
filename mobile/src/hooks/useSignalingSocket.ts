@@ -299,7 +299,7 @@ export default function useSignalingSocket({
       logInfo('[CallFlow] Connecting socket', { signalingUrl });
       const socket = io(signalingUrl.trim(), {
         ...getSocketOptions(),
-        auth: { sessionId, correlationId: getCorrelationId() },
+        auth: { sessionId, correlationId: getCorrelationId(), signalingVersion: SIGNALING_VERSION },
       });
       socketRef.current = socket;
       const signaling = createSignalingClient(socket);
@@ -489,7 +489,7 @@ export default function useSignalingSocket({
         });
       };
 
-      signaling.on(SERVER_EVENTS.RTC_OFFER, async ({ sdp, callId }) => {
+      signaling.on(SERVER_EVENTS.RTC_OFFER, async ({ sdp, callId, peerId }) => {
         const offerDecision = decideIncomingOffer({
           callId,
           activeCallId: activeCallIdRef.current,
@@ -533,6 +533,7 @@ export default function useSignalingSocket({
             {
               version: SIGNALING_VERSION,
               callId,
+              peerId,
               sdp: pc.localDescription,
             },
             ack => {
@@ -588,7 +589,7 @@ export default function useSignalingSocket({
         }
       });
 
-      signaling.on(SERVER_EVENTS.RTC_CANDIDATE, async ({ candidate, callId }) => {
+      signaling.on(SERVER_EVENTS.RTC_ICE, async ({ candidate, callId }) => {
         if (callId !== activeCallIdRef.current) return;
         const pc = peerConnectionRef.current;
         if (!pc) return;
