@@ -34,6 +34,7 @@ import {
   withCallActivity,
   withIncomingMessage,
   withOutgoingMessage,
+  withReconciledMessage,
 } from '../messaging/conversations';
 import { withDraft, withoutDraft } from '../messaging/drafts';
 import {
@@ -45,7 +46,7 @@ import {
   removeMessage,
   upsertTimelineEntry,
 } from '../messaging/messageHistory';
-import { createMessageId } from '../messaging/messageIdentity';
+import { createMessageId, timelineEntryId } from '../messaging/messageIdentity';
 import { mergeMessageSearchResults } from '../messaging/messageSearch';
 import { resumeMessageBackfill } from '../messaging/messageBackfill';
 import {
@@ -75,6 +76,11 @@ import {
   withAttemptsReset,
   withUploadProgress,
   withoutMessage,
+  resolveOutboxReply,
+  optimisticReplyKey,
+  unavailableReplyReason,
+  withResolvedReplies,
+  drainQueuedMessages,
 } from '../messaging/sendPipeline';
 import useChatSnapshotMirror from '../messaging/useChatSnapshotMirror';
 import { fetchGroupHistory, fetchHistory } from '../messaging/fetchHistory';
@@ -312,7 +318,11 @@ export default function useMessaging({
     const mergedHistories: Record<string, ChatMessage[]> = {};
     for (const peerId of new Set([...Object.keys(cachedHistories), ...Object.keys(liveHistories)])) {
       mergedHistories[peerId] = dedupeAndSort([
-        ...(cachedHistories[peerId] ?? []),
+        ...(cachedHistories[peerId] ?? []).map(entry =>
+          entry.uploadState === 'uploading' && !attachmentUploadMetaRef.current[entry.messageId] &&
+          !snapshot.outbox.some(item => item.messageId === entry.messageId)
+            ? asUploadFailed(entry, 'Upload interrupted. Retry the attachment upload.')
+            : entry),
         ...(liveHistories[peerId] ?? []),
       ]);
     }
@@ -599,10 +609,10 @@ export default function useMessaging({
    */
   const patchMessage = useCallback(
     (peerId: string, messageId: string, update: (message: ChatMessage) => ChatMessage) => {
-      messagesByPeerRef.current = patchMessageIn(messagesByPeerRef.current, peerId, messageId, update);
-      setMessagesByPeer(prev => patchMessageIn(prev, peerId, messageId, update));
+      messagesByPeerRef.current = patchMessageIn(messagesByPeerRef.current, peerId, messageId, update, userId);
+      setMessagesByPeer(prev => patchMessageIn(prev, peerId, messageId, update, userId));
     },
-    [],
+    [userId],
   );
 
   const recordCallActivity = useCallback((peerId: string, activity: CallActivity) => {
@@ -815,6 +825,19 @@ export default function useMessaging({
    *
    * @param item outbox row
    */
+  const prepareOutboxReply = useCallback((item: OutboxItem) => {
+    const messages = messagesByPeerRef.current[item.recipientId] ?? [];
+    const resolved = resolveOutboxReply(item, messages, userId);
+    if (resolved) return { status: 'ready', item: resolved } as const;
+    const reason = unavailableReplyReason(item, messages, outboxRef.current, userId);
+    if (!reason) return { status: 'waiting' } as const;
+    patchMessage(item.recipientId, item.messageId, asFailed);
+    persistOutbox(withAttemptRecorded(outboxRef.current, item.messageId, {
+      attempts: OUTBOX_MAX_ATTEMPTS, lastError: reason, lastAttemptAt: new Date().toISOString(),
+    }));
+    return { status: 'unavailable' } as const;
+  }, [patchMessage, persistOutbox, userId]);
+
   const sendOutboxItem = useCallback(
     /** @param item */
     async (item: OutboxItem) => {
@@ -828,20 +851,35 @@ export default function useMessaging({
         updateStatus('Cannot save message on this device. Free storage and retry.', 'error');
         return false;
       }
-      if (scopeRef.current !== scope || !outboxRef.current.some(row => row.messageId === item.messageId)) return false;
+      const latest = outboxRef.current.find(row => row.messageId === item.messageId);
+      if (scopeRef.current !== scope || !latest) return false;
+      item = latest;
 
       try {
         const row = conversationsRef.current.find(entry => entry.peerId === item.recipientId);
         if (item.targetKind === 'group' && (!row?.group || row.left || !row.group.memberIds.includes(userId))) {
           throw new Error('You are no longer a group member');
         }
+        // Replies to optimistic rows must wait for their server identity. Save
+        // the resolved reference before emitting so retries submit the same send.
+        const reply = prepareOutboxReply(item);
+        if (reply.status !== 'ready') return reply.status;
+        if (reply.item !== item) {
+          item = reply.item;
+          persistOutbox(outboxRef.current.map(queued => queued.messageId === item.messageId ? item : queued));
+          await flushChatDb(scope);
+        }
+        if (scopeRef.current !== scope) return false;
         const ack = item.localMock
           ? { message: sendMockGroup(row, item, userId) }
           : await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, outboxSendPayload(item));
         if (scopeRef.current !== scope) return false;
         const confirmed = (ack as { message?: ChatMessage } | undefined)?.message;
         patchMessage(item.recipientId, item.messageId, entry => asSent(entry, confirmed));
-        persistOutbox(withoutMessage(outboxRef.current, item.messageId));
+        const nextConversations = withReconciledMessage(conversationsRef.current, item.recipientId, item.messageId, confirmed);
+        conversationsRef.current = nextConversations;
+        setConversations(nextConversations);
+        persistOutbox(withoutMessage(withResolvedReplies(outboxRef.current, item.messageId, confirmed?.messageId), item.messageId));
         return true;
       } catch (error) {
         if (scopeRef.current !== scope) return false;
@@ -861,7 +899,7 @@ export default function useMessaging({
         return false;
       }
     },
-    [patchMessage, persistOutbox, signalingRef, socketRef, updateStatus, scope, userId],
+    [patchMessage, persistOutbox, signalingRef, socketRef, updateStatus, scope, userId, prepareOutboxReply],
   );
 
   /**
@@ -881,14 +919,7 @@ export default function useMessaging({
     drainingScopeRef.current = scope;
     let allSent = true;
     try {
-      for (const item of queue) {
-        // Stop at the first failure so queued messages keep their order.
-        const sent = await sendOutboxItem(item);
-        if (!sent) {
-          allSent = false;
-          break;
-        }
-      }
+      allSent = await drainQueuedMessages(queue, sendOutboxItem);
     } finally {
       if (drainingScopeRef.current === scope) drainingScopeRef.current = null;
     }
@@ -984,6 +1015,7 @@ export default function useMessaging({
       const conversationId = conversationIdForPeer(conversationsRef.current, trimmedPeerId);
       const outgoing = {
         messageId,
+        clientMessageId: messageId,
         conversationId,
         senderId: userId,
         recipientId: trimmedPeerId,
@@ -992,6 +1024,7 @@ export default function useMessaging({
         type,
         attachment,
         replyTo,
+        replyToLocalMessageId: optimisticReplyKey(replyTo, messagesByPeerRef.current[trimmedPeerId] ?? [], userId),
         ...(groupRow ? { targetKind: 'group' as const, localMock: groupRow.localMock } : {}),
       };
 
@@ -1040,6 +1073,7 @@ export default function useMessaging({
       const conversationId = conversationIdForPeer(conversationsRef.current, trimmedPeerId);
       const optimisticMessage = buildUploadingMessage({
         messageId,
+        clientMessageId: messageId,
         conversationId,
         senderId: userId,
         recipientId: trimmedPeerId,
@@ -1077,13 +1111,16 @@ export default function useMessaging({
 
       patchMessage(trimmedPeerId, messageId, entry => asUploaded(entry, attachment));
 
+      const groupRow = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
       const nextItem = buildOutboxItem({
         messageId,
+        clientMessageId: messageId,
         conversationId,
         recipientId: trimmedPeerId,
         createdAt,
         type,
         attachment,
+        ...(groupRow ? { targetKind: 'group' as const, localMock: groupRow.localMock } : {}),
       });
       // Replayed under the original message identity, so a retry can never
       // duplicate the send it is retrying.
@@ -1300,10 +1337,11 @@ export default function useMessaging({
     if (groupRow.left || !groupRow.group!.memberIds.includes(userId) ||
       !groupRow.group!.memberIds.includes(message.senderId)) return true;
     const key = groupRow.peerId;
-    const duplicate = messagesByPeerRef.current[key]?.some(entry => entry.messageId === message.messageId);
-    const nextMessages = duplicate
+    const existing = messagesByPeerRef.current[key] ?? [];
+    const duplicate = existing.some(entry => timelineEntryId(entry) === timelineEntryId(message));
+    const nextMessages = existing.some(entry => entry.messageId === message.messageId)
       ? messagesByPeerRef.current
-      : prependMessage(messagesByPeerRef.current, key, message);
+      : upsertTimelineEntry(messagesByPeerRef.current, key, message);
     const next = duplicate ? conversationsRef.current : withIncomingMessage(conversationsRef.current, message, {
       incrementUnread: message.senderId !== userId && activeChatPeerIdRef.current !== key,
     });
@@ -1337,7 +1375,7 @@ export default function useMessaging({
       }
       const senderId = message.senderId;
 
-      const duplicate = messagesByPeerRef.current[senderId]?.some(entry => entry.messageId === message.messageId);
+      const duplicate = messagesByPeerRef.current[senderId]?.some(entry => timelineEntryId(entry) === timelineEntryId(message));
       const nextMessages = applyIncomingMessage(messagesByPeerRef.current, message);
       const isActiveConversation = activeChatPeerIdRef.current === senderId;
       const isNewConversation = !conversationsRef.current.some(

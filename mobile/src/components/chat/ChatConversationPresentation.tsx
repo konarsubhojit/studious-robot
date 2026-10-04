@@ -2043,9 +2043,12 @@ function ChatConversationScreen({
     const byId = (new Map() as Map<string, ChatMessage>);
     messages.forEach(message => {
       if (!isCallEntry(message) && message?.messageId) byId.set(message.messageId, message);
+      if (!isCallEntry(message) && message.senderId === currentUserId && message.clientMessageId) {
+        byId.set(message.clientMessageId, message);
+      }
     });
     return byId;
-  }, [messages]);
+  }, [currentUserId, messages]);
 
   // Every viewable image/video in the loaded page, oldest first, so the
   // fullscreen viewer can be swiped between them exactly as they appear in the
@@ -2337,12 +2340,13 @@ function ChatConversationScreen({
   useEffect(() => {
     if (restoredReplyRef.current || !initialReplyToId) return;
     const target = messages.find(
-      entry => (entry as ChatMessage)?.messageId === initialReplyToId,
+      entry => (entry as ChatMessage)?.messageId === initialReplyToId ||
+        (!isCallEntry(entry) && entry.senderId === currentUserId && entry.clientMessageId === initialReplyToId),
     ) as ChatMessage | undefined;
     if (!target) return;
     restoredReplyRef.current = true;
     setReplyTarget(target);
-  }, [initialReplyToId, messages]);
+  }, [currentUserId, initialReplyToId, messages]);
 
   // The draft is persisted when the user *leaves* (screen closed, app
   // backgrounded), never per keystroke: writing on every character would push

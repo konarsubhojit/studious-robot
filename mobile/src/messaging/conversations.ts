@@ -107,6 +107,30 @@ export function withOutgoingMessage(
   return withMessage(conversations, message, message.recipientId, false);
 }
 
+/** Reconcile a preview without promoting an older acknowledgement above a newer send. */
+export function withReconciledMessage(
+  conversations: ConversationSummary[], peerId: string, localId: string, message?: ChatMessage,
+): ConversationSummary[] {
+  if (!message) return conversations;
+  return conversations.map(conversation => {
+    if (conversation.peerId !== peerId || !matchesAcknowledgedMessage(conversation.lastMessage, localId, message)) return conversation;
+    return {
+      ...conversation,
+      lastMessage: message,
+      // Calls preserve lastMessage, so a delayed send ack must not replace their preview.
+      ...(matchesAcknowledgedMessage(conversation.lastActivity, localId, message) ? { lastActivity: message } : {}),
+    };
+  });
+}
+
+function matchesAcknowledgedMessage(
+  activity: ChatMessage | CallActivity | null | undefined, localId: string, message: ChatMessage,
+): boolean {
+  if (!activity || 'callId' in activity || activity.senderId !== message.senderId) return false;
+  return activity.messageId === localId ||
+    Boolean(message.clientMessageId && activity.clientMessageId === message.clientMessageId);
+}
+
 /**
  * Fold a call into the conversation list and keep rows newest-activity first.
  *

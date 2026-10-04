@@ -371,7 +371,10 @@ function createMemoryConversationStore(): ConversationStore {
     async saveMessage(message) {
       requireActiveMember(message.conversationId, message.senderId);
       const key = messageKey(message.conversationId, message.messageId);
-      const existing = messages.get(key);
+      const existing = (message.clientMessageId
+        ? [...messages.values()].find(candidate => candidate.senderId === message.senderId &&
+          candidate.clientMessageId === message.clientMessageId)
+        : undefined) ?? messages.get(key);
       if (existing) return { message: existing, recipients: recipientsFor(message.conversationId), inserted: false };
       messages.set(key, message);
       return { message, recipients: recipientsFor(message.conversationId), inserted: true };

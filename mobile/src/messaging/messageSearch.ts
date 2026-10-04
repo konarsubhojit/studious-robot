@@ -1,5 +1,9 @@
+import { timelineEntryId } from './messageIdentity';
+
 export type MessageSearchResult = {
   messageId: string;
+  clientMessageId?: string;
+  senderId?: string;
   peerId: string;
   body?: string;
   createdAt?: string;
@@ -16,11 +20,12 @@ export function mergeMessageSearchResults<T extends MessageSearchResult>(
 ): T[] {
   const byId = new Map<string, T>();
   for (const message of local) {
-    if (message.messageId) byId.set(message.messageId, message);
+    if (message.messageId) byId.set(timelineEntryId(message)!, message);
   }
   for (const message of remote) {
     if (!message.messageId) continue;
-    byId.set(message.messageId, { ...byId.get(message.messageId), ...message });
+    const id = timelineEntryId(message)!;
+    byId.set(id, { ...byId.get(id), ...message });
   }
   return [...byId.values()]
     .sort((a, b) => {

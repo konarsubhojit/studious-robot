@@ -50,6 +50,7 @@ const MESSAGE_COLUMNS = [
   'readAt',
   'deletedAt',
   'createdAt',
+  'clientMessageId',
 ] as const;
 
 /** A complete message row, with only the fields a case cares about overridden. */

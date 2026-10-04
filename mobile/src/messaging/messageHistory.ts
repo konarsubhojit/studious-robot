@@ -107,16 +107,20 @@ export function patchMessage(
   peerId: string,
   messageId: string,
   update: (message: ChatMessage) => ChatMessage,
+  senderId?: string,
 ): MessagesByPeer {
   const existing = state[peerId];
   if (!existing) return state;
   let changed = false;
   const next = existing.map(entry => {
-    if (entry.messageId !== messageId) return entry;
+    if (senderId && entry.senderId !== senderId) return entry;
+    const clientKeyMatches = senderId && entry.senderId === senderId && entry.clientMessageId === messageId;
+    if (entry.messageId !== messageId && !clientKeyMatches) return entry;
     changed = true;
     return update(entry);
   });
-  return changed ? { ...state, [peerId]: dedupeAndSort(next) } : state;
+  const provisional = existing.filter(entry => entry.clientMessageId && entry.messageId === entry.clientMessageId);
+  return changed ? { ...state, [peerId]: dedupeAndSort([...provisional, ...next]) } : state;
 }
 
 /**
@@ -183,7 +187,7 @@ export function upsertTimelineEntry(
   const entryId = timelineEntryId(entry);
   if (!entryId) return state;
   const existing = state[peerId] ?? [];
-  const next = dedupeAndSort([entry, ...existing.filter(item => timelineEntryId(item) !== entryId)]);
+  const next = dedupeAndSort([...existing, entry]);
   return { ...state, [peerId]: next };
 }
 
@@ -191,15 +195,37 @@ export function dedupeAndSort(entries: ChatMessage[]): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
   const unidentified: ChatMessage[] = [];
   for (const raw of entries) {
-    const entry = normalizeEntryTimestamps(raw);
+    const normalized = normalizeEntryTimestamps(raw);
+    const entry = normalized.clientMessageId && normalized.messageId !== normalized.clientMessageId
+      ? { ...normalized, syncState: 'synced' as const, pending: false, failed: false } : normalized;
     const id = timelineEntryId(entry);
     if (!id) {
       unidentified.push(entry);
       continue;
     }
-    byId.set(id, byId.has(id) ? { ...(byId.get(id) ?? {}), ...entry } : entry);
+    const previous = byId.get(id);
+    // A receipt/history row can arrive before the send ack. Never allow the
+    // surviving optimistic mirror to replace an already-known server identity.
+    byId.set(id, mergeTimelineCopy(previous, entry));
   }
-  return [...byId.values(), ...unidentified].sort(byNewestFirst);
+
+  function mergeTimelineCopy(previous: ChatMessage | undefined, entry: ChatMessage): ChatMessage {
+    if (!previous) return entry;
+    const awaitingServerIdentity = Boolean(entry.clientMessageId && entry.messageId === entry.clientMessageId &&
+      previous.messageId !== entry.clientMessageId);
+    const optimistic = entry.syncState === 'pending' || entry.syncState === 'failed' ||
+      awaitingServerIdentity;
+    return previous.syncState === 'synced' && optimistic ? { ...entry, ...previous } : { ...previous, ...entry };
+  }
+  const messages = [...byId.values(), ...unidentified];
+  const serverIds = new Map<string, string>();
+  for (const entry of entries) {
+    if (!entry.clientMessageId || entry.messageId !== entry.clientMessageId) continue;
+    const persisted = byId.get(timelineEntryId(entry)!);
+    if (persisted && persisted.messageId !== entry.messageId) serverIds.set(entry.messageId, persisted.messageId);
+  }
+  return messages.map(entry => entry.replyTo && serverIds.has(entry.replyTo)
+    ? { ...entry, replyTo: serverIds.get(entry.replyTo)! } : entry).sort(byNewestFirst);
 }
 
 /**
@@ -236,7 +262,8 @@ export function mergeHistoryPage(
   { before }: { before?: string; } = {},
 ): ChatMessage[] {
   const held = existing ?? [];
-  const pageWithClientTimes = carryLocalCreatedAt(held, page);
+  const pageWithClientTimes = carryLocalCreatedAt(held, page).map(entry => entry.clientMessageId
+    ? { ...entry, syncState: 'synced' as const, pending: false, failed: false } : entry);
   if (!before) {
     const serverIds = new Set(pageWithClientTimes.map(timelineEntryId));
     const window = pageWindow(pageWithClientTimes);
@@ -248,7 +275,9 @@ export function mergeHistoryPage(
       const time = entryTime(entry);
       return time === null || time > window.newest || time < window.oldest;
     });
-    return dedupeAndSort(kept.length ? [...kept, ...pageWithClientTimes] : pageWithClientTimes);
+    // Keep matching optimistic aliases through reconciliation so replies to
+    // their provisional UUID can be rewritten to the persisted server id.
+    return dedupeAndSort([...held.filter(entry => serverIds.has(timelineEntryId(entry))), ...kept, ...pageWithClientTimes]);
   }
   // A previously cached older row may now be a tombstone or carry new receipts.
   // Deduplication must prefer the server page rather than silently ignoring it.

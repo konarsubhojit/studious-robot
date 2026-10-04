@@ -12,7 +12,8 @@ import { timestampMs } from '../../../shared/time';
  * Identity of a timeline entry: a message id, or a call id for the call
  * records the unified timeline interleaves with the messages.
  */
-export function timelineEntryId(entry: { messageId?: string; callId?: string; }): string | undefined {
+export function timelineEntryId(entry: { messageId?: string; callId?: string; clientMessageId?: string; senderId?: string; }): string | undefined {
+  if (entry?.clientMessageId && entry.senderId) return `client:${entry.senderId}:${entry.clientMessageId}`;
   return entry?.messageId ?? entry?.callId;
 }
 
@@ -85,9 +86,8 @@ export function byOldestFirst(a: { createdAt?: string; }, b: { createdAt?: strin
 }
 
 /**
- * Client-generated message id. The server upserts on
- * `{ conversationId, messageId }`, so this is what makes a replayed send
- * idempotent rather than a duplicate.
+ * Compose-time UUID used as clientMessageId on new sends. The provisional
+ * bubble uses it as messageId until it learns the persisted server identity.
  *
  * Not a security token — it only has to be unique — so a `Math.random()`
  * fallback is fine where the runtime has no `crypto.randomUUID`.

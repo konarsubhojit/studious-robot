@@ -2954,6 +2954,7 @@ describe('useCallFlow chat', () => {
           event: 'message.send',
           message: {
             messageId: 'server-msg-1',
+            clientMessageId: payload.clientMessageId,
             conversationId: 'conv-1',
             senderId: 'alice',
             recipientId: 'bob',
@@ -2978,7 +2979,7 @@ describe('useCallFlow chat', () => {
       recipientId: 'bob',
       body: 'hi there',
       // Client-generated so the server's upsert makes a replay idempotent.
-      messageId: expect.any(String),
+      clientMessageId: expect.any(String),
     });
 
     const messages = resultRef.current.messagesByPeer.bob;

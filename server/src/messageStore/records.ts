@@ -59,6 +59,7 @@ export function normaliseReactions(value: unknown): Record<string, string[]> {
 export function createMessageRecord(message: NewMessageInput): StoredMessage {
   return {
     messageId: message.messageId || randomUUID(),
+    ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
     conversationId:
       message.conversationId || deriveConversationId(message.senderId, message.recipientId),
     senderId: message.senderId,

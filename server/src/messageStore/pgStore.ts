@@ -74,6 +74,7 @@ type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
 function toStoredMessage(row: MessageRow): StoredMessage {
   return {
     messageId: row.messageId,
+    ...(row.clientMessageId ? { clientMessageId: row.clientMessageId } : {}),
     conversationId: row.conversationId,
     senderId: row.senderId,
     recipientId: row.recipientId,
@@ -106,6 +107,7 @@ function toInsertValues(record: StoredMessage): typeof messagesTable.$inferInser
   return {
     conversationId: record.conversationId,
     messageId: record.messageId,
+    clientMessageId: record.clientMessageId ?? null,
     senderId: record.senderId,
     recipientId: record.recipientId,
     body: record.body,
@@ -238,8 +240,7 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
     // whether a message counts as unread. `db.transaction` is Postgres
     // `BEGIN`/`COMMIT` around both statements, not two independent ones.
     return db.transaction(async (tx) => {
-      // Idempotent on `(conversationId, messageId)` — the primary key, and the
-      // pair a client replays from its durable outbox. `DO NOTHING` rather than
+      // Sender-scoped client key (or legacy primary key). `DO NOTHING` rather than
       // an update: a replay must not overwrite the reactions, receipts or
       // tombstone the original has accumulated since.
       const inserted = await tx
@@ -263,9 +264,12 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
       const [existing] = await tx
         .select()
         .from(messagesTable)
-        .where(byPrimaryKey(record.conversationId, record.messageId))
+        .where(record.clientMessageId
+          ? and(eq(messagesTable.senderId, record.senderId), eq(messagesTable.clientMessageId, record.clientMessageId))
+          : byPrimaryKey(record.conversationId, record.messageId))
         .limit(1);
-      return { message: existing ? toStoredMessage(existing) : record, inserted: false };
+      if (!existing) throw new Error('Conflicting message could not be resolved');
+      return { message: toStoredMessage(existing), inserted: false };
     });
   };
 
@@ -530,6 +534,7 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
           readAt: messagesTable.readAt,
           deletedAt: messagesTable.deletedAt,
           createdAt: messagesTable.createdAt,
+          clientMessageId: messagesTable.clientMessageId,
           unreadCount: selectedConversations.unreadCount,
         })
         .from(selectedConversations)

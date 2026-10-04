@@ -122,6 +122,8 @@ const attachmentRecord = s.object(
  */
 export type MessageRecord = {
   messageId: string;
+  /** Compose-time retry identity, scoped to sender; distinct from the server id. */
+  clientMessageId?: string;
   conversationId: string;
   senderId: string;
   recipientId: string;
@@ -136,6 +138,7 @@ export type MessageRecord = {
 const messageRecord = s.object(
   {
     messageId: idField,
+    clientMessageId: s.id().optional(),
     conversationId: s.id().optional(),
     senderId: idField,
     recipientId: idField,
@@ -248,10 +251,8 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     type: s.enum(KNOWN_MESSAGE_TYPES).optional(),
     attachment: attachmentRecord.optional().nullable(),
     replyTo: s.id().optional().nullable(),
-    // Client-generated id for the message, so a send that is replayed from the
-    // sender's durable outbox (reconnect, app relaunch) is stored once instead
-    // of once per attempt: the store upserts on `{ conversationId, messageId }`.
-    // Optional so an older client that does not generate one still works.
+    // New sends use a compose-time UUID; messageId remains a legacy retry path.
+    clientMessageId: s.id().optional(),
     messageId: s.id().optional(),
   }, { exclusive: [['conversationId', 'recipientId']] }),
   [CLIENT_EVENTS.MESSAGE_DELETE]: s.object({
