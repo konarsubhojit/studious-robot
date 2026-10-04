@@ -20,6 +20,43 @@ import { activeGroupMember, assertActiveGroupMember, INVITATION_TTL_MS, requireG
 import { attachmentScopeFromKey } from '../attachments.ts';
 
 const MAX_GROUP_MEMBERS = 16;
+const MAX_GROUP_CALL_PARTICIPANTS = 4;
+
+function assertGroupCallCapacity(callId: string, participants: Iterable<GroupCallParticipant>): void {
+  const acceptedCount = [...participants].filter(item =>
+    item.callId === callId && item.status === 'accepted',
+  ).length;
+  if (acceptedCount >= MAX_GROUP_CALL_PARTICIPANTS) {
+    throw new ConversationStoreError(
+      'group_call_full',
+      `Group call is full; mesh calls support up to ${MAX_GROUP_CALL_PARTICIPANTS} participants`,
+    );
+  }
+}
+
+function transitionGroupCallParticipant(
+  callId: string,
+  participant: GroupCallParticipant,
+  action: 'accept' | 'decline' | 'leave',
+  now: string,
+  participants: Iterable<GroupCallParticipant>,
+): boolean {
+  if (action === 'accept' && participant.status === 'ringing') {
+    assertGroupCallCapacity(callId, participants);
+    participant.status = 'accepted';
+    participant.acceptedAt = now;
+  } else if (action === 'decline' && participant.status === 'ringing') {
+    participant.status = 'declined';
+    participant.leftAt = now;
+  } else if (action === 'leave' && (participant.status === 'ringing' || participant.status === 'accepted')) {
+    participant.status = 'left';
+    participant.leftAt = now;
+  } else {
+    return false;
+  }
+  participant.updatedAt = now;
+  return true;
+}
 
 function messageKey(conversationId: string, messageId: string): string {
   return JSON.stringify([conversationId, messageId]);
@@ -658,6 +695,11 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       return { message, recipients: recipientsFor(conversationId) };
     },
 
+    async getCall(callId) {
+      const call = calls.get(callId);
+      return call ? callChange(call) : null;
+    },
+
     async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [] }) {
       const conversation = conversations.get(conversationId);
       if (!conversation || conversation.deletedAt !== null) return null;
@@ -709,19 +751,9 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
         const expired = await this.expireCall(callId);
         return expired ? { ...expired, expired: true } : null;
       }
-      if (action === 'accept' && participant.status === 'ringing') {
-        participant.status = 'accepted';
-        participant.acceptedAt = now;
-      } else if (action === 'decline' && participant.status === 'ringing') {
-        participant.status = 'declined';
-        participant.leftAt = now;
-      } else if (action === 'leave' && (participant.status === 'ringing' || participant.status === 'accepted')) {
-        participant.status = 'left';
-        participant.leftAt = now;
-      } else {
+      if (!transitionGroupCallParticipant(callId, participant, action, now, callParticipants.values())) {
         return callChange(call);
       }
-      participant.updatedAt = now;
       call.updatedAt = now;
       call.stateVersion += 1;
       if (action === 'accept') call.status = 'active';

@@ -1,6 +1,8 @@
 import {
   CALL_EVENTS,
+  callPeerMapReducer,
   CALL_STATES,
+  INITIAL_CALL_PEERS,
   INITIAL_CALL_STATE,
   callStateReducer,
   isCallActiveState,
@@ -117,6 +119,44 @@ describe('state predicates', () => {
     expect(isRingingState(CALL_STATES.INCOMING_RINGING)).toBe(true);
     expect(isRingingState(CALL_STATES.IN_CALL)).toBe(false);
     expect(isRingingState(CALL_STATES.IDLE)).toBe(false);
+  });
+
+  describe('participant peer map', () => {
+    test('peers join and leave independently', () => {
+      let peers = callPeerMapReducer(INITIAL_CALL_PEERS, { type: 'join', userId: 'bob' });
+      peers = callPeerMapReducer(peers, { type: 'join', userId: 'carol' });
+      expect(Object.keys(peers)).toEqual(['bob', 'carol']);
+      peers = callPeerMapReducer(peers, { type: 'leave', userId: 'bob' });
+      expect(Object.keys(peers)).toEqual(['carol']);
+      expect(callPeerMapReducer(peers, { type: 'leave', userId: 'missing' })).toBe(peers);
+    });
+
+    test('failure and recovery are scoped to one peer without ending the call', () => {
+      let peers = callPeerMapReducer(INITIAL_CALL_PEERS, { type: 'join', userId: 'bob' });
+      peers = callPeerMapReducer(peers, { type: 'join', userId: 'carol' });
+      peers = callPeerMapReducer(peers, {
+        type: 'connection', userId: 'bob', connectionState: 'failed',
+      });
+      expect(peers.bob).toMatchObject({ connectionState: 'failed', quality: 'offline' });
+      expect(peers.carol).toMatchObject({ connectionState: 'new', quality: 'connecting' });
+      peers = callPeerMapReducer(peers, {
+        type: 'connection', userId: 'bob', connectionState: 'connected',
+      });
+      expect(peers.bob.quality).toBe('good');
+      expect(peers.carol.connectionState).toBe('new');
+    });
+
+    test('records stream and participant media details by user id', () => {
+      const stream = { id: 'remote-bob' };
+      let peers = callPeerMapReducer(INITIAL_CALL_PEERS, { type: 'join', userId: 'bob' });
+      peers = callPeerMapReducer(peers, { type: 'stream', userId: 'bob', stream });
+      peers = callPeerMapReducer(peers, {
+        type: 'media', userId: 'bob', isMuted: true, isVideoEnabled: false, isScreenSharing: true,
+      });
+      expect(peers.bob).toMatchObject({
+        stream, isMuted: true, isVideoEnabled: false, isScreenSharing: true,
+      });
+    });
   });
 
   test('isCallActiveState covers ringing and connected states', () => {

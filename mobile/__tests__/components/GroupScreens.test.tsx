@@ -8,6 +8,11 @@ import { createMockGroup } from '../../src/chat/groupMockAdapter';
 import { startMockGroupCall, transitionMockGroupCall } from '../../src/chat/groupCallAdapter';
 import type { ChatMessage } from '../../src/messaging/types';
 
+jest.mock('../../src/SafeRTCView', () => ({
+  __esModule: true,
+  default: (props: any) => require('react').createElement('SafeRTCView', props),
+}));
+
 const mounted: renderer.ReactTestRenderer[] = [];
 const find = (tree: renderer.ReactTestRenderer, id: string) =>
   tree.root.findAll(node => node.props.testID === id)[0];
@@ -100,7 +105,10 @@ function groupProps(currentUserId = 'alice') {
   return {
     conversation,
     callSnapshot: startMockGroupCall(conversation, 'alice', 'mock-call-1', 'audio', '2026-10-03T06:00:00Z'),
-    callActions: { start: jest.fn(async () => {}), transition: jest.fn(async () => {}), simulate: jest.fn(async () => {}) },
+    callActions: {
+      start: jest.fn(async () => {}), transition: jest.fn(async () => {}),
+      simulate: jest.fn(async () => {}), toggleMute: jest.fn(),
+    },
     messages: [] as ChatMessage[], currentUserId, typing: { bob: true, carol: true },
     actions: { mode: 'mock' as const, create: jest.fn(), members: jest.fn(async () => {}), rename: jest.fn(async () => {}),
       leave: jest.fn(async () => {}) },
@@ -213,6 +221,38 @@ test('participant grid is explicitly media-free and shows individual mute/leave 
   expect(props.onSend).not.toHaveBeenCalled();
 });
 
+test('compact group call preview can reopen and dismiss back to the active speaker PiP', async () => {
+  const props = groupProps();
+  const tree = await render(<GroupConversationScreen {...props} />);
+  const mini = find(tree, 'group-call-mini-preview');
+  expect(mini.props.accessibilityLabel).toBe('Return to group call');
+  expect(tree.root.findAll(node => node.props.testID === 'call-participant-alice'))
+    .toHaveLength(2); // one tile and its avatar surface
+
+  act(() => mini.props.onPress());
+  expect(find(tree, 'group-call-preview')).toBeDefined();
+  act(() => find(tree, 'group-call-preview-backdrop').props.onPress());
+  expect(find(tree, 'group-call-mini-preview')).toBeDefined();
+  expect(tree.root.findAll(node => node.props.testID === 'call-participant-carol'))
+    .toHaveLength(0);
+});
+
+test('full mesh previews explain the four-participant limit and disable further accepts', async () => {
+  const conversation = createMockGroup('alice', 'Team', ['bob', 'carol', 'dave', 'eve'], 'mock-group-1');
+  let snapshot = startMockGroupCall(conversation, 'alice', 'mock-call-full', 'audio', '2026-10-03T06:00:00Z');
+  for (const userId of ['bob', 'carol', 'dave']) {
+    snapshot = transitionMockGroupCall(snapshot, userId, 'accept', '2026-10-03T06:01:00Z');
+  }
+  const props = groupProps();
+  props.conversation = conversation;
+  props.callSnapshot = snapshot;
+  const tree = await render(<GroupConversationScreen {...props} />);
+  act(() => find(tree, 'group-open-call').props.onPress());
+  expect(find(tree, 'group-call-capacity')).toBeDefined();
+  expect(text(tree)).toContain('mesh calls support up to four participants');
+  expect(find(tree, 'group-call-accept-eve').props.disabled).toBe(true);
+});
+
 test('remote preview uses participant snapshots and only self lifecycle controls with local mute', async () => {
   const props = groupProps('bob');
   props.conversation.localMock = false;
@@ -224,7 +264,8 @@ test('remote preview uses participant snapshots and only self lifecycle controls
   expect(props.callActions.transition).toHaveBeenCalledWith('mock-group-1', 'accept');
   expect(props.callActions.simulate).not.toHaveBeenCalled();
   act(() => find(tree, 'group-call-mute-bob').props.onPress());
-  expect(text(tree)).toContain('Muted (simulated)');
+  expect(props.callActions.toggleMute).toHaveBeenCalledTimes(1);
+  expect(text(tree)).toContain('Unmuted · ringing');
   expect(props.callActions.transition).toHaveBeenCalledTimes(1);
 });
 

@@ -512,13 +512,105 @@ function logRtcRelay(state: import('../stores/contracts.ts').ServerState, option
   });
 }
 
-async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
-        state: import('../stores/contracts.ts').ServerState;
-        io: any;
-        eventName: string;
-        dataKey: string;
-        recordsHeartbeat?: boolean;
-    }) {
+async function relayRtcSignalToPeer(options: {
+  state: import('../stores/contracts.ts').ServerState;
+  io: any;
+  eventName: string;
+  callId: string;
+  userId: string;
+  peerUserId: string;
+  dataKey: string;
+  value: unknown;
+  isHeartbeat?: boolean;
+}): Promise<void> {
+  const { currentEventName, legacyEventName } = rtcRelayEventNames(options.eventName);
+  const relayPayload = {
+    callId: options.callId,
+    peerId: options.userId,
+    fromUserId: options.userId,
+    [options.dataKey]: options.value,
+  };
+  // SDP frames are counted to confirm the target room has recipients.
+  const recipients = await countRoomRecipients(options.io, options.peerUserId, options.eventName);
+  if (needsVersionedRtcRelay(options.eventName)) {
+    emitVersionedRtcSignal(options.io, options.peerUserId, currentEventName, legacyEventName, relayPayload);
+  } else {
+    emitVersionedCallEvent(options.io, options.peerUserId, options.eventName, relayPayload);
+  }
+  logRtcRelay(options.state, {
+    eventName: options.eventName,
+    callId: options.callId,
+    fromUserId: options.userId,
+    toUserId: options.peerUserId,
+    recipients,
+    isHeartbeat: options.isHeartbeat ?? false,
+  });
+}
+
+type RtcRelayOptions = {
+  state: import('../stores/contracts.ts').ServerState;
+  io: any;
+  eventName: string;
+  dataKey: string;
+  recordsHeartbeat?: boolean;
+};
+
+async function relayGroupCallSignal(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  options: RtcRelayOptions,
+  callId: string,
+  userId: string,
+  parsed: Record<string, any>,
+  value: unknown,
+): Promise<boolean> {
+  const groupCall = await options.state.conversationStore.getCall(callId);
+  if (!groupCall) return false;
+  const peerUserId = normaliseId(parsed.peerId);
+  const sender = groupCall.participants.find(person => person.userId === userId);
+  const recipient = groupCall.participants.find(person => person.userId === peerUserId);
+  const senderMembership = await options.state.conversationStore.getMember(groupCall.call.conversationId, userId);
+  const recipientMembership = peerUserId
+    ? await options.state.conversationStore.getMember(groupCall.call.conversationId, peerUserId)
+    : null;
+  if (
+    !peerUserId ||
+    groupCall.call.status !== 'active' ||
+    sender?.status !== 'accepted' ||
+    recipient?.status !== 'accepted' ||
+    !senderMembership ||
+    !recipientMembership
+  ) {
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      ERROR_CODES.FORBIDDEN,
+      'sender and peer must be active call participants',
+      options.state,
+    );
+    return true;
+  }
+  await relayRtcSignalToPeer({
+    state: options.state,
+    io: options.io,
+    eventName: options.eventName,
+    callId,
+    userId,
+    peerUserId,
+    dataKey: options.dataKey,
+    value,
+  });
+  acknowledgeSuccess(socket, ack, options.eventName, { callId });
+  return true;
+}
+
+async function handleRtcRelay(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  payload: object,
+  options: RtcRelayOptions,
+) {
   if (!requireSocketSession(socket, ack, options.eventName)) {
     return;
   }
@@ -559,6 +651,7 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
 
   const call = await hydrateCallFromShared(options.state, callId);
   if (!call) {
+    if (await relayGroupCallSignal(socket, ack, options, callId, userId, parsed, value)) return;
     acknowledgeError(
       socket,
       ack,
@@ -617,28 +710,15 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
     recordCallHeartbeat(options.state, callId);
   }
 
-  const { currentEventName, legacyEventName } = rtcRelayEventNames(options.eventName);
-  const relayPayload = {
-    callId,
-    peerId: userId,
-    fromUserId: userId,
-    [options.dataKey]: value,
-  };
-  // Taken *before* the emit so the count describes the room the frame was
-  // about to be broadcast into, and awaited only for the SDP frames — see
-  // `countRoomRecipients`.
-  const recipients = await countRoomRecipients(options.io, peerUserId, options.eventName);
-  if (needsVersionedRtcRelay(options.eventName)) {
-    emitVersionedRtcSignal(options.io, peerUserId, currentEventName, legacyEventName, relayPayload);
-  } else {
-    emitVersionedCallEvent(options.io, peerUserId, options.eventName, relayPayload);
-  }
-  logRtcRelay(options.state, {
+  await relayRtcSignalToPeer({
+    state: options.state,
+    io: options.io,
     eventName: options.eventName,
     callId,
-    fromUserId: userId,
-    toUserId: peerUserId,
-    recipients,
+    userId,
+    peerUserId,
+    dataKey: options.dataKey,
+    value,
     isHeartbeat: isHeartbeatFrame,
   });
   acknowledgeSuccess(socket, ack, options.eventName, { callId });

@@ -40,6 +40,7 @@ function setup({
   initialParameters = { encodings: [{ maxBitrate: 500_000 }] } as any,
   // An audio-only call has no video sender for the screen track to borrow.
   hasCameraSender = true,
+  additionalPeerConnectionCount = 0,
 } = {}) {
   const cameraTrack = makeTrack('video');
   const sender: any = { track: cameraTrack, replaceTrack: jest.fn(() => Promise.resolve()) };
@@ -54,6 +55,24 @@ function setup({
     addTrack: jest.fn((track: any) => (track?.kind === 'audio' ? audioSender : addedVideoSender)),
     removeTrack: jest.fn(),
   };
+  const additionalPeerConnections = Array.from({ length: additionalPeerConnectionCount }, () => {
+    const groupCameraTrack = makeTrack('video');
+    const groupSender: any = {
+      track: groupCameraTrack,
+      replaceTrack: jest.fn(() => Promise.resolve()),
+      getParameters: jest.fn(() => initialParameters),
+      setParameters: jest.fn(),
+    };
+    return {
+      cameraTrack: groupCameraTrack,
+      sender: groupSender,
+      pc: {
+        getSenders: jest.fn(() => [groupSender]),
+        addTrack: jest.fn(),
+        removeTrack: jest.fn(),
+      },
+    };
+  });
   const microphoneTrack = makeTrack('audio');
   const localStream = {
     addTrack: jest.fn(),
@@ -62,6 +81,9 @@ function setup({
   };
   const params: any = {
     peerConnectionRef: { current: peerConnection },
+    peerConnectionsRef: {
+      current: new Map(additionalPeerConnections.map((entry, index) => [`peer-${index}`, { pc: entry.pc }])),
+    },
     localStreamRef: { current: localStream },
     setLocalStream: jest.fn(),
     setStatus: jest.fn(),
@@ -79,6 +101,7 @@ function setup({
     resultRef,
     params,
     peerConnection,
+    additionalPeerConnections,
     sender,
     audioSender,
     addedVideoSender,
@@ -105,6 +128,7 @@ describe('useScreenShare', () => {
       audioTrack: null,
       audioShared: false,
     });
+
     const renegotiate = jest.fn(() => Promise.resolve());
     const { resultRef, params, sender, cameraTrack, localStream } = setup({ renegotiate });
 
@@ -124,6 +148,36 @@ describe('useScreenShare', () => {
       'Screen sharing started without system audio: audio capture unsupported.',
       'warning',
     );
+  });
+
+  test('replaces and restores the screen track on every group peer without changing microphone state', async () => {
+    const sharedVideoTrack = makeTrack('video');
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'shared-screen' },
+      videoTrack: sharedVideoTrack,
+      audioTrack: null,
+      audioShared: false,
+    });
+    const { resultRef, sender, cameraTrack, additionalPeerConnections, microphoneTrack } = setup({
+      additionalPeerConnectionCount: 2,
+    });
+
+    await act(async () => { await resultRef.current.startScreenShare(); });
+    expect(sender.replaceTrack).toHaveBeenCalledWith(sharedVideoTrack);
+    for (const peer of additionalPeerConnections) {
+      expect(peer.sender.replaceTrack).toHaveBeenCalledWith(sharedVideoTrack);
+      expect(peer.cameraTrack.enabled).toBe(false);
+    }
+    expect(microphoneTrack.enabled).toBe(true);
+
+    await act(async () => { await resultRef.current.stopScreenShare(); });
+    expect(sender.replaceTrack).toHaveBeenLastCalledWith(cameraTrack);
+    for (const peer of additionalPeerConnections) {
+      expect(peer.sender.replaceTrack).toHaveBeenLastCalledWith(peer.cameraTrack);
+      expect(peer.cameraTrack.enabled).toBe(true);
+    }
+    expect(microphoneTrack.enabled).toBe(true);
   });
 
   test('adds a screen audio sender and renegotiates when screen audio is enabled', async () => {

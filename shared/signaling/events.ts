@@ -43,6 +43,8 @@ const CLIENT_EVENTS = Object.freeze({
   CONVERSATION_CALL_ACCEPT: 'conversation.call.accept',
   CONVERSATION_CALL_DECLINE: 'conversation.call.decline',
   CONVERSATION_CALL_LEAVE: 'conversation.call.leave',
+  GROUP_CALL_RESTART_REQUEST: 'group.call.restart-request',
+  GROUP_CALL_MEDIA_STATE: 'group.call.media-state',
 });
 
 /** Events the server sends to the client. */
@@ -69,6 +71,8 @@ const SERVER_EVENTS = Object.freeze({
   // Group conversation lifecycle.
   CONVERSATION_UPDATED: 'conversation.updated',
   CONVERSATION_CALL_UPDATED: 'conversation.call.updated',
+  GROUP_CALL_RESTART_REQUEST: 'group.call.restart-request',
+  GROUP_CALL_MEDIA_STATE: 'group.call.media-state',
   // Connection-level notices.
   SESSION_INVALID: 'session.invalid',
   SERVER_DRAINING: 'server.draining',

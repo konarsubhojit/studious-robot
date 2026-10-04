@@ -1,6 +1,7 @@
 import { SIGNALING_VERSION } from '../config.ts';
 import { fanoutConversationEvent } from '../domain/conversationFanout.ts';
 import { normaliseId } from '../lib/normalize.ts';
+import { userRoom } from '../lib/state.ts';
 import { isDirectoryVisibleAsync, filterVisible } from '../security.ts';
 import { ConversationStoreError } from '../conversationStore.ts';
 import { checkGroupAdmissionRate } from '../domain/groupAdmission.ts';
@@ -434,6 +435,65 @@ function registerConversationHandlers(
         if (rejectStoreError(socket, ack, eventName, error, state)) return;
         console.error(`[conversations] group call transition failed: ${error instanceof Error ? error.message : String(error)}`);
         acknowledgeError(socket, ack, eventName, ERROR_CODES.INTERNAL_ERROR, 'could not update group call', state);
+      }
+    });
+  }
+
+  const groupCallRtcEvents = [
+    [CLIENT_EVENTS.GROUP_CALL_RESTART_REQUEST, null],
+    [CLIENT_EVENTS.GROUP_CALL_MEDIA_STATE, 'mediaState'],
+  ] as const;
+  for (const [eventName, dataKey] of groupCallRtcEvents) {
+    socket.on(eventName, async (payload = {}, ack) => {
+      if (!requireSocketSession(socket, ack, eventName)) return;
+      if (!validateSignalingVersion(socket, payload, ack, eventName)) return;
+      const parsed = parseInboundPayload(socket, ack, eventName, payload, state);
+      if (!parsed) return;
+      const callId = normaliseId(parsed.callId);
+      const peerId = normaliseId(parsed.peerId);
+      const userId = socket.data.identity.userId;
+      if (!callId || !peerId || peerId === userId) {
+        acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'callId and peerId are required', state);
+        return;
+      }
+      const rateCheck = await state.rtcRateLimiter.check(userId);
+      if (!rateCheck.allowed) {
+        acknowledgeError(socket, ack, eventName, ERROR_CODES.RATE_LIMITED, 'too many signaling events', state);
+        return;
+      }
+      try {
+        const change = await state.conversationStore.getCall(callId);
+        const sender = change?.participants.find(({ userId: id }) => id === userId);
+        const recipient = change?.participants.find(({ userId: id }) => id === peerId);
+        const senderMembership = change
+          ? await state.conversationStore.getMember(change.call.conversationId, userId)
+          : null;
+        const recipientMembership = change
+          ? await state.conversationStore.getMember(change.call.conversationId, peerId)
+          : null;
+        if (
+          !change ||
+          change.call.status !== 'active' ||
+          sender?.status !== 'accepted' ||
+          recipient?.status !== 'accepted' ||
+          !senderMembership ||
+          !recipientMembership
+        ) {
+          acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'sender and peer must be active call participants', state);
+          return;
+        }
+        io.to(userRoom(peerId)).emit(eventName, {
+          version: SIGNALING_VERSION,
+          callId,
+          peerId: userId,
+          fromUserId: userId,
+          ...(dataKey ? { [dataKey]: parsed[dataKey] } : {}),
+        });
+        acknowledgeSuccess(socket, ack, eventName, { callId, peerId });
+      } catch (error) {
+        if (rejectStoreError(socket, ack, eventName, error, state)) return;
+        console.error(`[conversations] group RTC relay failed: ${error instanceof Error ? error.message : String(error)}`);
+        acknowledgeError(socket, ack, eventName, ERROR_CODES.INTERNAL_ERROR, 'could not relay group call signaling', state);
       }
     });
   }

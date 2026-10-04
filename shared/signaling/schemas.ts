@@ -347,6 +347,17 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     version: versionField,
     callId: idField,
   }),
+  [CLIENT_EVENTS.GROUP_CALL_RESTART_REQUEST]: s.object({
+    version: currentVersionField,
+    callId: idField,
+    peerId: idField,
+  }),
+  [CLIENT_EVENTS.GROUP_CALL_MEDIA_STATE]: s.object({
+    version: currentVersionField,
+    callId: idField,
+    peerId: idField,
+    mediaState: opaqueObject,
+  }),
 });
 
 /**
@@ -491,6 +502,19 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
       acceptedAt: s.string().optional().nullable(),
       leftAt: s.string().optional().nullable(),
     }, { passthrough: true })),
+  }),
+  [SERVER_EVENTS.GROUP_CALL_RESTART_REQUEST]: s.object({
+    version: inboundVersionField,
+    callId: idField,
+    peerId: idField,
+    fromUserId: idField,
+  }),
+  [SERVER_EVENTS.GROUP_CALL_MEDIA_STATE]: s.object({
+    version: inboundVersionField,
+    callId: idField,
+    peerId: idField,
+    fromUserId: idField,
+    mediaState: opaqueObject,
   }),
 
   [SERVER_EVENTS.SESSION_INVALID]: s.object({ sessionId: s.string().optional().nullable() }),

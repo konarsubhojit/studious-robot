@@ -21,6 +21,7 @@
 export type RehydrationOutcome =
   | 'deferred'
   | 'ringing'
+  | 'group_call'
   | 'terminal'
   | 'not_found'
   | 'error'

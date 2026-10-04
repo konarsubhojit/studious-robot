@@ -7,7 +7,11 @@ import { radius, spacing, typography } from '../theme';
 import { Sheet } from './primitives';
 import GroupDirectorySheet from './GroupDirectorySheet';
 import GroupCallPreview from './GroupCallPreview';
+import CallParticipantGrid from './CallParticipantGrid';
+import type { GroupCallPreviewActions } from './GroupCallPreview';
 import type { GroupCallSnapshot } from '../chat/groupCallAdapter';
+import type { CallPeerMap } from '../call/callStateMachine';
+import type { WebrtcMediaStream } from '../hooks/usePeerConnection';
 import type { ChatContextValue } from '../chat/ChatProvider';
 import type { ChatMessage, ConversationSummary } from '../messaging/types';
 import type { ContactRow } from '../types/directory';
@@ -28,7 +32,13 @@ type Props = {
   /** Only supplied by a local-preview build; absent for the live transport. */
   preview?: GroupPreviewActions;
   callSnapshot?: GroupCallSnapshot;
-  callActions: ChatContextValue['groupCallActions'];
+  callActions: GroupCallPreviewActions;
+  callPeers?: CallPeerMap<WebrtcMediaStream>;
+  activeSpeakerId?: string | null;
+  localStream?: WebrtcMediaStream | null;
+  isMuted?: boolean;
+  isVideoEnabled?: boolean;
+  isScreenSharing?: boolean;
   onSearchUsers: (query: string) => Promise<ContactRow[]>;
   onSend: (body: string) => Promise<unknown>;
   onRetry: (messageId: string) => Promise<unknown>;
@@ -118,7 +128,8 @@ function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, ac
 }
 
 export default function GroupConversationScreen({
-  conversation: row, messages, currentUserId, typing, actions, preview, callSnapshot, callActions, onSearchUsers, onSend, onRetry,
+  conversation: row, messages, currentUserId, typing, actions, preview, callSnapshot, callActions,
+  callPeers, activeSpeakerId, localStream, isMuted, isVideoEnabled, isScreenSharing, onSearchUsers, onSend, onRetry,
   onTyping, onRead, onBack, draft, onDraft, offline, onRefresh, onLoadOlder, isRefreshing = false,
 }: Props) {
   const styles = useThemedStyles(createStyles);
@@ -128,8 +139,53 @@ export default function GroupConversationScreen({
   const [calling, setCalling] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const openedCallIdRef = useRef<string | null>(null);
   const group = row.group!;
   const isMember = !row.left && group.memberIds.includes(currentUserId);
+  const selfCallParticipant = callSnapshot?.participants.find(person => person.userId === currentUserId);
+  const isCompactCallVisible = Boolean(
+    callSnapshot &&
+    callSnapshot.call.status !== 'ended' &&
+    selfCallParticipant?.status === 'accepted' &&
+    !calling &&
+    isMember,
+  );
+  const compactSpeakerId = activeSpeakerId ??
+    Object.values(callPeers ?? {}).find(peer => peer.isSpeaking)?.userId ??
+    callSnapshot?.participants.find(person =>
+      person.userId !== currentUserId && person.status === 'accepted',
+    )?.userId ??
+    currentUserId;
+  const compactParticipants = callSnapshot?.participants
+    .filter(person => person.status === 'accepted')
+    .map(person => {
+      const self = person.userId === currentUserId;
+      const peer = callPeers?.[person.userId];
+      const stream = self ? localStream : peer?.stream;
+      return {
+        userId: person.userId,
+        name: self ? 'You' : person.userId,
+        streamUrl: (stream as any)?.toURL?.() ?? null,
+        isMuted: self ? Boolean(isMuted) : peer?.isMuted ?? null,
+        isVideoEnabled: self ? Boolean(isVideoEnabled) : peer?.isVideoEnabled ?? null,
+        connectionState: peer?.connectionState ?? person.status,
+        quality: peer?.quality ?? (person.status === 'accepted' ? 'connecting' : person.status),
+        isSpeaking: peer?.isSpeaking ?? false,
+        isScreenSharing: self ? Boolean(isScreenSharing) : peer?.isScreenSharing ?? false,
+      };
+    }) ?? [];
+  useEffect(() => {
+    const self = callSnapshot?.participants.find(person => person.userId === currentUserId);
+    if (
+      !row.localMock && callSnapshot && callSnapshot.call.status !== 'ended' &&
+      self && (self.status === 'accepted' || self.status === 'ringing') &&
+      openedCallIdRef.current !== callSnapshot.callId
+    ) {
+      openedCallIdRef.current = callSnapshot.callId;
+      setCalling(true);
+    }
+    if (!callSnapshot || callSnapshot.call.status === 'ended') openedCallIdRef.current = null;
+  }, [callSnapshot, currentUserId, row.localMock]);
   const newestId = messages[0]?.messageId;
   const callbacks = useRef({ onRead, onTyping });
   callbacks.current = { onRead, onTyping };
@@ -188,6 +244,14 @@ export default function GroupConversationScreen({
       accessibilityLabel="Group message" placeholder="Message group" testID="group-composer" />
     <Action label={busy ? 'Sending…' : 'Send to group'} styles={styles} disabled={!isMember || busy || !draft.trim()}
       onPress={() => { void send(); }} testID="group-send" />
+    {isCompactCallVisible ? (
+      <Pressable style={styles.compactCall} onPress={() => setCalling(true)}
+        testID="group-call-mini-preview" accessibilityRole="button"
+        accessibilityLabel="Return to group call">
+        <CallParticipantGrid participants={compactParticipants} activeSpeakerId={compactSpeakerId} isCompact />
+        <Text style={styles.compactCallLabel}>Return to group call</Text>
+      </Pressable>
+    ) : null}
     <MembersSheet visible={membersVisible} row={row} currentUserId={currentUserId} actions={actions} preview={preview}
       onClose={() => setMembersVisible(false)} onAdd={() => { setMembersVisible(false); setAdding(true); }}
       onLeave={() => { void run(async () => { await actions.leave(row.peerId); onBack(); }); }}
@@ -196,7 +260,9 @@ export default function GroupConversationScreen({
       onSearchUsers={onSearchUsers} currentUserId={currentUserId} excludedIds={group.memberIds}
       onSubmit={async (_name, userIds) => actions.members(row.peerId, { type: 'add', userIds })} />
     <GroupCallPreview visible={calling && isMember} onClose={() => setCalling(false)} conversationId={row.peerId}
-      currentUserId={currentUserId} localMock={Boolean(row.localMock)} snapshot={callSnapshot} actions={callActions} />
+      currentUserId={currentUserId} localMock={Boolean(row.localMock)} snapshot={callSnapshot} actions={callActions}
+      callPeers={callPeers} activeSpeakerId={activeSpeakerId} localStream={localStream}
+      isMuted={isMuted} isVideoEnabled={isVideoEnabled} isScreenSharing={isScreenSharing} />
   </KeyboardAvoidingView>;
 }
 
@@ -208,6 +274,24 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   secondary: { ...typography.caption, color: colors.onSurfaceVariant },
   controls: { flexDirection: 'row', flexWrap: 'wrap' },
   action: { minHeight: 48, justifyContent: 'center', padding: spacing.sm },
+  compactCall: {
+    position: 'absolute',
+    right: spacing.md,
+    bottom: 88,
+    width: 180,
+    height: 140,
+    zIndex: 20,
+    elevation: 8,
+    overflow: 'hidden',
+    borderRadius: radius.md,
+    backgroundColor: colors.stageDark,
+  },
+  compactCallLabel: {
+    ...typography.caption,
+    color: colors.onOverlay,
+    textAlign: 'center',
+    paddingBottom: spacing.xs,
+  },
   input: { ...typography.body, color: colors.onSurface, backgroundColor: colors.surfaceControl, borderRadius: radius.md, padding: spacing.sm },
   timeline: { paddingVertical: spacing.sm },
   bubble: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.sm, marginVertical: spacing.xs, marginRight: spacing.lg },

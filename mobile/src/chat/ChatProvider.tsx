@@ -35,6 +35,12 @@ export type ChatContextValue = {
   groupPreviewActions: CallFlow['groupPreviewActions'];
   groupCalls: CallFlow['groupCalls'];
   groupCallActions: CallFlow['groupCallActions'];
+  groupCallPeers: CallFlow['groupCallPeers'];
+  activeGroupSpeakerId: CallFlow['activeGroupSpeakerId'];
+  groupLocalStream: CallFlow['localStream'];
+  groupIsMuted: CallFlow['isMuted'];
+  groupIsVideoEnabled: CallFlow['isVideoEnabled'];
+  groupIsScreenSharing: CallFlow['isScreenSharing'];
   unreadTotal: CallFlow['unreadTotal'];
   currentUserId: CallFlow['userId'];
   sendMessage: CallFlow['sendMessage'];
@@ -134,6 +140,12 @@ const selectChatSlice = (state: CallContextValue) => ({
   groupPreviewActions: state.callFlow.groupPreviewActions,
   groupCalls: state.callFlow.groupCalls,
   groupCallActions: state.callFlow.groupCallActions,
+  groupCallPeers: state.callFlow.groupCallPeers,
+  activeGroupSpeakerId: state.callFlow.activeGroupSpeakerId,
+  groupLocalStream: state.callFlow.localStream,
+  groupIsMuted: state.callFlow.isMuted,
+  groupIsVideoEnabled: state.callFlow.isVideoEnabled,
+  groupIsScreenSharing: state.callFlow.isScreenSharing,
   unblockPeer: state.callFlow.unblockPeer,
   unreadTotal: state.callFlow.unreadTotal,
   userId: state.callFlow.userId,
@@ -229,6 +241,12 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       groupPreviewActions: callFlow.groupPreviewActions,
       groupCalls: callFlow.groupCalls,
       groupCallActions: callFlow.groupCallActions,
+      groupCallPeers: callFlow.groupCallPeers,
+      activeGroupSpeakerId: callFlow.activeGroupSpeakerId,
+      groupLocalStream: callFlow.groupLocalStream,
+      groupIsMuted: callFlow.groupIsMuted,
+      groupIsVideoEnabled: callFlow.groupIsVideoEnabled,
+      groupIsScreenSharing: callFlow.groupIsScreenSharing,
       unreadTotal: callFlow.unreadTotal,
       currentUserId: callFlow.userId,
       sendMessage: callFlow.sendMessage,
@@ -298,6 +316,12 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.groupPreviewActions,
       callFlow.groupCalls,
       callFlow.groupCallActions,
+      callFlow.groupCallPeers,
+      callFlow.activeGroupSpeakerId,
+      callFlow.groupLocalStream,
+      callFlow.groupIsMuted,
+      callFlow.groupIsVideoEnabled,
+      callFlow.groupIsScreenSharing,
       callFlow.unreadTotal,
       callFlow.userId,
       callFlow.pickAndSendAttachment,

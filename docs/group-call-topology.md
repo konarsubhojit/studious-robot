@@ -52,6 +52,12 @@ work, battery drain and thermal throttling can reduce quality or end a call,
 especially on mid-range Android phones. Lower resolution, bitrate or video
 subscriptions may help but do not remove the scaling limit.
 
+The server enforces the four-person ceiling when invitees accept, so concurrent
+accepts cannot overfill a mesh. Remaining invitees receive a clear full-call
+response and the group-call UI explains the limit. A participant grid may render
+six entries for presentation or diagnostics, but that does not raise the
+connected-mesh ceiling.
+
 Do not raise the cap based on simulator results or signalling tests. Move to an
 SFU before offering larger calls or promising reliable multi-video on mobile.
 An SFU can receive a single publication per client and select/fan out tracks,

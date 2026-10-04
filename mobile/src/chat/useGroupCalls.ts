@@ -107,5 +107,5 @@ export default function useGroupCalls({ scope, userId, conversationsRef, signali
       },
     };
   }, [scope, userId, conversationsRef, signalingRef, socketRef, receive]);
-  return { groupCalls, groupCallActions };
+  return { groupCalls, groupCallActions, receiveGroupCallSnapshot: receive };
 }
