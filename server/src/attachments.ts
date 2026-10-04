@@ -246,8 +246,9 @@ function encodeSegment(segment: string): string {
  * signature; a request that omits or changes one of them is rejected by object
  * storage rather than by this server.
  */
-function presignObjectRequest({ config, method, key, signedHeaderValues = {}, now = new Date() }: {
+function presignObjectRequest({ config, method, key, signedHeaderValues = {}, queryValues = {}, now = new Date() }: {
         config: R2Config; method: string; key: string;
+        queryValues?: Record<string, string>;
         signedHeaderValues?: Record<string, string>; now?: Date;
     }): { url: string; expiresAt: string; } {
   const endpoint = new URL(config.endpoint);
@@ -263,7 +264,7 @@ function presignObjectRequest({ config, method, key, signedHeaderValues = {}, no
   const signedHeaders = headerPairs.map(([name]) => name).join(';');
   const canonicalHeaders = headerPairs.map(([name, value]) => `${name}:${value}\n`).join('');
 
-  const query = new URLSearchParams();
+  const query = new URLSearchParams(queryValues);
   query.set('X-Amz-Algorithm', 'AWS4-HMAC-SHA256');
   query.set('X-Amz-Credential', `${config.accessKeyId}/${scope}`);
   query.set('X-Amz-Date', amzDate);
@@ -318,9 +319,9 @@ function presignObjectRequest({ config, method, key, signedHeaderValues = {}, no
  *
  * @param params
  */
-function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new Date() }: {
+function presignAttachmentUpload({ config, key, mimeType, sizeBytes, cacheControl = IMMUTABLE_CACHE_CONTROL, now = new Date() }: {
         config: ReturnType<typeof loadR2Config>; key: string; mimeType: string;
-        sizeBytes: number; now?: Date;
+        sizeBytes: number; cacheControl?: string; now?: Date;
     }): {
     uploadUrl: string; reference: string; expiresAt: string;
     headers: Record<string, string>; key: string;
@@ -332,7 +333,7 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
     method: 'PUT',
     key,
     signedHeaderValues: {
-      'cache-control': IMMUTABLE_CACHE_CONTROL,
+      'cache-control': cacheControl,
       'content-length': String(sizeBytes),
       'content-type': mimeType,
     },
@@ -346,7 +347,7 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
     expiresAt: signed.expiresAt,
     // The client must replay these verbatim, or R2 rejects the signature.
     headers: {
-      'Cache-Control': IMMUTABLE_CACHE_CONTROL,
+      'Cache-Control': cacheControl,
       'Content-Type': mimeType,
       'Content-Length': String(sizeBytes),
     },

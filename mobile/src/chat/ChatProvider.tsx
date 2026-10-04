@@ -70,6 +70,7 @@ export type ChatContextValue = {
   stopRecordingVoiceNoteAndSend: CallFlow['stopRecordingVoiceNoteAndSend'];
   cancelRecordingVoiceNote: CallFlow['cancelRecordingVoiceNote'];
   cancelAttachmentUpload: CallFlow['cancelAttachmentUpload'];
+  discardMessage: CallFlow['discardMessage'];
   isUploadingAttachment: CallFlow['isUploadingAttachment'];
   attachmentUploadProgress: CallFlow['attachmentUploadProgress'];
   isRecordingVoiceNote: CallFlow['isRecordingVoiceNote'];
@@ -101,6 +102,7 @@ const selectChatSlice = (state: CallContextValue) => ({
   clearDraft: state.callFlow.clearDraft,
   conversations: state.callFlow.conversations,
   deleteMessage: state.callFlow.deleteMessage,
+  discardMessage: state.callFlow.discardMessage,
   drafts: state.callFlow.drafts,
   fetchConversations: state.callFlow.fetchConversations,
   fetchMessagesForPeer: state.callFlow.fetchMessagesForPeer,
@@ -262,6 +264,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       stopRecordingVoiceNoteAndSend: callFlow.stopRecordingVoiceNoteAndSend,
       cancelRecordingVoiceNote: callFlow.cancelRecordingVoiceNote,
       cancelAttachmentUpload: callFlow.cancelAttachmentUpload,
+      discardMessage: callFlow.discardMessage,
       isUploadingAttachment: callFlow.isUploadingAttachment,
       attachmentUploadProgress: callFlow.attachmentUploadProgress,
       isRecordingVoiceNote: callFlow.isRecordingVoiceNote,
@@ -305,6 +308,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.stopRecordingVoiceNoteAndSend,
       callFlow.cancelRecordingVoiceNote,
       callFlow.cancelAttachmentUpload,
+      callFlow.discardMessage,
       callFlow.isUploadingAttachment,
       callFlow.attachmentUploadProgress,
       callFlow.isRecordingVoiceNote,

@@ -133,7 +133,7 @@ function TabShell() {
   // `screenRenderers` memo in `AppNavigator` that depends on them).
   const {
     cancelRecordingVoiceNote,
-    cancelAttachmentUpload,
+    discardMessage,
     clearDraft,
     deleteMessage,
     isPeerMuted,
@@ -304,7 +304,7 @@ function TabShell() {
         onStartVoiceNote={() => startRecordingVoiceNote()}
         onStopVoiceNote={() => stopRecordingVoiceNoteAndSend(peerId)}
         onCancelVoiceNote={() => cancelRecordingVoiceNote()}
-        onCancelAttachmentUpload={cancelAttachmentUpload}
+        onCancelAttachmentUpload={message => discardMessage(peerId, message.messageId)}
         isUploadingAttachment={chat.isUploadingAttachment}
         attachmentUploadProgress={chat.attachmentUploadProgress}
         isRecordingVoiceNote={chat.isRecordingVoiceNote}
@@ -321,7 +321,7 @@ function TabShell() {
       </AttachmentUriProvider>
     );
   }, [
-    cancelAttachmentUpload,
+    discardMessage,
     cancelRecordingVoiceNote,
     chat.attachmentUploadProgress,
     chat.attachmentsAvailable,

@@ -153,6 +153,12 @@ function createServer(opts: CreateServerOptions = {}) {
     maxRequests: opts.messageRateLimit ?? parseEnv('MESSAGE_RATE_LIMIT', 30),
     windowMs: opts.messageRateWindowMs ?? parseEnv('MESSAGE_RATE_WINDOW_MS', 60_000),
   });
+  // Thirty maximum-size uploads need 210 control operations, independent of sends.
+  const attachmentUploadRateLimiter = createSharedRateLimiter({
+    namespace: 'attachment-upload', security: stores.security,
+    maxRequests: parseEnv('ATTACHMENT_UPLOAD_RATE_LIMIT', 240),
+    windowMs: 60_000,
+  });
   const groupCreateRateLimiter = createRateLimiter({
     maxRequests: opts.groupCreateRateLimit ?? parseEnv('GROUP_CREATE_RATE_LIMIT', 5),
     windowMs: opts.groupRateWindowMs ?? 60 * 60 * 1000,
@@ -294,6 +300,7 @@ function createServer(opts: CreateServerOptions = {}) {
     /** Rate limiter for TURN credential minting. */
     turnCredentialsRateLimiter,
     messageSendRateLimiter,
+    attachmentUploadRateLimiter,
     /** Rate limiter for message search (`GET /messages/search`). */
     messageSearchRateLimiter,
     messageSyncRateLimiter,

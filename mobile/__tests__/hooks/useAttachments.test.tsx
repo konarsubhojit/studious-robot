@@ -6,7 +6,6 @@ import { ensureAttachmentPermission } from '../../src/permissions';
 import { startVoiceRecording, stopVoiceRecording } from '../../src/voiceRecorder';
 import {
   ATTACHMENT_CANCELLED_MESSAGE,
-  AttachmentError,
   _resetAttachmentAvailabilityCache,
   uploadAttachment,
 } from '../../src/attachmentUpload';
@@ -44,6 +43,7 @@ function setup(overrides = {}) {
     updateAttachmentUploadProgress: jest.fn(),
     finishAttachmentUpload: jest.fn(),
     failAttachmentUpload: jest.fn(),
+    discardAttachmentUpload: jest.fn(),
     updateStatus: jest.fn(),
     ...overrides,
   };
@@ -60,7 +60,7 @@ beforeEach(() => {
 });
 
 describe('useAttachments', () => {
-  test('pickAndSend(photo): inserts an optimistic bubble before uploading, then finishes it', async () => {
+  test('pickAndSend(photo): inserts a bubble then queues a local descriptor without presigning', async () => {
     (pickPhoto as jest.Mock).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
     (uploadAttachment as jest.Mock).mockResolvedValue({ url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
     const { resultRef, params } = setup();
@@ -80,16 +80,15 @@ describe('useAttachments', () => {
       durationMs: undefined,
     });
     expect(params.beginAttachmentUpload.mock.invocationCallOrder[0]).toBeLessThan(
-      (uploadAttachment as jest.Mock).mock.invocationCallOrder[0],
+      params.finishAttachmentUpload.mock.invocationCallOrder[0],
     );
-    expect(uploadAttachment).toHaveBeenCalledWith(
-      expect.objectContaining({ peerId: 'user-bob', type: MESSAGE_TYPES.IMAGE, uri: 'file:///a.jpg' }),
-    );
+    expect(uploadAttachment).not.toHaveBeenCalled();
+    expect(params.authedFetchRef.current).not.toHaveBeenCalled();
     expect(params.finishAttachmentUpload).toHaveBeenCalledWith(
       'user-bob',
       'local-1',
       MESSAGE_TYPES.IMAGE,
-      { url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 },
+      { url: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 },
     );
   });
 
@@ -106,7 +105,7 @@ describe('useAttachments', () => {
       'user-bob',
       'local-1',
       MESSAGE_TYPES.FILE,
-      { url: 'https://cdn/a.pdf' },
+      { url: 'file:///a.pdf', mimeType: 'application/pdf', sizeBytes: 100 },
     );
   });
 
@@ -136,11 +135,11 @@ describe('useAttachments', () => {
 
   test('marks attachmentsAvailable false and surfaces the message on a 503', async () => {
     (pickPhoto as jest.Mock).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
-    (uploadAttachment as jest.Mock).mockRejectedValue({
+    const finishAttachmentUpload = jest.fn().mockRejectedValue({
       status: 503,
       message: "Attachments aren't available on this server",
     });
-    const { resultRef, params } = setup();
+    const { resultRef, params } = setup({ finishAttachmentUpload });
 
     expect(resultRef.current.attachmentsAvailable).toBe(true);
 
@@ -180,20 +179,18 @@ describe('useAttachments', () => {
       'user-bob',
       'local-1',
       MESSAGE_TYPES.VOICE,
-      { url: 'https://cdn/v.m4a' },
+      { url: 'file:///v.m4a', mimeType: 'audio/aac', sizeBytes: 4096, durationMs: 2000 },
     );
   });
 });
 
 describe('useAttachments cancellation', () => {
-  test('cancelUpload aborts the in-flight upload and reports it as cancelled, not failed', async () => {
+  test('cancelUpload discards composition while its durable copy is pending', async () => {
     (pickPhoto as jest.Mock).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
 
-    (uploadAttachment as jest.Mock).mockImplementation(({ onAbortHandle }: any) => new Promise((_resolve, reject) => {
-      onAbortHandle?.(() => reject(new AttachmentError(ATTACHMENT_CANCELLED_MESSAGE)));
-    }));
-
-    const { resultRef, params } = setup();
+    let complete!: () => void;
+    const finishAttachmentUpload = jest.fn(() => new Promise<void>(resolve => { complete = resolve; }));
+    const { resultRef, params } = setup({ finishAttachmentUpload });
 
     let pending: Promise<void>;
     act(() => {
@@ -207,6 +204,7 @@ describe('useAttachments cancellation', () => {
 
     await act(async () => {
       resultRef.current.cancelUpload();
+      complete();
       await pending;
     });
 
@@ -216,6 +214,8 @@ describe('useAttachments cancellation', () => {
       ATTACHMENT_CANCELLED_MESSAGE,
     );
     expect(params.updateStatus).toHaveBeenCalledWith('Upload cancelled', 'info');
+    expect(params.discardAttachmentUpload).toHaveBeenCalledWith('user-bob', 'local-1');
+    expect(uploadAttachment).not.toHaveBeenCalled();
     expect(resultRef.current.isUploading).toBe(false);
     expect(resultRef.current.attachmentsAvailable).toBe(true);
   });
