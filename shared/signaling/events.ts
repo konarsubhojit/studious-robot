@@ -25,6 +25,7 @@ const CLIENT_EVENTS = Object.freeze({
   // WebRTC relay + in-call media flags.
   RTC_OFFER: 'rtc.offer',
   RTC_ANSWER: 'rtc.answer',
+  RTC_ICE: 'rtc.ice',
   RTC_CANDIDATE: 'rtc.candidate',
   CALL_MEDIA_STATE: 'call.media-state',
   // Text chat.
@@ -50,9 +51,12 @@ const SERVER_EVENTS = Object.freeze({
   CALL_INCOMING: 'call.incoming',
   CALL_RINGING: 'call.ringing',
   CALL_STATE_CHANGED: 'call.state_changed',
+  CALL_PARTICIPANT_JOINED: 'call.participant.joined',
+  CALL_PARTICIPANT_LEFT: 'call.participant.left',
   // WebRTC relay + in-call media flags.
   RTC_OFFER: 'rtc.offer',
   RTC_ANSWER: 'rtc.answer',
+  RTC_ICE: 'rtc.ice',
   RTC_CANDIDATE: 'rtc.candidate',
   CALL_MEDIA_STATE: 'call.media-state',
   // Text chat.
@@ -110,13 +114,18 @@ const ERROR_CODES = Object.freeze({
   ANSWERED_ELSEWHERE: 'answered_elsewhere',
 });
 
-/** Protocol version carried by every `call.*`, `rtc.*`, `message.*`, and `conversation.*` payload. */
-const SIGNALING_VERSION = 2;
+/** Current protocol version carried by `call.*`, `rtc.*`, `message.*`, and `conversation.*` payloads. */
+const SIGNALING_VERSION = 3;
+/** Previous protocol version retained for deployed clients. */
+const LEGACY_SIGNALING_VERSION = 2;
+const SUPPORTED_SIGNALING_VERSIONS = Object.freeze([LEGACY_SIGNALING_VERSION, SIGNALING_VERSION] as const);
 
 export {
   CLIENT_EVENTS,
   SERVER_EVENTS,
   TRANSPORT_EVENTS,
   ERROR_CODES,
+  LEGACY_SIGNALING_VERSION,
+  SUPPORTED_SIGNALING_VERSIONS,
   SIGNALING_VERSION,
 };

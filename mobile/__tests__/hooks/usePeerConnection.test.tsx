@@ -80,6 +80,7 @@ function setup(overrides: any = {}) {
     activeCallIdRef: { current: 'call-1' },
     activeIceTransportPolicy: 'all',
     ensureIceSessionId: jest.fn(() => Promise.resolve('session-1')),
+    getPeerId: jest.fn(() => 'peer-1'),
     isCallerRef: { current: true },
     localStreamRef: { current: null },
     recoveryCallbacks,
@@ -159,9 +160,10 @@ describe('usePeerConnection', () => {
       candidateType: 'host',
       protocol: 'udp',
     });
-    expect(signaling.emit).toHaveBeenCalledWith('rtc.candidate', {
-      version: 2,
+    expect(signaling.emit).toHaveBeenCalledWith('rtc.ice', {
+      version: 3,
       callId: 'call-1',
+      peerId: 'peer-1',
       candidate: { candidate: 'candidate-detail' },
     });
   });
@@ -184,8 +186,9 @@ describe('usePeerConnection', () => {
     expect(signaling.emit).toHaveBeenCalledWith(
       'rtc.offer',
       {
-        version: 2,
+        version: 3,
         callId: 'call-1',
+        peerId: 'peer-1',
         sdp: { type: 'offer', sdp: 'local-offer-sdp' },
       },
       expect.any(Function),

@@ -1,4 +1,4 @@
-import { userRoom } from '../lib/state.ts';
+import { emitVersionedUserEvent } from './notifications.ts';
 import type { ServerState } from './notifications.ts';
 import { SERVER_EVENTS } from '../../../shared/index.ts';
 
@@ -50,7 +50,7 @@ function emitLocally(io: any, event: ConversationFanout): void {
   const localIo = io.local ?? io;
   for (const userId of new Set(event.recipientIds)) {
     if (typeof userId !== 'string' || userId.length === 0) continue;
-    localIo.to(userRoom(userId)).emit(event.eventName, event.payload);
+    emitVersionedUserEvent(localIo, userId, event.eventName, event.payload as Record<string, unknown>);
   }
 }
 

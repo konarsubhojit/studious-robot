@@ -1,8 +1,8 @@
 import { pushSenders } from '../push.ts';
-import { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL, CONNECTED_CALL_STATUS, TERMINAL_CALL_STATES } from '../config.ts';
+import { LEGACY_SIGNALING_VERSION, SIGNALING_VERSION, CALL_TRANSITION_CHANNEL, CONNECTED_CALL_STATUS, TERMINAL_CALL_STATES } from '../config.ts';
 import { measureSinceAnswered } from '../lib/callLatency.ts';
 import { sanitizeForLog } from '../lib/normalize.ts';
-import { resolveReachableChannels, userRoom } from '../lib/state.ts';
+import { resolveReachableChannels, userProtocolRoom, userRoom } from '../lib/state.ts';
 import { describeActiveCallsForUser } from './calls.ts';
 import { pruneDeadDevice } from '../lib/persistence.ts';
 import { verboseLog } from '../lib/verbose.ts';
@@ -22,6 +22,85 @@ export type ServerState = import('../stores/contracts.ts').ServerState;
 export type CallRecord = import('../stores/contracts.ts').CallRecord;
 export type IncomingCallPushEntry = import('../stores/contracts.ts').IncomingCallPushEntry;
 export type PushChannel = { type: 'push'; deviceId: string; provider: string; pushToken: string; };
+
+function emitVersionedUserEvent(
+  io: any,
+  userId: string,
+  eventName: string,
+  payload: Record<string, unknown>,
+  legacyEventName: string = eventName
+): void {
+  const currentRoom = userProtocolRoom(userId, SIGNALING_VERSION);
+  io.to(currentRoom).emit(eventName, { ...payload, version: SIGNALING_VERSION });
+  const legacyRoom = io.to(userRoom(userId));
+  const legacyPayload = { ...payload, version: LEGACY_SIGNALING_VERSION };
+  if (typeof legacyRoom.except === 'function') {
+    legacyRoom.except(currentRoom).emit(legacyEventName, legacyPayload);
+  } else {
+    legacyRoom.emit(legacyEventName, legacyPayload);
+  }
+}
+
+function emitVersionedCallEvent(
+  io: any,
+  userId: string,
+  eventName: string,
+  payload: Record<string, unknown>,
+  legacyEventName: string = eventName
+): void {
+  emitVersionedUserEvent(io, userId, eventName, payload, legacyEventName);
+}
+
+function emitCurrentCallEvent(io: any, userId: string, eventName: string, payload: object): void {
+  io.to(userProtocolRoom(userId, SIGNALING_VERSION)).emit(eventName, {
+    ...payload,
+    version: SIGNALING_VERSION,
+  });
+}
+
+function emitVersionedRtcSignal(
+  io: any,
+  userId: string,
+  eventName: string,
+  legacyEventName: string,
+  payload: Record<string, unknown>
+): void {
+  const currentRoom = userProtocolRoom(userId, SIGNALING_VERSION);
+  io.to(currentRoom).emit(eventName, { ...payload, version: SIGNALING_VERSION });
+  const legacyRoom = io.to(userRoom(userId));
+  const { peerId: _peerId, ...legacyPayload } = payload;
+  if (typeof legacyRoom.except === 'function') {
+    legacyRoom.except(currentRoom).emit(legacyEventName, {
+      ...legacyPayload,
+      version: LEGACY_SIGNALING_VERSION,
+    });
+  } else {
+    legacyRoom.emit(legacyEventName, {
+      ...legacyPayload,
+      version: LEGACY_SIGNALING_VERSION,
+    });
+  }
+}
+
+function callWithParticipants(call: CallRecord): CallRecord & {
+  participants: { userId: string; state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined'; }[];
+} {
+  const terminal = TERMINAL_CALL_STATES.has(call.status);
+  const calleeState = call.status === 'ringing'
+    ? 'ringing'
+    : call.status === 'declined'
+      ? 'declined'
+      : terminal
+        ? 'left'
+        : 'joined';
+  return {
+    ...call,
+    participants: [
+      { userId: call.callerId, state: terminal ? 'left' : 'joined' },
+      { userId: call.calleeId, state: calleeState },
+    ],
+  };
+}
 
 /**
  * Prune the device row when a push delivery outcome proves its token is dead.
@@ -45,6 +124,10 @@ async function handleDeadTokenOutcome(state: ServerState, outcome: { deviceId: s
  * @param io Socket.IO server.
  */
 function emitToUserSockets(io: any, userId: string, eventName: string, payload: object): void {
+  if ((payload as { version?: unknown }).version === SIGNALING_VERSION) {
+    emitVersionedUserEvent(io, userId, eventName, payload as Record<string, unknown>);
+    return;
+  }
   // Emit to the user's room: locally this reaches every tracked socket, and
   // with the Redis adapter attached it also reaches the user's sockets on other
   // instances.
@@ -55,7 +138,7 @@ function createCallEnvelope(call: CallRecord): { version: number; callId: string
   return {
     version: SIGNALING_VERSION,
     callId: call.callId,
-    call,
+    call: callWithParticipants(call),
   };
 }
 
@@ -342,7 +425,7 @@ function describeCallDelivery(state: ServerState, call: CallRecord): 'ringing' |
  */
 function notifyCallRinging(io: any, state: ServerState, call: CallRecord): void {
   if (call.status !== 'ringing') return;
-  emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_RINGING, {
+  emitVersionedCallEvent(io, call.callerId, SERVER_EVENTS.CALL_RINGING, {
     ...createCallEnvelope(call),
     delivery: describeCallDelivery(state, call),
   });
@@ -364,7 +447,7 @@ function notifyIncomingCallAcknowledged(io: any, state: ServerState, callId: str
   const call = state.calls.get(callId);
   if (!call || call.status !== 'ringing') return;
   if (!userId || call.calleeId !== userId) return;
-  emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_RINGING, {
+  emitVersionedCallEvent(io, call.callerId, SERVER_EVENTS.CALL_RINGING, {
     ...createCallEnvelope(call),
     delivery: 'ringing',
   });
@@ -388,7 +471,7 @@ function notifyCallCreated(io: any, state: ServerState, call: CallRecord): void 
 
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
-    emitToUserSockets(io, call.calleeId, SERVER_EVENTS.CALL_INCOMING, envelope);
+    emitVersionedCallEvent(io, call.calleeId, SERVER_EVENTS.CALL_INCOMING, envelope);
     notifyCallRinging(io, state, call);
 
     // Push fallback: deliver the incoming call to every registered device that
@@ -536,10 +619,34 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, {
     status: call.status,
     actor,
     reason: reason ?? call.endReason ?? null,
-    call,
+    call: callWithParticipants(call),
   };
-  emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
-  emitToUserSockets(io, call.calleeId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
+  emitVersionedCallEvent(io, call.callerId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
+  emitVersionedCallEvent(io, call.calleeId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
+  if (previousStatus === 'ringing' && call.status === 'accepted') {
+    const participantEvent = {
+      callId: call.callId,
+      participantId: call.calleeId,
+      state: 'joined',
+    };
+    emitCurrentCallEvent(io, call.callerId, SERVER_EVENTS.CALL_PARTICIPANT_JOINED, participantEvent);
+    emitCurrentCallEvent(io, call.calleeId, SERVER_EVENTS.CALL_PARTICIPANT_JOINED, participantEvent);
+  } else if (TERMINAL_CALL_STATES.has(call.status)) {
+    const departed = call.status === 'declined'
+      ? [
+          { participantId: call.calleeId, state: 'declined' as const },
+          { participantId: call.callerId, state: 'left' as const },
+        ]
+      : [
+          { participantId: call.callerId, state: 'left' as const },
+          { participantId: call.calleeId, state: 'left' as const },
+        ];
+    for (const participant of departed) {
+      const eventPayload = { callId: call.callId, ...participant };
+      emitCurrentCallEvent(io, call.callerId, SERVER_EVENTS.CALL_PARTICIPANT_LEFT, eventPayload);
+      emitCurrentCallEvent(io, call.calleeId, SERVER_EVENTS.CALL_PARTICIPANT_LEFT, eventPayload);
+    }
+  }
 
   // Broadcast the transition on the cross-instance bus (best-effort) so other
   // instances / external observers can react to call lifecycle changes. Socket
@@ -574,16 +681,21 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, {
     callId: call.callId,
     actor,
     reason: statePayload.reason,
-    call,
+    call: callWithParticipants(call),
   };
-  emitToUserSockets(io, call.callerId, eventName, eventPayload);
-  emitToUserSockets(io, call.calleeId, eventName, eventPayload);
+  emitVersionedCallEvent(io, call.callerId, eventName, eventPayload);
+  emitVersionedCallEvent(io, call.calleeId, eventName, eventPayload);
 }
 
 export {
   clearIncomingCallPushState,
   emitToUserSockets,
+  emitCurrentCallEvent,
+  emitVersionedCallEvent,
+  emitVersionedUserEvent,
+  emitVersionedRtcSignal,
   createCallEnvelope,
+  callWithParticipants,
   getCallTransitionEventName,
   markIncomingCallAcknowledged,
   notifyCallCreated,

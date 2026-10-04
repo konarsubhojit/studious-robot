@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
-import { SIGNALING_VERSION } from '../../shared/index.ts';
+import { CLIENT_EVENTS, parseEventPayload, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
 import { createServer } from '../src/index.ts';
 import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
@@ -52,6 +52,58 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
     socket.emit(event, payload, resolve);
   });
 }
+
+test('v3 participant and peer-addressed RTC events round-trip through both schemas', () => {
+  const callId = 'contract-call';
+  const peerId = 'contract-peer';
+  const clientEvents = [
+    [CLIENT_EVENTS.RTC_OFFER, { version: SIGNALING_VERSION, callId, peerId, sdp: { type: 'offer' } }],
+    [CLIENT_EVENTS.RTC_ANSWER, { version: SIGNALING_VERSION, callId, peerId, sdp: { type: 'answer' } }],
+    [CLIENT_EVENTS.RTC_ICE, { version: SIGNALING_VERSION, callId, peerId, candidate: { candidate: 'ice' } }],
+  ] as const;
+  for (const [event, payload] of clientEvents) {
+    const result = parseEventPayload(event, payload);
+    assert.equal(result.success, true);
+    if (result.success) assert.deepEqual(result.data, payload);
+  }
+
+  const serverRtcEvents = [
+    [SERVER_EVENTS.RTC_OFFER, { version: SIGNALING_VERSION, callId, peerId, fromUserId: peerId, sdp: { type: 'offer' } }],
+    [SERVER_EVENTS.RTC_ANSWER, { version: SIGNALING_VERSION, callId, peerId, fromUserId: peerId, sdp: { type: 'answer' } }],
+    [SERVER_EVENTS.RTC_ICE, { version: SIGNALING_VERSION, callId, peerId, fromUserId: peerId, candidate: { candidate: 'ice' } }],
+  ] as const;
+  for (const [event, payload] of serverRtcEvents) {
+    const result = parseEventPayload(event, payload, 'server');
+    assert.equal(result.success, true);
+    if (result.success) assert.deepEqual(result.data, payload);
+  }
+
+  for (const [event, state] of [
+    [SERVER_EVENTS.CALL_PARTICIPANT_JOINED, 'joined'],
+    [SERVER_EVENTS.CALL_PARTICIPANT_LEFT, 'left'],
+  ] as const) {
+    const payload = { version: SIGNALING_VERSION, callId, participantId: peerId, state };
+    const result = parseEventPayload(event, payload, 'server');
+    assert.equal(result.success, true);
+    if (result.success) assert.deepEqual(result.data, payload);
+  }
+
+  const incoming = parseEventPayload(SERVER_EVENTS.CALL_INCOMING, {
+    version: SIGNALING_VERSION,
+    callId,
+    call: {
+      callId,
+      callerId: 'contract-caller',
+      calleeId: peerId,
+      status: 'ringing',
+      participants: [
+        { userId: 'contract-caller', state: 'joined' },
+        { userId: peerId, state: 'ringing' },
+      ],
+    },
+  }, 'server');
+  assert.equal(incoming.success, true);
+});
 
 /**
  * @param url - Base URL of the server under test.
@@ -165,6 +217,126 @@ test('call.initiate notifies the callee and caller with versioned call events', 
     assert.equal(calleeState.version, 2);
     assert.equal(calleeState.callId, ack.call.callId);
     assert.equal(calleeState.status, 'ringing');
+  } finally {
+    await teardown(caller, callee);
+  }
+});
+
+test('a v2 client keeps receiving the previous call and RTC payload shapes', async () => {
+  const { url, teardown } = await startServer();
+  const callerSession = await createSession(url, 'legacy-alice');
+  const calleeSession = await createSession(url, 'legacy-bob');
+  const [caller, callee] = await Promise.all([
+    connect(url, { sessionId: callerSession }),
+    connect(url, { sessionId: calleeSession }),
+  ]);
+
+  try {
+    const incomingPromise = waitFor(callee, 'call.incoming');
+    const initiated = await emitWithAck(caller, 'call.initiate', {
+      version: 2,
+      calleeId: 'legacy-bob',
+    });
+    assert.equal(initiated.ok, true);
+    assert.equal(initiated.version, 2);
+    const incoming = await incomingPromise;
+    assert.equal(incoming.version, 2);
+    assert.equal(incoming.call.callerId, 'legacy-alice');
+    assert.equal(incoming.call.calleeId, 'legacy-bob');
+
+    const accepted = await emitWithAck(callee, 'call.accept', {
+      version: 2,
+      callId: initiated.call.callId,
+    });
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.version, 2);
+
+    const offerPromise = waitFor(callee, 'rtc.offer');
+    const offerAck = await emitWithAck(caller, 'rtc.offer', {
+      version: 2,
+      callId: initiated.call.callId,
+      sdp: { type: 'offer', sdp: 'legacy-offer' },
+    });
+    assert.equal(offerAck.ok, true);
+    assert.equal(offerAck.version, 2);
+    const offer = await offerPromise;
+    assert.equal(offer.version, 2);
+    assert.equal(offer.fromUserId, 'legacy-alice');
+    assert.deepEqual(offer.sdp, { type: 'offer', sdp: 'legacy-offer' });
+
+    const messagePromise = waitFor(callee, 'message.received');
+    const messageAck = await emitWithAck(caller, 'message.send', {
+      version: 2,
+      recipientId: 'legacy-bob',
+      body: 'legacy message',
+    });
+    assert.equal(messageAck.ok, true);
+    assert.equal(messageAck.version, 2);
+    const message = await messagePromise;
+    assert.equal(message.version, 2);
+    assert.equal(message.message.body, 'legacy message');
+  } finally {
+    await teardown(caller, callee);
+  }
+});
+
+test('v3 RTC offers addressed outside the participant set are rejected', async () => {
+  const { url, teardown } = await startServer();
+  const callerSession = await createSession(url, 'peer-alice');
+  const calleeSession = await createSession(url, 'peer-bob');
+  const [caller, callee] = await Promise.all([
+    connect(url, { sessionId: callerSession, signalingVersion: SIGNALING_VERSION }),
+    connect(url, { sessionId: calleeSession, signalingVersion: SIGNALING_VERSION }),
+  ]);
+
+  try {
+    const incomingPromise = waitFor(callee, 'call.incoming');
+    const initiated = await emitWithAck(caller, 'call.initiate', {
+      version: SIGNALING_VERSION,
+      calleeId: 'peer-bob',
+    });
+    assert.deepEqual(initiated.call.participants, [
+      { userId: 'peer-alice', state: 'joined' },
+      { userId: 'peer-bob', state: 'ringing' },
+    ]);
+    const incoming = await incomingPromise;
+    assert.deepEqual(incoming.call.participants, [
+      { userId: 'peer-alice', state: 'joined' },
+      { userId: 'peer-bob', state: 'ringing' },
+    ]);
+    const callerJoinedPromise = waitFor(caller, 'call.participant.joined');
+    const calleeJoinedPromise = waitFor(callee, 'call.participant.joined');
+    const accepted = await emitWithAck(callee, 'call.accept', {
+      version: SIGNALING_VERSION,
+      callId: initiated.call.callId,
+    });
+    assert.equal(accepted.ok, true);
+    assert.deepEqual(accepted.call.participants, [
+      { userId: 'peer-alice', state: 'joined' },
+      { userId: 'peer-bob', state: 'joined' },
+    ]);
+    const [callerJoined, calleeJoined] = await Promise.all([callerJoinedPromise, calleeJoinedPromise]);
+    assert.equal(callerJoined.state, 'joined');
+    assert.equal(calleeJoined.participantId, 'peer-bob');
+
+    const rejected = await emitWithAck(caller, 'rtc.offer', {
+      version: SIGNALING_VERSION,
+      callId: initiated.call.callId,
+      peerId: 'peer-carol',
+      sdp: { type: 'offer', sdp: 'forbidden-target' },
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, 'forbidden');
+
+    const callerLeftPromise = waitFor(caller, 'call.participant.left');
+    const calleeLeftPromise = waitFor(callee, 'call.participant.left');
+    await emitWithAck(caller, 'call.end', {
+      version: SIGNALING_VERSION,
+      callId: initiated.call.callId,
+    });
+    const [callerLeft, calleeLeft] = await Promise.all([callerLeftPromise, calleeLeftPromise]);
+    assert.equal(callerLeft.state, 'left');
+    assert.equal(calleeLeft.state, 'left');
   } finally {
     await teardown(caller, callee);
   }
