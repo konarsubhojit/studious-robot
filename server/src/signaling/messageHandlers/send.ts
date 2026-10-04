@@ -9,7 +9,7 @@ import { ATTACHMENT_RECORD_FIELDS, CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS } f
 import { describeError } from '../../lib/errors.ts';
 import { runDetached } from '../../lib/queryTiming.ts';
 import { deliverMessage } from './delivery.ts';
-import { fanoutConversationEvent } from '../../domain/conversationFanout.ts';
+import { ConversationStoreError } from '../../conversationStore/types.ts';
 import {
   isAttachmentMessageType,
   parseClientMessageId,
@@ -22,6 +22,56 @@ type MessageSendContext = {
   io: import('socket.io').Server;
   state: import('../../stores/contracts.ts').ServerState;
 };
+
+type MessageTarget = { conversationId: string; recipientId: string; recipientIds: string[]; groupName?: string };
+
+async function resolveMessageTarget(
+  state: MessageSendContext['state'],
+  senderId: string,
+  recipientId: string,
+  conversationId: string | null
+): Promise<MessageTarget> {
+  if (conversationId && !conversationId.includes(':')) {
+    const conversation = await state.conversationStore.get(conversationId, senderId);
+    if (!conversation) throw new ConversationStoreError('not_member', 'not an active group member');
+    return { conversationId, recipientId: conversationId, groupName: conversation.name,
+      recipientIds: conversation.memberIds.filter(id => id !== senderId) };
+  }
+  if (conversationId) {
+    const participants = conversationId.split(':');
+    recipientId = participants.find(id => id !== senderId) ?? '';
+    if (participants.length !== 2 || !participants.includes(senderId) ||
+        !recipientId || deriveConversationId(senderId, recipientId) !== conversationId) {
+      throw new ConversationStoreError('forbidden', 'not a conversation participant');
+    }
+  }
+  return { conversationId: conversationId ?? deriveConversationId(senderId, recipientId),
+    recipientId, recipientIds: [recipientId] };
+}
+
+async function saveTargetMessage(
+  state: MessageSendContext['state'],
+  message: import('../../messageStore.ts').StoredMessage,
+  target: { recipientIds: string[]; groupName?: string }
+): Promise<import('../../messageStore/types.ts').SaveMessageResult> {
+  if (target.groupName !== undefined) {
+    const result = await state.conversationStore.saveMessage(message);
+    if (!result) throw new ConversationStoreError('not_member', 'not an active group member');
+    target.recipientIds = result.recipients.filter(id => id !== message.senderId);
+    return result;
+  }
+  return state.messageStore.saveMessageWithStatus
+    ? state.messageStore.saveMessageWithStatus(message)
+    : { message: await state.messageStore.saveMessage(message), inserted: true };
+}
+
+function sendError(error: unknown, explicitKey: boolean): { code: string; message: string } {
+  if (error instanceof ConversationStoreError) return { code: ERROR_CODES.FORBIDDEN, message: error.message };
+  if (error instanceof MessageKeyConflictError && explicitKey) {
+    return { code: ERROR_CODES.BAD_REQUEST, message: error.message };
+  }
+  return { code: ERROR_CODES.INTERNAL_ERROR, message: 'message could not be saved' };
+}
 
 /**
  * Compare two attachment field values, treating `null` and `undefined` as
@@ -108,11 +158,10 @@ function invalidateSenderConversationsCacheDetached(
 async function persistAcceptedMessage(
   state: import('../../stores/contracts.ts').ServerState,
   message: import('../../messageStore.ts').StoredMessage,
-  recipientWasOnline: boolean
+  recipientWasOnline: boolean,
+  target: { recipientIds: string[]; groupName?: string }
 ): Promise<{ message: import('../../messageStore.ts').StoredMessage; inserted: boolean; }> {
-  const result = state.messageStore.saveMessageWithStatus
-    ? await state.messageStore.saveMessageWithStatus(message)
-    : { message: await state.messageStore.saveMessage(message), inserted: true };
+  const result = await saveTargetMessage(state, message, target);
   const saved = result.message;
   const mismatchedField = differingAcceptedSendField(saved, message);
   if (mismatchedField) {
@@ -135,16 +184,17 @@ async function persistAcceptedMessage(
   // right after this returns) notifies the recipient's live sockets, and a
   // recipient client that reacts to that notification with an immediate
   // re-fetch must never be served a cache entry that pre-dates this message.
-  invalidateSenderConversationsCacheDetached(state, message.senderId);
+  if (target.groupName === undefined) invalidateSenderConversationsCacheDetached(state, message.senderId);
   await invalidateCache(
     state,
-    conversationsCachePrefix(message.recipientId),
+    ...(target.groupName !== undefined ? [conversationsCachePrefix(message.senderId)] : []),
+    ...target.recipientIds.map(conversationsCachePrefix),
     messagesCachePrefix(message.conversationId)
   );
   if (result.inserted) {
     state.telemetry.recordMessagePersisted();
   }
-  if (recipientWasOnline && result.inserted) {
+  if (recipientWasOnline && result.inserted && target.groupName === undefined) {
     if (typeof state.messageStore.enqueueDeliveryReceipt === 'function') {
       state.messageStore.enqueueDeliveryReceipt({
         messageId: message.messageId,
@@ -322,75 +372,6 @@ async function ensureNotBlocked(
   return { ok: true };
 }
 
-async function handleGroupMessageSend(
-  socket: import('socket.io').Socket,
-  ack: Function | undefined,
-  context: MessageSendContext,
-  senderId: string,
-  conversationId: string,
-  validated: Extract<SendValidationResult, { ok: true }>
-): Promise<void> {
-  const { io, state } = context;
-  const message = createMessageRecord({
-    conversationId,
-    senderId,
-    recipientId: conversationId,
-    body: validated.body,
-    type: validated.messageType,
-    attachment: validated.attachment,
-    replyTo: validated.replyTo,
-    messageId: validated.legacyMessageId,
-    clientMessageId: validated.clientMessageId,
-  });
-  try {
-    const saved = await state.conversationStore.saveMessage(message);
-    if (!saved) {
-      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
-      return;
-    }
-    const mismatchedField = differingAcceptedSendField(saved.message, message);
-    if (mismatchedField) {
-      acknowledgeError(
-        socket,
-        ack,
-        CLIENT_EVENTS.MESSAGE_SEND,
-        ERROR_CODES.BAD_REQUEST,
-        `messageId already belongs to a different message (${mismatchedField})`,
-        state
-      );
-      return;
-    }
-    if (saved.inserted) {
-      await fanoutConversationEvent(io, state, {
-        conversationId,
-        eventName: SERVER_EVENTS.MESSAGE_RECEIVED,
-        recipientIds: saved.recipients.filter((userId) => userId !== senderId),
-        payload: {
-          version: SIGNALING_VERSION,
-          conversationId,
-          message: saved.message,
-        },
-      });
-    }
-    acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, { message: saved.message });
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && (error.code === 'not_member' || error.code === 'forbidden')) {
-      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
-      return;
-    }
-    state.telemetry.recordMessagePersistenceFailure();
-    console.error(`[messages] failed to persist group message: ${describeError(error)}`);
-    acknowledgeError(
-      socket,
-      ack,
-      CLIENT_EVENTS.MESSAGE_SEND,
-      ERROR_CODES.INTERNAL_ERROR,
-      'message could not be saved',
-      state
-    );
-  }
-}
-
 async function handleMessageSend(
   socket: import('socket.io').Socket,
   payload: unknown,
@@ -414,13 +395,17 @@ async function handleMessageSend(
     return;
   }
 
-  const groupConversationId = normaliseId(parsed.conversationId);
-  if (groupConversationId) {
-    await handleGroupMessageSend(socket, ack, { io, state }, senderId, groupConversationId, validated);
+  let target: MessageTarget;
+  try {
+    target = await resolveMessageTarget(state, senderId, validated.recipientId, normaliseId(parsed.conversationId));
+  } catch (error) {
+    const failure = sendError(error, false);
+    acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, failure.code, failure.message, state);
     return;
   }
 
-  const blockCheck = await ensureNotBlocked(state, senderId, validated.recipientId);
+  const blockCheck = target.groupName !== undefined ? { ok: true as const }
+    : await ensureNotBlocked(state, senderId, target.recipientId);
   if (!blockCheck.ok) {
     acknowledgeError(
       socket,
@@ -434,9 +419,9 @@ async function handleMessageSend(
   }
 
   const message = createMessageRecord({
-    conversationId: deriveConversationId(senderId, validated.recipientId),
+    conversationId: target.conversationId,
     senderId,
-    recipientId: validated.recipientId,
+    recipientId: target.recipientId,
     body: validated.body,
     type: validated.messageType,
     attachment: validated.attachment,
@@ -450,19 +435,20 @@ async function handleMessageSend(
       ` conversationId=${message.conversationId} senderId=${senderId}`
   );
 
-  const recipientWasOnline = (state.userConnections.get(validated.recipientId)?.size ?? 0) > 0;
+  const recipientWasOnline = (state.userConnections.get(target.recipientId)?.size ?? 0) > 0;
   let persisted: { message: import('../../messageStore.ts').StoredMessage; inserted: boolean; };
   try {
-    persisted = await persistAcceptedMessage(state, message, recipientWasOnline);
+    persisted = await persistAcceptedMessage(state, message, recipientWasOnline, target);
   } catch (error) {
     state.telemetry.recordMessagePersistenceFailure();
     console.error(`[messages] failed to persist accepted message: ${describeError(error)}`);
+    const failure = sendError(error, Boolean(message.clientMessageId) || target.groupName !== undefined);
     acknowledgeError(
       socket,
       ack,
       CLIENT_EVENTS.MESSAGE_SEND,
-      error instanceof MessageKeyConflictError && message.clientMessageId ? ERROR_CODES.BAD_REQUEST : ERROR_CODES.INTERNAL_ERROR,
-      error instanceof MessageKeyConflictError && message.clientMessageId ? error.message : 'message could not be saved',
+      failure.code,
+      failure.message,
       state
     );
     return;
@@ -470,12 +456,13 @@ async function handleMessageSend(
 
   const savedMessage = persisted.message;
   if (persisted.inserted) {
-    deliverMessage(io, state, savedMessage);
+    await deliverMessage(io, state, savedMessage, target)
+      .catch(error => console.error(`[messages] notification failed: ${describeError(error)}`));
   }
   acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, { message: savedMessage });
 
-  const deliveredMessage = recipientWasOnline
-    ? { ...savedMessage, deliveredTo: [...new Set([...(savedMessage.deliveredTo ?? []), validated.recipientId])] }
+  const deliveredMessage = recipientWasOnline && target.groupName === undefined
+    ? { ...savedMessage, deliveredTo: [...new Set([...savedMessage.deliveredTo, target.recipientId])] }
     : savedMessage;
 
   emitToUserSockets(io, senderId, SERVER_EVENTS.MESSAGE_DELIVERED, {

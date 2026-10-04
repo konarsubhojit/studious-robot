@@ -19,7 +19,7 @@
  *   - conversations  projection of one row per 1:1 message conversation
  */
 
-import { pgTable, uuid, integer, real, text, timestamp, jsonb, index, primaryKey, uniqueIndex, bigserial, foreignKey } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, integer, real, text, timestamp, jsonb, index, primaryKey, uniqueIndex, bigserial, bigint, foreignKey } from 'drizzle-orm/pg-core';
 import { desc, sql } from 'drizzle-orm';
 
 /**
@@ -414,13 +414,31 @@ const groupMessages = pgTable(
     deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
     clientMessageId: uuid('client_message_id'),
+    deliveredTo: jsonb('delivered_to').notNull().default([]),
+    readBy: jsonb('read_by').notNull().default([]),
   },
   (t) => [
     primaryKey({ columns: [t.conversationId, t.messageId] }),
     uniqueIndex('idx_group_messages_sender_client_message').on(t.senderId, t.clientMessageId),
     index('idx_group_messages_created').on(t.conversationId, desc(t.createdAt), desc(t.messageId)),
+    index('idx_group_messages_body_fts')
+      .using('gin', sql`to_tsvector('simple', ${t.body})`)
+      .where(sql`${t.deletedAt} is null`),
   ],
 );
+
+const groupMessageChanges = pgTable('group_message_changes', {
+  changeId: bigint('change_id', { mode: 'bigint' }).primaryKey()
+    .default(sql`nextval('message_changes_change_id_seq')`),
+  conversationId: uuid('conversation_id').notNull(),
+  messageId: text('message_id').notNull(),
+  changeType: text('change_type').notNull(),
+  changedAt: timestamp('changed_at', { withTimezone: true, mode: 'string' }).notNull(),
+}, t => [
+  foreignKey({ columns: [t.conversationId, t.messageId],
+    foreignColumns: [groupMessages.conversationId, groupMessages.messageId] }).onDelete('cascade'),
+  index('idx_group_message_changes_cursor').on(t.conversationId, t.changedAt, t.changeId),
+]);
 
 const groupCalls = pgTable(
   'group_calls',
@@ -512,6 +530,7 @@ export {
   groupInvitations,
   groupMembershipEvents,
   groupMessages,
+  groupMessageChanges,
   groupCalls,
   groupCallParticipants,
   accountDeletions,

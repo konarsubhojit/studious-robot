@@ -1,4 +1,5 @@
 import type { StoredMessage } from '../messageStore/types.ts';
+import type { ListMessageChangesOptions, MessageChange, SearchMessagesOptions } from '../messageStore/types.ts';
 
 export type ConversationRole = 'owner' | 'admin' | 'member';
 
@@ -124,7 +125,10 @@ export type ConversationStore = {
     before?: string;
     beforeMessageId?: string;
   }) => Promise<StoredMessage[]>;
-  searchMessages: (args: { conversationId: string; userId: string; query: string; limit: number; before?: string; beforeMessageId?: string }) => Promise<StoredMessage[]>;
+  searchMessages: (args: SearchMessagesOptions & { userId: string; query: string }) => Promise<StoredMessage[]>;
+  listMessageChanges: (args: ListMessageChangesOptions) => Promise<MessageChange[]>;
+  markRead: (conversationId: string, userId: string) => Promise<number>;
+  markDelivered: (conversationId: string, messageId: string, userId: string) => Promise<StoredMessage | null>;
   updateName: (args: {
     conversationId: string;
     actorId: string;

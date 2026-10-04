@@ -94,13 +94,14 @@ export function buildMessageEnvelope(messageData: MessagePushData): PushEnvelope
       : preview;
   return {
     type: 'message.received',
-    title: resolveDisplayName(messageData.senderId, messageData.senderDisplayName),
+    title: messageData.groupName ?? resolveDisplayName(messageData.senderId, messageData.senderDisplayName),
     body: truncated || 'Sent you a message',
     deepLink: `wetalk://chat/${messageData.conversationId}`,
     data: {
       messageId: messageData.messageId,
       conversationId: messageData.conversationId,
       senderId: messageData.senderId,
+      ...(messageData.groupName ? { groupName: messageData.groupName } : {}),
     },
   };
 }

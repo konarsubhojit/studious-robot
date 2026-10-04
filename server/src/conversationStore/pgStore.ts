@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import {
   groupCallParticipants as callParticipantsTable,
   groupCalls as callsTable,
   groupConversationMembers as membersTable,
   groupConversations as conversationsTable,
   groupMessages as messagesTable,
+  groupMessageChanges as changesTable,
   groupInvitations as invitationsTable,
   groupMembershipEvents as eventsTable,
   blocks as blocksTable,
@@ -13,6 +14,8 @@ import {
 import type { Database } from '../../db/client.ts';
 import { applyReaction, applyTombstone } from '../messageStore/records.ts';
 import type { StoredMessage } from '../messageStore/types.ts';
+import type { MessageChange } from '../messageStore/types.ts';
+import { clampExportReadLimit } from '../messageStore/queries.ts';
 import {
   ConversationStoreError,
   type ConversationMember,
@@ -248,7 +251,8 @@ function toMessage(row: MessageRow): StoredMessage {
     reactions: (row.reactions as Record<string, string[]>) ?? {},
     deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : null,
     createdAt: new Date(row.createdAt).toISOString(),
-    deliveredTo: [],
+    deliveredTo: (row.deliveredTo as string[]) ?? [],
+    readBy: (row.readBy as string[]) ?? [],
     readAt: null,
   };
 }
@@ -374,8 +378,11 @@ function createPgConversationStore(db: Database): ConversationStore {
         from jsonb_each(${messagesTable.reactions})
         where jsonb_array_length(value - ${userId}) > 0
       ), '{}'::jsonb)`,
+      readBy: sql`${messagesTable.readBy} - ${userId}`,
+      deliveredTo: sql`${messagesTable.deliveredTo} - ${userId}`,
     }).where(and(inArray(messagesTable.conversationId, conversationIds),
-      sql`exists (select 1 from jsonb_each(${messagesTable.reactions}) where value ? ${userId})`));
+      or(sql`exists (select 1 from jsonb_each(${messagesTable.reactions}) where value ? ${userId})`,
+        sql`${messagesTable.readBy} ? ${userId}`, sql`${messagesTable.deliveredTo} ? ${userId}`)));
   }
 
   async function requireActiveMember(
@@ -575,19 +582,89 @@ function createPgConversationStore(db: Database): ConversationStore {
       });
     },
 
-    async searchMessages({ conversationId, userId, query, limit, before, beforeMessageId }) {
+    async searchMessages({ conversationId, userId, query, limit, before, beforeMessageId, createdAtAfter }) {
       return db.transaction(async tx => {
-        await lockedGroup(conversationId, tx);
-        const member = await requireActiveMember(conversationId, userId, tx);
+        if (conversationId) {
+          await lockedGroup(conversationId, tx);
+          await requireActiveMember(conversationId, userId, tx);
+        }
         const cursor = before ? beforeMessageId
           ? or(lt(messagesTable.createdAt, before), and(eq(messagesTable.createdAt, before), lt(messagesTable.messageId, beforeMessageId)))
           : lt(messagesTable.createdAt, before) : undefined;
-        const rows = await tx.select().from(messagesTable).where(and(
-          eq(messagesTable.conversationId, conversationId), gte(messagesTable.createdAt, member.joinedAt),
-          isNull(messagesTable.deletedAt), sql`strpos(lower(${messagesTable.body}), ${query.toLowerCase()}) > 0`, cursor
+        const rows = await tx.select({ message: messagesTable }).from(messagesTable)
+          .innerJoin(membersTable, and(eq(membersTable.conversationId, messagesTable.conversationId),
+            eq(membersTable.userId, userId), isNull(membersTable.leftAt), isNull(membersTable.removedAt)))
+          .innerJoin(conversationsTable, and(eq(conversationsTable.conversationId, messagesTable.conversationId),
+            isNull(conversationsTable.deletedAt)))
+          .where(and(
+          conversationId ? eq(messagesTable.conversationId, conversationId) : undefined,
+          gte(messagesTable.createdAt, membersTable.joinedAt),
+          createdAtAfter ? gte(messagesTable.createdAt, createdAtAfter) : undefined,
+          isNull(messagesTable.deletedAt),
+          sql`to_tsvector('simple', ${messagesTable.body}) @@ plainto_tsquery('simple', ${query})`, cursor
         )).orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
-          .limit(Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
-        return rows.map(toMessage);
+          .limit(clampExportReadLimit(limit));
+        return rows.map(({ message }) => toMessage(message));
+      });
+    },
+
+    async listMessageChanges({ userId, since, afterChangedAt, afterChangeId, createdAtAfter, limit }) {
+      const rows = await db.select({ change: changesTable, message: messagesTable })
+        .from(changesTable)
+        .innerJoin(messagesTable, and(eq(messagesTable.conversationId, changesTable.conversationId),
+          eq(messagesTable.messageId, changesTable.messageId)))
+        .innerJoin(membersTable, and(eq(membersTable.conversationId, messagesTable.conversationId),
+          eq(membersTable.userId, userId), isNull(membersTable.leftAt), isNull(membersTable.removedAt)))
+        .innerJoin(conversationsTable, and(eq(conversationsTable.conversationId, messagesTable.conversationId),
+          isNull(conversationsTable.deletedAt)))
+        .where(and(
+          gte(messagesTable.createdAt, membersTable.joinedAt),
+          gt(changesTable.changedAt, since),
+          createdAtAfter ? gte(messagesTable.createdAt, createdAtAfter) : undefined,
+          afterChangedAt && afterChangeId ? or(gt(changesTable.changedAt, afterChangedAt),
+            and(eq(changesTable.changedAt, afterChangedAt), gt(changesTable.changeId, BigInt(afterChangeId)))) : undefined
+        ))
+        .orderBy(asc(changesTable.changedAt), asc(changesTable.changeId))
+        .limit(clampExportReadLimit(limit));
+      return rows.map(({ change, message }) => ({ changeId: String(change.changeId),
+        type: change.changeType as MessageChange['type'],
+        changedAt: new Date(change.changedAt).toISOString(), message: toMessage(message) }));
+    },
+
+    async markRead(conversationId, userId) {
+      return db.transaction(async tx => {
+        const conversation = await lockedGroup(conversationId, tx);
+        const member = await requireActiveMember(conversationId, userId, tx);
+        const updated = await tx.update(messagesTable).set({
+          readBy: sql`${messagesTable.readBy} || ${JSON.stringify([userId])}::jsonb`,
+          deliveredTo: sql`CASE WHEN ${messagesTable.deliveredTo} @> ${JSON.stringify([userId])}::jsonb
+            THEN ${messagesTable.deliveredTo} ELSE ${messagesTable.deliveredTo} || ${JSON.stringify([userId])}::jsonb END`,
+        }).where(and(eq(messagesTable.conversationId, conversationId), ne(messagesTable.senderId, userId),
+          gte(messagesTable.createdAt, member.joinedAt), isNull(messagesTable.deletedAt),
+          sql`NOT (${messagesTable.readBy} @> ${JSON.stringify([userId])}::jsonb)`))
+          .returning({ messageId: messagesTable.messageId });
+        if (updated.length) {
+          const changedAt = activityTime(conversation);
+          await tx.insert(changesTable).values(updated.map(({ messageId }) => ({
+            conversationId, messageId, changeType: 'edited', changedAt: changedAt.toISOString(),
+          })));
+          await tx.update(conversationsTable).set({ updatedAt: changedAt })
+            .where(eq(conversationsTable.conversationId, conversationId));
+        }
+        return updated.length;
+      });
+    },
+
+    async markDelivered(conversationId, messageId, userId) {
+      return db.transaction(async tx => {
+        await lockedGroup(conversationId, tx);
+        const member = await requireActiveMember(conversationId, userId, tx);
+        const [updated] = await tx.update(messagesTable).set({
+          deliveredTo: sql`CASE WHEN ${messagesTable.deliveredTo} @> ${JSON.stringify([userId])}::jsonb
+            THEN ${messagesTable.deliveredTo} ELSE ${messagesTable.deliveredTo} || ${JSON.stringify([userId])}::jsonb END`,
+        }).where(and(eq(messagesTable.conversationId, conversationId), eq(messagesTable.messageId, messageId),
+          gte(messagesTable.createdAt, member.joinedAt))).returning();
+        return updated ? toMessage(updated) : null;
       });
     },
 
@@ -837,6 +914,8 @@ function createPgConversationStore(db: Database): ConversationStore {
           .onConflictDoNothing()
           .returning();
         if (inserted) {
+          await tx.insert(changesTable).values({ conversationId: message.conversationId,
+            messageId: message.messageId, changeType: 'new', changedAt: createdAt.toISOString() });
           await tx.update(conversationsTable).set({ updatedAt: createdAt })
             .where(eq(conversationsTable.conversationId, message.conversationId));
           return { message: toMessage(inserted), recipients: members.map(({ userId }) => userId), inserted: true };
@@ -876,7 +955,7 @@ function createPgConversationStore(db: Database): ConversationStore {
     async deleteMessage({ conversationId, messageId, userId }) {
       return db.transaction(async (tx) => {
         const [conversation] = await tx
-          .select({ conversationId: conversationsTable.conversationId })
+          .select()
           .from(conversationsTable)
           .where(and(eq(conversationsTable.conversationId, conversationId), isNull(conversationsTable.deletedAt)))
           .for('update')
@@ -891,12 +970,17 @@ function createPgConversationStore(db: Database): ConversationStore {
           .limit(1);
         if (!existing || new Date(existing.createdAt).getTime() < Date.parse(member.joinedAt) ||
             existing.deletedAt || existing.senderId !== userId) return null;
-        const tombstone = applyTombstone(toMessage(existing), new Date().toISOString());
+        const changedAt = activityTime(conversation);
+        const tombstone = applyTombstone(toMessage(existing), changedAt.toISOString());
         const [updated] = await tx
           .update(messagesTable)
           .set({ body: '', attachment: null, reactions: {}, deletedAt: tombstone.deletedAt })
           .where(and(eq(messagesTable.conversationId, conversationId), eq(messagesTable.messageId, messageId)))
           .returning();
+        await tx.insert(changesTable).values({ conversationId, messageId, changeType: 'deleted',
+          changedAt: changedAt.toISOString() });
+        await tx.update(conversationsTable).set({ updatedAt: changedAt })
+          .where(eq(conversationsTable.conversationId, conversationId));
         return { message: toMessage(updated), recipients: (await membersFor(conversationId, tx)).map(({ userId: id }) => id) };
       });
     },
@@ -904,7 +988,7 @@ function createPgConversationStore(db: Database): ConversationStore {
     async reactToMessage({ conversationId, messageId, userId, emoji, action }) {
       return db.transaction(async (tx) => {
         const [conversation] = await tx
-          .select({ conversationId: conversationsTable.conversationId })
+          .select()
           .from(conversationsTable)
           .where(and(eq(conversationsTable.conversationId, conversationId), isNull(conversationsTable.deletedAt)))
           .for('update')
@@ -924,11 +1008,19 @@ function createPgConversationStore(db: Database): ConversationStore {
           userId,
           action
         );
+        if (JSON.stringify(reactions) === JSON.stringify(existing.reactions)) {
+          return { message: toMessage(existing), recipients: (await membersFor(conversationId, tx)).map(member => member.userId) };
+        }
         const [updated] = await tx
           .update(messagesTable)
           .set({ reactions })
           .where(and(eq(messagesTable.conversationId, conversationId), eq(messagesTable.messageId, messageId)))
           .returning();
+        const changedAt = activityTime(conversation);
+        await tx.insert(changesTable).values({ conversationId, messageId, changeType: 'reactions',
+          changedAt: changedAt.toISOString() });
+        await tx.update(conversationsTable).set({ updatedAt: changedAt })
+          .where(eq(conversationsTable.conversationId, conversationId));
         return { message: toMessage(updated), recipients: (await membersFor(conversationId, tx)).map(({ userId: id }) => id) };
       });
     },
@@ -1294,6 +1386,8 @@ function createPgConversationStore(db: Database): ConversationStore {
             update.attachment = null;
             update.reactions = {};
             update.deletedAt = now;
+            await tx.insert(changesTable).values({ conversationId: row.conversationId,
+              messageId: row.messageId, changeType: 'deleted', changedAt: now });
           }
           await tx
             .update(messagesTable)
