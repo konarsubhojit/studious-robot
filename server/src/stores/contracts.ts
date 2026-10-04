@@ -38,6 +38,10 @@ export type CallRecord = {
   mediaType?: 'audio' | 'video';
   callerId: string;
   calleeId: string;
+  participants?: {
+    userId: string;
+    state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined';
+  }[];
   status: string;
   endReason?: string | null;
   durationSeconds?: number | null;
