@@ -13,6 +13,7 @@ import { createAvatarRouter } from './avatar.routes.ts';
 import { createTurnCredentialsRouter } from './turnCredentials.routes.ts';
 import { createAccountExportRouter } from './accountExport.routes.ts';
 import { createAccountDeletionRouter } from './accountDeletion.routes.ts';
+import { createGroupsRouter } from './groups.routes.ts';
 
 /**
  * Mount every HTTP router onto the Express app.
@@ -63,6 +64,7 @@ function mountRoutes(app: import('express').Express, ctx: {
   app.use(createAuditLogRouter({ state }));
   app.use(createCallsRouter({ state, io, ringingTimeoutMs }));
   app.use(createMessagesRouter({ state, io }));
+  app.use(createGroupsRouter({ state, io }));
   app.use(createAttachmentsRouter({ state }));
   app.use(createAvatarRouter({ state, db }));
   app.use(createTurnCredentialsRouter({ state, fetchImpl: turnFetch, env: turnEnv }));

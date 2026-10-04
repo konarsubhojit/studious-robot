@@ -92,8 +92,8 @@ Ack failures return `{ ok: false, version, event, error: { code, message } }` wi
 
 Text chat reuses the same versioned envelope and ack conventions as the call
 contract. Messages are persisted through `src/messageStore.ts` (Postgres when a
-database handle is configured, in-memory otherwise). Group payload shapes are
-frozen here; group handler/client support remains follow-up work.
+database handle is configured, in-memory otherwise). Group handlers use
+`src/conversationStore.ts`; admission is explicit as described below.
 
 ##### Client → Server
 
@@ -117,6 +117,110 @@ The server broadcasts `conversation.updated` with
 `conversationId`, `name`, `creatorId`, active `memberIds`, and
 `membershipVersion`. Invitees are not active members until they accept; client
 provided IDs never establish authorization. Group calls remain out of scope.
+
+##### Group admission and authorization (#536)
+
+This implements server membership/admission, not the broader mobile,
+unread/mute/push, encryption, or group-call redesign MVP.
+
+**Storage compatibility.** The existing physical `group_conversations` and
+`group_conversation_members` tables serve as semantic `groups` and
+`group_members`. Reusing them avoids destructive renames or parallel state and
+preserves UUIDs, existing message/call foreign keys, and the `conversationId`
+wire field; direct conversations are unchanged. Migration
+`0021_group_admission_intervals.sql` adds durable invitations/events and replaces
+the member composite primary key with `member_id` plus a partial unique
+active-member index. Existing legacy grants retain their admission timestamps.
+Departure closes an interval; acceptance/rejoin appends one without resetting
+old admission history. Apply migrations via `npm run db:migrate` using
+`DATABASE_URL_DIRECT` (unpooled). These are ordinary transactional indexes,
+**not** `CREATE INDEX CONCURRENTLY`; plan for DDL locks on populated tables.
+Generation and `npm run db:check` need no live database.
+
+**Admission/history decisions.** Only the creator initially joins. Invitations
+name one account and issuer, record the membership version, expire after seven
+days, and require explicit acceptance by the addressed account; possession of
+an invitation ID grants nothing. Legacy `conversation.create` and
+`conversation.member.add` return invitations, never implicit membership.
+Acceptance checks the 16-active-member cap under the same PostgreSQL group-row
+lock used for membership changes, sends, and content reads/mutations. Memory
+performs final checks/writes without intervening awaits. The shared
+`conversationStore/authorization.ts` predicate requires an active interval.
+History, literal case-insensitive search, replies, retries, reactions, and
+attachment lookup enforce the **current** interval's `joinedAt` watermark:
+joining/rejoining never backfills older content. Serialized activity advances
+by at least 1 ms to separate sends from subsequent admission even on clock ties;
+clients cannot choose persisted group-message timestamps.
+
+**REST contract.** All endpoints require the normal session bearer; the existing
+POST session-body mechanism is also supported. Names are trimmed, 1–100
+characters; removal reasons are at most 200 characters.
+
+| Method/path | Body → result | Authority |
+| --- | --- | --- |
+| `POST /groups` | `{name, inviteeIds?: string[]}` → `201 {group, invitations}` | Creator |
+| `GET /groups` | `{groups}` | Caller’s active groups |
+| `GET /groups/invitations` | `{invitations}` | Caller’s pending, unexpired invitations |
+| `GET /groups/:groupId` | `{group}` | Active member |
+| `POST /groups/:groupId/invitations` | `{userId}` → `201 {invitation}` | Owner/admin |
+| `POST /groups/:groupId/invitations/:invitationId/accept` | `{}` → `{group}` | Addressed account |
+| `DELETE /groups/:groupId/invitations/:invitationId` | `204` | Owner/admin |
+| `POST /groups/:groupId/leave` | `{}` → `{group}` | Active non-owner |
+| `DELETE /groups/:groupId/members/:userId` | `{reason?}` → `{group}` | Owner/admin; not owner or self |
+| `PATCH /groups/:groupId` | `{name}` → `{group}` | Owner/admin |
+| `PATCH /groups/:groupId/members/:userId` | `{role: "admin" \| "member"}` → `{group}` | Owner; non-owner target |
+| `POST /groups/:groupId/ownership` | `{userId}` → `{group}` | Owner; target is active admin |
+| `DELETE /groups/:groupId` | `204` | Owner, with no other active members |
+| `GET /groups/:groupId/events` | `{events}` since current join | Active member |
+| `GET /groups/:groupId/messages` | `{messages, hasMore, nextCursor}` | Active member; current watermark |
+| `GET /groups/:groupId/messages/search?q=…` | `{messages}` | Active member; current watermark |
+
+History/search accept `limit` (up to 100), `before`, and `beforeMessageId`.
+Search accepts a literal 1–200-character term and excludes tombstones; substring
+matching may scan entitled history despite bounded results. Existing
+`GET /conversations/:conversationId/messages` and socket send/delete/react/typing
+enforce the same admission policy with server-derived identity.
+Errors: `401` unauthenticated, `403` membership/role/block denial,
+`400` malformed/unavailable invitation, `409` full group, `429` throttled,
+`503` unavailable store. Deleted-group acceptance may yield `400` or `403`;
+neither grants access.
+
+**Blocks, media, and delivery.** Either-direction blocks reject invitation
+creation (including invitation-bearing group creation), but later blocks do not
+remove membership or filter shared group content. PostgreSQL rechecks durable
+blocks in the invitation transaction; memory uses the injected privacy store.
+`POST /attachments/presign` accepts `groupId` instead of `peerId`, issuing
+`chatblobs/group_<groupId>/…` keys. Group sends reject foreign/direct scopes.
+`GET /attachments/download` requires `groupId`, `messageId`, and `key` (or the
+stored `url` reference), checking active membership, watermark, and the matching
+message attachment. Guessed IDs/keys and client room subscriptions grant no
+access. Content fan-out rechecks membership/visibility on the receiving instance
+and fails closed on lookup failure, using existing private per-user rooms.
+Departure lifecycle notifications do not confer content access. Previously
+delivered bytes cannot be retracted; existing download URLs survive until their
+15-minute TTL, while departure prevents new grants.
+
+**Limits.** REST and legacy sockets share process-local creation/invitation
+budgets: `GROUP_CREATE_RATE_LIMIT` defaults to 5/hour/account;
+`GROUP_INVITE_RATE_LIMIT` to 30 addressed invitees/hour/account. Batches charge
+each invitee; creation with invitees charges both budgets, and rejected attempts
+can consume budget. Admission throttling returns `Retry-After` on REST. Restarts
+reset these limits and multiple instances multiply them; fleet-wide guarantees
+require a fail-closed shared limiter, not merely Redis configured elsewhere.
+
+**Account policy.** Export retains active `groupConversations`, adds all own
+`groupMemberships` (including closed intervals), and exports only the caller’s
+own `groupMessages`, paged independently of current membership. Export is not
+admission to other senders’ old content. Erasure closes/anonymizes intervals and
+departure actors, cancels pending invitations involving the account, anonymizes
+invitation/event identities, removes retained reactions, and revokes sessions
+and sockets. Own messages become content-free tombstones; managed attachment
+references enter the existing object-deletion workflow. Other entitled members
+retain shared history. Owner erasure transfers authority to a remaining active
+member as an erasure-only exception; ordinary departure requires explicit
+transfer to an admin. Last-member erasure collects the group and cascaded rows
+only after own message batches have captured attachment references; creator
+erasure alone never drops a populated group.
 
 ##### Server → Client
 

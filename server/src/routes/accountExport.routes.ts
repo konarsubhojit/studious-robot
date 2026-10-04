@@ -157,7 +157,7 @@ async function readGroupMessagePage(
   before?: string,
   beforeMessageId?: string
 ): Promise<StoredMessage[]> {
-  return state.conversationStore.listMessages({
+  return state.conversationStore.exportMessages({
     conversationId,
     userId,
     limit: pageSize + 1,
@@ -203,7 +203,7 @@ async function streamGroupMessages(
   res: Response,
   state: ServerState,
   userId: string,
-  groups: Awaited<ReturnType<ServerState['conversationStore']['listForUser']>>,
+  groups: { conversationId: string }[],
   pageSize: number,
   initialPage: StoredMessage[]
 ): Promise<number> {
@@ -219,7 +219,7 @@ async function streamGroupMessages(
     while (rows.length > 0) {
       const written = await writeArrayValues(
         res,
-        rows.map(exportMessage),
+        rows.filter(message => message.senderId === userId).map(exportMessage),
         firstValue
       );
       firstValue = written.firstValue;
@@ -355,10 +355,12 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
         messagePageSize
       );
       const groupConversations = await state.conversationStore.listForUser(session.userId);
-      const firstGroupMessages = groupConversations.length > 0
+      const groupMemberships = await state.conversationStore.exportMemberships(session.userId);
+      const exportGroups = [...new Set(groupMemberships.map(member => member.conversationId))].map(conversationId => ({ conversationId }));
+      const firstGroupMessages = exportGroups.length > 0
         ? await readGroupMessagePage(
             state,
-            groupConversations[0].conversationId,
+            exportGroups[0].conversationId,
             session.userId,
             messagePageSize
           )
@@ -385,12 +387,12 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
         messagePageSize,
         firstMessages
       );
-      await writeChunk(res, `],"groupConversations":${json(groupConversations)},"groupMessages":[`);
+      await writeChunk(res, `],"groupConversations":${json(groupConversations)},"groupMemberships":${json(groupMemberships)},"groupMessages":[`);
       const groupMessageCount = await streamGroupMessages(
         res,
         state,
         session.userId,
-        groupConversations,
+        exportGroups,
         messagePageSize,
         firstGroupMessages
       );

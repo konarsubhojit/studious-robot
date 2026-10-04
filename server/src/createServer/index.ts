@@ -3,7 +3,7 @@ import express from 'express';
 import { Server } from 'socket.io';
 import { SERVER_EVENTS, SIGNALING_VERSION } from '../../../shared/index.ts';
 import { createTelemetry } from '../telemetry.ts';
-import { createSharedRateLimiter, createAuditLog } from '../security.ts';
+import { createSharedRateLimiter, createRateLimiter, createAuditLog, isDirectoryVisibleAsync } from '../security.ts';
 import { createPgSharedBlocks } from '../stores/security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
@@ -153,6 +153,14 @@ function createServer(opts: CreateServerOptions = {}) {
     maxRequests: opts.messageRateLimit ?? parseEnv('MESSAGE_RATE_LIMIT', 30),
     windowMs: opts.messageRateWindowMs ?? parseEnv('MESSAGE_RATE_WINDOW_MS', 60_000),
   });
+  const groupCreateRateLimiter = createRateLimiter({
+    maxRequests: opts.groupCreateRateLimit ?? parseEnv('GROUP_CREATE_RATE_LIMIT', 5),
+    windowMs: opts.groupRateWindowMs ?? 60 * 60 * 1000,
+  });
+  const groupInviteRateLimiter = createRateLimiter({
+    maxRequests: opts.groupInviteRateLimit ?? parseEnv('GROUP_INVITE_RATE_LIMIT', 30),
+    windowMs: opts.groupRateWindowMs ?? 60 * 60 * 1000,
+  });
   // Search fans out across every conversation a user takes part in, so it is
   // the most expensive read the API serves; it gets its own budget rather than
   // sharing the (much cheaper) send allowance.
@@ -242,6 +250,7 @@ function createServer(opts: CreateServerOptions = {}) {
   const conversationStore = createConversationStore({
     conversationStore: opts.conversationStore,
     db,
+    canInvite: (actorId, userId) => isDirectoryVisibleAsync(stores, actorId, userId),
   });
 
   // Shared read cache for hot queries (conversation lists, first-page message
@@ -299,6 +308,8 @@ function createServer(opts: CreateServerOptions = {}) {
     /** Persistent store for text-chat messages (in-memory unless Postgres is configured). */
     messageStore,
     conversationStore,
+    groupCreateRateLimiter,
+    groupInviteRateLimiter,
     /** Shared read cache for conversation lists, message pages and call history. */
     cache,
     /**

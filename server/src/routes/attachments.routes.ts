@@ -4,6 +4,8 @@ import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { deriveConversationId } from '../messageStore.ts';
 import { isBlockedAsync } from '../security.ts';
+import { requireGroupMember } from '../conversationStore/authorization.ts';
+import { ConversationStoreError } from '../conversationStore/types.ts';
 import {
   attachmentKeyFromReference,
   attachmentScopeFromKey,
@@ -49,6 +51,30 @@ function createAttachmentsRouter({ state, env = process.env }: {
     console.error(`[attachments] ${problem}`);
   }
 
+  async function authorizeGroupUpload(groupId: string, userId: string, res: express.Response): Promise<boolean> {
+    try {
+      await requireGroupMember(state.conversationStore, groupId, userId);
+      return true;
+    } catch (error) {
+      res.status(error instanceof ConversationStoreError ? 403 : 503).json({ error: 'group access unavailable' });
+      return false;
+    }
+  }
+
+  async function authorizeGroupDownload(groupId: string, userId: string, messageId: string | null, key: string, res: express.Response): Promise<boolean> {
+    if (!messageId) { res.status(400).json({ error: 'messageId is required for group downloads' }); return false; }
+    try {
+      const message = await state.conversationStore.getMessage(groupId, messageId, userId);
+      if (!message || message.deletedAt || attachmentKeyFromReference(config, message.attachment?.url) !== key) {
+        res.status(403).json({ error: 'forbidden' }); return false;
+      }
+      return true;
+    } catch (error) {
+      res.status(error instanceof ConversationStoreError ? 403 : 503).json({ error: 'group access unavailable' });
+      return false;
+    }
+  }
+
   /**
    * POST /attachments/presign
    *
@@ -85,17 +111,20 @@ function createAttachmentsRouter({ state, env = process.env }: {
       return;
     }
 
+    const groupId = normaliseId(req.body?.groupId);
     const peerId = normaliseId(req.body?.peerId);
-    if (!peerId || peerId === session.userId) {
+    if (!groupId && (!peerId || peerId === session.userId)) {
       res.status(400).json({ error: 'peerId must be another user' });
       return;
     }
 
     // Mirror `message.send`: a blocked pair cannot exchange media either, so
     // refuse before minting an upload credential rather than after the upload.
-    if (
-      await isBlockedAsync(state, peerId, session.userId) ||
-      await isBlockedAsync(state, session.userId, peerId)
+    if (groupId) {
+      if (!(await authorizeGroupUpload(groupId, session.userId, res))) return;
+    } else if (
+      await isBlockedAsync(state, peerId!, session.userId) ||
+      await isBlockedAsync(state, session.userId, peerId!)
     ) {
       res.status(403).json({ error: 'blocked' });
       return;
@@ -107,12 +136,12 @@ function createAttachmentsRouter({ state, env = process.env }: {
       return;
     }
 
-    const conversationId = deriveConversationId(session.userId, peerId);
+    const conversationId = groupId ?? deriveConversationId(session.userId, peerId!);
     let presigned;
     try {
       presigned = presignAttachmentUpload({
         config,
-        key: createAttachmentKey({ conversationId, mimeType: validated.mimeType }),
+        key: createAttachmentKey({ conversationId: groupId ? `group_${groupId}` : conversationId, mimeType: validated.mimeType }),
         mimeType: validated.mimeType,
         sizeBytes: validated.sizeBytes,
       });
@@ -126,7 +155,7 @@ function createAttachmentsRouter({ state, env = process.env }: {
     state.auditLog.record({
       event: 'attachment.presigned',
       actor: session.userId,
-      target: peerId,
+      target: groupId ?? peerId,
       outcome: 'allowed',
       details: { type: validated.type, sizeBytes: validated.sizeBytes },
     });
@@ -177,18 +206,19 @@ function createAttachmentsRouter({ state, env = process.env }: {
       return;
     }
 
+    const groupId = normaliseId(req.query?.groupId);
     const peerId = normaliseId(req.query?.peerId);
-    if (!peerId || peerId === session.userId) {
+    if (!groupId && (!peerId || peerId === session.userId)) {
       res.status(400).json({ error: 'peerId must be another user' });
       return;
     }
 
     // Mirror `POST /attachments/presign` and `message.send`: a blocked pair
     // cannot exchange media, so it cannot fetch it back either.
-    if (
-      await isBlockedAsync(state, peerId, session.userId) ||
-      await isBlockedAsync(state, session.userId, peerId)
-    ) {
+    if (!groupId && (
+      await isBlockedAsync(state, peerId!, session.userId) ||
+      await isBlockedAsync(state, session.userId, peerId!)
+    )) {
       res.status(403).json({ error: 'blocked' });
       return;
     }
@@ -216,7 +246,11 @@ function createAttachmentsRouter({ state, env = process.env }: {
       return;
     }
 
-    const expectedScope = deriveConversationId(session.userId, peerId).replace(/:/g, '_');
+    if (groupId) {
+      const messageId = normaliseId(req.query?.messageId);
+      if (!(await authorizeGroupDownload(groupId, session.userId, messageId, key, res))) return;
+    }
+    const expectedScope = groupId ? `group_${groupId}` : deriveConversationId(session.userId, peerId!).replace(/:/g, '_');
     // `attachmentScopeFromKey` returns `null` for a malformed/foreign key,
     // which can never equal `expectedScope` (always a non-empty string) —
     // so a bad key is rejected by the same comparison as a mismatched scope.

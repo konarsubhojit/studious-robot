@@ -1,6 +1,8 @@
 import { userRoom } from '../lib/state.ts';
 import type { ServerState } from './notifications.ts';
 import { SERVER_EVENTS } from '../../../shared/index.ts';
+import { requireGroupMember } from '../conversationStore/authorization.ts';
+import { ConversationStoreError } from '../conversationStore/types.ts';
 
 const CONVERSATION_FANOUT_CHANNEL = 'signaling:conversation.fanout';
 const ALLOWED_FANOUT_EVENTS = new Set<string>([
@@ -45,11 +47,26 @@ function isNewCallVersion(io: object, event: ConversationFanout): boolean {
   return true;
 }
 
-function emitLocally(io: any, event: ConversationFanout): void {
+async function mayDeliver(state: ServerState, event: ConversationFanout, userId: string): Promise<boolean> {
+  if (event.eventName === SERVER_EVENTS.CONVERSATION_UPDATED || event.eventName === SERVER_EVENTS.CONVERSATION_CALL_UPDATED) return true;
+  try {
+    const member = await requireGroupMember(state.conversationStore, event.conversationId, userId);
+    const message = (event.payload as { message?: { createdAt?: string } }).message;
+    if (message?.createdAt && Date.parse(message.createdAt) < Date.parse(member.joinedAt)) return false;
+    const messageId = (event.payload as { messageId?: string }).messageId;
+    if (messageId && !(await state.conversationStore.getMessage(event.conversationId, messageId, userId))) return false;
+    return true;
+  } catch (error) {
+    if (!(error instanceof ConversationStoreError)) console.error('[conversations] fan-out authorization unavailable');
+    return false;
+  }
+}
+
+async function emitLocally(io: any, state: ServerState, event: ConversationFanout): Promise<void> {
   if (!isNewCallVersion(io, event)) return;
   const localIo = io.local ?? io;
   for (const userId of new Set(event.recipientIds)) {
-    if (typeof userId !== 'string' || userId.length === 0) continue;
+    if (typeof userId !== 'string' || userId.length === 0 || !(await mayDeliver(state, event, userId))) continue;
     localIo.to(userRoom(userId)).emit(event.eventName, event.payload);
   }
 }
@@ -78,14 +95,14 @@ async function fanoutConversationEvent(
   event: ConversationFanout
 ): Promise<void> {
   if (!state.messageBus) {
-    emitLocally(io, event);
+    await emitLocally(io, state, event);
     return;
   }
   try {
     await state.messageBus.publish(CONVERSATION_FANOUT_CHANNEL, event);
   } catch (error) {
     console.error(`[conversations] fan-out publish failed: ${error instanceof Error ? error.message : String(error)}`);
-    emitLocally(io, event);
+    await emitLocally(io, state, event);
   }
 }
 
@@ -96,7 +113,7 @@ async function subscribeToConversationFanout(
   if (!state.messageBus) return null;
   return state.messageBus.subscribe(CONVERSATION_FANOUT_CHANNEL, (message) => {
     const event = parseFanout(message);
-    if (event) emitLocally(io, event);
+    if (event) void emitLocally(io, state, event).catch(() => console.error('[conversations] local fan-out failed'));
   });
 }
 

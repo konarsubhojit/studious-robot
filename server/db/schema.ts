@@ -350,6 +350,7 @@ const groupConversations = pgTable(
 const groupConversationMembers = pgTable(
   'group_conversation_members',
   {
+    memberId: uuid('member_id').primaryKey().defaultRandom(),
     conversationId: uuid('conversation_id')
       .notNull()
       .references(() => groupConversations.conversationId, { onDelete: 'cascade' }),
@@ -357,15 +358,45 @@ const groupConversationMembers = pgTable(
     role: text('role').notNull(),
     joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
     leftAt: timestamp('left_at', { withTimezone: true }),
+    removedAt: timestamp('removed_at', { withTimezone: true }),
+    departureActorId: text('departure_actor_id'),
+    departureReason: text('departure_reason'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
-    primaryKey({ columns: [t.conversationId, t.userId] }),
+    uniqueIndex('idx_group_members_active_unique').on(t.conversationId, t.userId).where(sql`${t.leftAt} is null`),
     index('idx_group_members_user').on(t.userId, t.conversationId),
     index('idx_group_members_active').on(t.conversationId, t.leftAt),
   ],
 );
+
+const groupInvitations = pgTable('group_invitations', {
+  invitationId: uuid('invitation_id').primaryKey().defaultRandom(),
+  conversationId: uuid('conversation_id').notNull().references(() => groupConversations.conversationId, { onDelete: 'cascade' }),
+  inviteeId: text('invitee_id').notNull(),
+  issuerId: text('issuer_id').notNull(),
+  membershipVersion: integer('membership_version').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+}, t => [
+  index('idx_group_invitations_invitee').on(t.inviteeId, t.expiresAt),
+  uniqueIndex('idx_group_invitations_pending').on(t.conversationId, t.inviteeId)
+    .where(sql`${t.acceptedAt} is null and ${t.cancelledAt} is null`),
+]);
+
+const groupMembershipEvents = pgTable('group_membership_events', {
+  eventId: uuid('event_id').primaryKey().defaultRandom(),
+  conversationId: uuid('conversation_id').notNull().references(() => groupConversations.conversationId, { onDelete: 'cascade' }),
+  membershipVersion: integer('membership_version').notNull(),
+  event: text('event').notNull(),
+  actorId: text('actor_id').notNull(),
+  userId: text('user_id'),
+  reason: text('reason'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('idx_group_membership_events_order').on(t.conversationId, t.membershipVersion, t.createdAt, t.eventId)]);
 
 const groupMessages = pgTable(
   'group_messages',
@@ -473,6 +504,8 @@ export {
   conversations,
   groupConversations,
   groupConversationMembers,
+  groupInvitations,
+  groupMembershipEvents,
   groupMessages,
   groupCalls,
   groupCallParticipants,
