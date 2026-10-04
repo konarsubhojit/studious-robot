@@ -466,6 +466,11 @@ const groupCallParticipants = pgTable(
   ],
 );
 
+// Independent of groups and accounts: erasure must not cascade pending keys.
+const groupAttachmentCleanup = pgTable('group_attachment_cleanup', {
+  url: text('url').primaryKey(),
+});
+
 /**
  * Queued account erasures (right to erasure).
  *
@@ -510,5 +515,6 @@ export {
   groupCalls,
   groupCallParticipants,
   accountDeletions,
+  groupAttachmentCleanup,
   messageChanges,
 };

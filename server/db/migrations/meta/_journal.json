@@ -155,6 +155,13 @@
       "when": 1791076191035,
       "tag": "0021_group_admission_intervals",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791078242308,
+      "tag": "0022_group_attachment_cleanup",
+      "breakpoints": true
     }
   ]
 }

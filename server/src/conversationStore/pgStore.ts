@@ -8,6 +8,7 @@ import {
   groupInvitations as invitationsTable,
   groupMembershipEvents as eventsTable,
   blocks as blocksTable,
+  groupAttachmentCleanup as attachmentCleanupTable,
 } from '../../db/schema.ts';
 import type { Database } from '../../db/client.ts';
 import { applyReaction, applyTombstone } from '../messageStore/records.ts';
@@ -39,6 +40,10 @@ const PARTICIPANT_TRANSITIONS: Record<
   decline: { ringing: 'declined' },
   leave: { ringing: 'left', accepted: 'left' },
 };
+
+// ECMAScript WhiteSpace + LineTerminator, including historical stored URLs.
+const JS_TRIM_WHITESPACE = '\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
+const normalizedAttachmentUrl = sql<string>`btrim(${messagesTable.attachment}->>'url', ${JS_TRIM_WHITESPACE})`;
 
 type LifecycleMethods = Pick<ConversationStore, 'listInvitations' | 'acceptInvitation' | 'cancelInvitation' |
   'listMembershipEvents' | 'exportMemberships' | 'exportMessages' | 'setRole' | 'transferOwnership' | 'deleteGroup'>;
@@ -330,14 +335,21 @@ function createPgConversationStore(db: Database): ConversationStore {
     return toSnapshot(row, await membersFor(row.conversationId, tx));
   }
 
-  async function collectEmptyGroups(tx: Tx, conversationIds: Iterable<string>, userId: string): Promise<void> {
+  async function collectEmptyGroups(tx: Tx, conversationIds: Iterable<string>): Promise<void> {
     for (const conversationId of [...conversationIds].sort()) {
       await tx.select().from(conversationsTable).where(eq(conversationsTable.conversationId, conversationId)).for('update');
       if ((await membersFor(conversationId, tx)).length) continue;
-      const [remaining] = await tx.select().from(messagesTable).where(and(
-        eq(messagesTable.conversationId, conversationId), eq(messagesTable.senderId, userId)
-      )).limit(1);
-      if (!remaining) await tx.delete(conversationsTable).where(eq(conversationsTable.conversationId, conversationId));
+      // Capture former members' and concurrently erasing members' references
+      // without loading an unbounded history into the worker.
+      await tx.execute(sql`
+        insert into ${attachmentCleanupTable} (url)
+        select distinct ${normalizedAttachmentUrl} from ${messagesTable}
+        where ${messagesTable.conversationId} = ${conversationId}
+          and ${messagesTable.deletedAt} is null
+          and jsonb_typeof(${messagesTable.attachment}->'url') = 'string'
+        on conflict do nothing
+      `);
+      await tx.delete(conversationsTable).where(eq(conversationsTable.conversationId, conversationId));
     }
   }
 
@@ -795,7 +807,7 @@ function createPgConversationStore(db: Database): ConversationStore {
           .limit(1);
         if (!conversation) return null;
         const member = await requireActiveMember(message.conversationId, message.senderId, tx);
-        if (message.attachment && attachmentScopeFromKey(message.attachment.url) !== `group_${message.conversationId}`) {
+        if (message.attachment && attachmentScopeFromKey(message.attachment.url.trim()) !== `group_${message.conversationId}`) {
           throw new ConversationStoreError('forbidden', 'attachment must belong to this group');
         }
         if (message.replyTo) {
@@ -1240,7 +1252,7 @@ function createPgConversationStore(db: Database): ConversationStore {
           .update(conversationsTable)
           .set({ creatorId: pseudonym })
           .where(eq(conversationsTable.creatorId, userId));
-        await collectEmptyGroups(tx, conversationIds, userId);
+        await collectEmptyGroups(tx, conversationIds);
 
         return { conversationIds: [...conversationIds] };
       });
@@ -1268,7 +1280,7 @@ function createPgConversationStore(db: Database): ConversationStore {
           or(...page.map(row => and(eq(messagesTable.conversationId, row.conversationId), eq(messagesTable.messageId, row.messageId))))
         )).for('update') : [];
         const now = new Date().toISOString();
-        const attachmentUrls: string[] = [];
+        const attachmentCandidates = new Set<string>();
         const conversationIds = new Set<string>();
         let messagesTombstoned = 0;
         for (const row of rows) {
@@ -1277,7 +1289,7 @@ function createPgConversationStore(db: Database): ConversationStore {
           if (!row.deletedAt) {
             messagesTombstoned += 1;
             const url = (row.attachment as { url?: unknown } | null)?.url;
-            if (typeof url === 'string') attachmentUrls.push(url);
+            if (typeof url === 'string') attachmentCandidates.add(url.trim());
             update.body = '';
             update.attachment = null;
             update.reactions = {};
@@ -1291,7 +1303,19 @@ function createPgConversationStore(db: Database): ConversationStore {
               eq(messagesTable.messageId, row.messageId)
             ));
         }
-        await collectEmptyGroups(tx, conversationIds, userId);
+        // The group locks also serialize saves and other erasure batches.
+        // A group-scoped key can be copied, so only its last live reference
+        // may schedule object deletion, regardless of the message's sender.
+        const attachmentUrl = normalizedAttachmentUrl;
+        const survivors = attachmentCandidates.size ? await tx.selectDistinct({ url: attachmentUrl }).from(messagesTable).where(and(
+          inArray(messagesTable.conversationId, [...conversationIds]),
+          isNull(messagesTable.deletedAt), inArray(attachmentUrl, [...attachmentCandidates])
+        )) : [];
+        const survivingUrls = new Set(survivors.map(({ url }) => url));
+        const attachmentUrls = [...attachmentCandidates].filter(url => !survivingUrls.has(url));
+        if (attachmentUrls.length) await tx.insert(attachmentCleanupTable)
+          .values(attachmentUrls.map(url => ({ url }))).onConflictDoNothing();
+        await collectEmptyGroups(tx, conversationIds);
         return {
           attachmentUrls,
           conversationIds: [...conversationIds],
@@ -1299,6 +1323,15 @@ function createPgConversationStore(db: Database): ConversationStore {
           messagesProcessed: rows.length,
         };
       });
+    },
+    async listAttachmentCleanup(limit, after) {
+      const rows = await db.select().from(attachmentCleanupTable)
+        .where(after === undefined ? undefined : sql`${attachmentCleanupTable.url} > ${after}`)
+        .orderBy(asc(attachmentCleanupTable.url)).limit(Math.min(Math.max(Math.floor(limit) || 1, 1), 500));
+      return rows.map(({ url }) => url);
+    },
+    async acknowledgeAttachmentCleanup(url) {
+      await db.delete(attachmentCleanupTable).where(eq(attachmentCleanupTable.url, url));
     },
   };
 }

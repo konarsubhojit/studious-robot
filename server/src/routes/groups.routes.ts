@@ -61,6 +61,20 @@ function createGroupsRouter({ state, io }: { state: ServerState; io: import('soc
       recipientIds: [...new Set([...result.conversation.memberIds, ...(result.changedMember ? [result.changedMember.userId] : [])])],
       payload: { version: SIGNALING_VERSION, conversation: result.conversation, updatedBy: actorId },
     });
+    for (const { call, participants } of result.callChanges ?? []) {
+      await fanoutConversationEvent(io, state, {
+        conversationId: result.conversation.conversationId,
+        eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
+        recipientIds: participants.map(({ userId }) => userId),
+        payload: {
+          version: SIGNALING_VERSION,
+          conversationId: result.conversation.conversationId,
+          callId: call.callId,
+          call,
+          participants,
+        },
+      });
+    }
     return result;
   }
 

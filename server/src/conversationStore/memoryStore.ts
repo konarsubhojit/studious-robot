@@ -34,6 +34,7 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
   const callParticipants = new Map<string, GroupCallParticipant>();
   const invitations = new Map<string, GroupInvitation>();
   const events: GroupMembershipEvent[] = [];
+  const attachmentCleanup = new Set<string>();
 
   function activityTime(conversation: GroupConversation): string {
     return new Date(Math.max(Date.now(), Date.parse(conversation.updatedAt) + 1)).toISOString();
@@ -171,16 +172,23 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
     }
   }
 
-  function collectEmptyGroup(conversationId: string, erasingUserId: string): void {
+  function captureGroupAttachments(conversationId: string): void {
+    for (const row of [...messages.values()].filter(row => row.conversationId === conversationId && !row.deletedAt)) {
+      const url = row.attachment?.url;
+      if (typeof url === 'string') attachmentCleanup.add(url.trim());
+    }
+  }
+
+  function collectEmptyGroup(conversationId: string): void {
     if (listMembers(conversationId).length) return;
+    captureGroupAttachments(conversationId);
     conversations.delete(conversationId);
     for (const [id, member] of members) if (member.conversationId === conversationId) members.delete(id);
     for (const [id, invitation] of invitations) if (invitation.conversationId === conversationId) invitations.delete(id);
     for (let i = events.length - 1; i >= 0; i--) if (events[i].conversationId === conversationId) events.splice(i, 1);
     for (const [id, row] of messages) {
-      if (row.conversationId === conversationId && row.senderId !== erasingUserId) messages.delete(id);
+      if (row.conversationId === conversationId) messages.delete(id);
     }
-    // Own message batches remain until attachment cleanup has processed them.
     collectGroupCalls(conversationId);
   }
 
@@ -195,7 +203,7 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
     const conversationIds = new Set(affected.map(member => member.conversationId));
     for (const member of affected) eraseMembership(member, pseudonym, now);
     anonymizeInvitationsAndEvents(userId, pseudonym, now);
-    for (const conversationId of conversationIds) collectEmptyGroup(conversationId, userId);
+    for (const conversationId of conversationIds) collectEmptyGroup(conversationId);
     return [...conversationIds];
   }
 
@@ -533,7 +541,7 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
 
     async saveMessage(message) {
       const member = requireActiveMember(message.conversationId, message.senderId);
-      if (message.attachment && attachmentScopeFromKey(message.attachment.url) !== `group_${message.conversationId}`) {
+      if (message.attachment && attachmentScopeFromKey(message.attachment.url.trim()) !== `group_${message.conversationId}`) {
         throw new ConversationStoreError('forbidden', 'attachment must belong to this group');
       }
       if (message.replyTo) {
@@ -720,7 +728,7 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
     async eraseUserMessages(userId, pseudonym, limit) {
       const now = new Date().toISOString();
       const batch = Math.min(Math.max(Math.floor(limit) || 1, 1), 500);
-      const attachmentUrls: string[] = [];
+      const attachmentCandidates = new Set<string>();
       const conversationIds = new Set<string>();
       let messagesTombstoned = 0;
       const page = [...messages.values()]
@@ -731,18 +739,31 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
         if (!message.deletedAt) {
           messagesTombstoned += 1;
           const url = (message.attachment as { url?: unknown } | null)?.url;
-          if (typeof url === 'string') attachmentUrls.push(url);
+          if (typeof url === 'string') attachmentCandidates.add(url.trim());
           applyTombstone(message, now);
         }
         message.senderId = pseudonym;
-        if (!conversations.has(message.conversationId)) messages.delete(messageKey(message.conversationId, message.messageId));
       }
+      // Group scope does not establish ownership: other senders can copy a key.
+      const survivingUrls = new Set([...messages.values()]
+        .filter(row => !row.deletedAt && row.attachment)
+        .map(row => row.attachment!.url.trim()));
+      const attachmentUrls = [...attachmentCandidates].filter(url => !survivingUrls.has(url));
+      attachmentUrls.forEach(url => attachmentCleanup.add(url));
+      for (const conversationId of conversationIds) collectEmptyGroup(conversationId);
       return {
         attachmentUrls,
         conversationIds: [...conversationIds],
         messagesTombstoned,
         messagesProcessed: page.length,
       };
+    },
+    async listAttachmentCleanup(limit, after) {
+      return [...attachmentCleanup].sort().filter(url => after === undefined || url > after)
+        .slice(0, Math.min(Math.max(Math.floor(limit) || 1, 1), 500));
+    },
+    async acknowledgeAttachmentCleanup(url) {
+      attachmentCleanup.delete(url);
     },
   };
 }

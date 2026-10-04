@@ -12,6 +12,7 @@ import type { ConversationStore, GroupInvitation } from '../src/conversationStor
 import type { CreateServerOptions } from '../src/createServer.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { createMemoryStores } from '../src/stores/index.ts';
 
 type Context = import('node:test').TestContext;
 
@@ -321,6 +322,253 @@ async function watermarkAndCapacity(t: Context, store: ConversationStore) {
   });
 }
 
+async function attachmentErasure(t: Context, store: ConversationStore) {
+  async function queued(id: string) {
+    return (await store.listAttachmentCleanup(500)).filter(key => key.startsWith(`chatblobs/group_${id}/`));
+  }
+  function media(conversationId: string, senderId: string, messageId: string, key: string) {
+    return { ...message(conversationId, senderId, messageId), type: 'image',
+      attachment: { url: key, mimeType: 'image/jpeg', sizeBytes: 100 } };
+  }
+
+  await t.test('erasing a copied attachment reference preserves the surviving sender reference', async () => {
+    const group = await store.create({ name: 'Copied media', creatorId: 'media-owner', inviteeIds: ['media-copier'] });
+    const id = group.conversation.conversationId;
+    await store.acceptInvitation({ conversationId: id, invitationId: group.invitations![0].invitationId, userId: 'media-copier' });
+    const key = `chatblobs/group_${id}/shared.jpg`;
+    const ownKey = `chatblobs/group_${id}/copier.jpg`;
+    await store.saveMessage(media(id, 'media-owner', 'original', key));
+    await store.saveMessage(media(id, 'media-copier', 'copy', key));
+    await store.saveMessage(media(id, 'media-copier', 'unshared', ownKey));
+    await store.eraseUserData('media-copier', 'deleted-media-copier');
+    const erased = await store.eraseUserMessages('media-copier', 'deleted-media-copier', 500);
+    assert.deepEqual(erased.attachmentUrls, [ownKey]);
+    assert.equal(erased.messagesTombstoned, 2);
+    assert.equal((await store.getMessage(id, 'original', 'media-owner'))?.attachment?.url, key);
+    assert.equal((await store.getMessage(id, 'copy', 'media-owner'))?.attachment, null);
+    await store.eraseUserData('media-owner', 'deleted-media-owner');
+    assert.equal((await store.eraseUserMessages('media-owner', 'deleted-media-owner', 500)).messagesProcessed, 0);
+    assert.deepEqual(await queued(id), [ownKey, key].sort());
+    assert.deepEqual(await store.exportMessages({ userId: 'deleted-media-owner', conversationId: id, limit: 100 }), []);
+  });
+
+  await t.test('last member without messages cannot cascade another erasure pending batches', async () => {
+    const group = await store.create({ name: 'Interleaved erasure', creatorId: 'pending-owner', inviteeIds: ['empty-member'] });
+    const id = group.conversation.conversationId;
+    await store.acceptInvitation({ conversationId: id, invitationId: group.invitations![0].invitationId, userId: 'empty-member' });
+    const keys = [1, 2].map(n => `chatblobs/group_${id}/pending-${n}.jpg`);
+    for (const [index, key] of keys.entries()) await store.saveMessage(media(id, 'pending-owner', `pending-${index}`, key));
+    // Pause A between membership erasure and batching while B finishes erasure.
+    await store.eraseUserData('pending-owner', 'deleted-pending-owner');
+    await store.eraseUserData('empty-member', 'deleted-empty-member');
+    assert.equal((await store.eraseUserMessages('empty-member', 'deleted-empty-member', 500)).messagesProcessed, 0);
+    assert.deepEqual(await store.exportMessages({ userId: 'pending-owner', conversationId: id, limit: 100 }), []);
+    assert.deepEqual(await queued(id), keys);
+    assert.equal((await store.eraseUserMessages('pending-owner', 'deleted-pending-owner', 1)).messagesProcessed, 0);
+    assert.deepEqual(await store.exportMessages({ userId: 'deleted-pending-owner', conversationId: id, limit: 100 }), []);
+    assert.deepEqual(await store.exportMemberships('deleted-empty-member'), []);
+  });
+
+  await t.test('shared keys across erasure pages are collected only after the last live reference', async () => {
+    const group = await store.create({ name: 'Paged media', creatorId: 'paged-owner', inviteeIds: ['paged-survivor'] });
+    const id = group.conversation.conversationId;
+    await store.acceptInvitation({ conversationId: id, invitationId: group.invitations![0].invitationId, userId: 'paged-survivor' });
+    const key = `chatblobs/group_${id}/paged.jpg`;
+    await store.saveMessage(media(id, 'paged-owner', 'page-1', key));
+    await store.saveMessage(media(id, 'paged-owner', 'page-2', key));
+    await store.eraseUserData('paged-owner', 'deleted-paged-owner');
+    assert.deepEqual((await store.eraseUserMessages('paged-owner', 'deleted-paged-owner', 1)).attachmentUrls, []);
+    assert.deepEqual(await queued(id), []);
+    assert.deepEqual((await store.eraseUserMessages('paged-owner', 'deleted-paged-owner', 1)).attachmentUrls, [key]);
+    assert.deepEqual(await queued(id), [key]);
+  });
+
+  await t.test('last-member collection racing another erasure batch durably captures every reference', async () => {
+    const group = await store.create({ name: 'Collection race', creatorId: 'race-last', inviteeIds: ['race-former'] });
+    const id = group.conversation.conversationId;
+    await store.acceptInvitation({ conversationId: id, invitationId: group.invitations![0].invitationId, userId: 'race-former' });
+    const keys = [1, 2].map(n => `chatblobs/group_${id}/race-${n}.jpg`);
+    for (const [n, key] of keys.entries()) await store.saveMessage(media(id, 'race-former', `race-${n}`, key));
+    await store.eraseUserData('race-former', 'deleted-race-former');
+    await Promise.all([
+      store.eraseUserMessages('race-former', 'deleted-race-former', 1),
+      store.eraseUserData('race-last', 'deleted-race-last'),
+    ]);
+    assert.deepEqual(await queued(id), keys);
+    assert.deepEqual(await store.exportMessages({ userId: 'race-former', conversationId: id, limit: 100 }), []);
+    assert.deepEqual(await store.exportMessages({ userId: 'deleted-race-former', conversationId: id, limit: 100 }), []);
+    assert.deepEqual(await store.exportMemberships('deleted-race-last'), []);
+  });
+
+  await t.test('concurrent erasure of shared references captures cleanup exactly once', async () => {
+    const group = await store.create({ name: 'Concurrent media', creatorId: 'concurrent-owner', inviteeIds: ['concurrent-member', 'concurrent-survivor'] });
+    const id = group.conversation.conversationId;
+    for (const invitation of group.invitations!) await store.acceptInvitation({
+      conversationId: id, invitationId: invitation.invitationId, userId: invitation.inviteeId,
+    });
+    const key = `chatblobs/group_${id}/concurrent.jpg`;
+    const users = ['concurrent-owner', 'concurrent-member'];
+    for (const userId of users) await store.saveMessage(media(id, userId, userId, key));
+    await Promise.all(users.map(userId => store.eraseUserData(userId, `deleted-${userId}`)));
+    const pages = await Promise.all(users.map(userId => store.eraseUserMessages(userId, `deleted-${userId}`, 1)));
+    assert.equal(pages.reduce((sum, page) => sum + page.messagesProcessed, 0), 2);
+    assert.deepEqual(pages.flatMap(page => page.attachmentUrls), [key]);
+    assert.deepEqual(await queued(id), [key]);
+    await store.eraseUserData('concurrent-survivor', 'deleted-concurrent-survivor');
+    assert.deepEqual(await store.exportMemberships('deleted-concurrent-owner'), []);
+  });
+
+  await t.test('last member erasure collects a former member who sent media and left normally', async () => {
+    const group = await store.create({ name: 'Former media', creatorId: 'last-member', inviteeIds: ['former-member'] });
+    const id = group.conversation.conversationId;
+    await store.acceptInvitation({ conversationId: id, invitationId: group.invitations![0].invitationId, userId: 'former-member' });
+    const key = `chatblobs/group_${id}/former.jpg`;
+    await store.saveMessage(media(id, 'former-member', 'former', key));
+    await store.leave({ conversationId: id, userId: 'former-member' });
+    assert.equal((await store.getMessage(id, 'former', 'last-member'))?.attachment?.url, key);
+    await store.eraseUserData('last-member', 'deleted-last-member');
+    assert.equal((await store.eraseUserMessages('last-member', 'deleted-last-member', 1)).messagesProcessed, 0);
+    assert.deepEqual(await store.exportMessages({ userId: 'former-member', conversationId: id, limit: 100 }), []);
+    assert.deepEqual(await store.exportMemberships('former-member'), []);
+    assert.deepEqual(await store.exportMemberships('deleted-last-member'), []);
+    assert.deepEqual(await queued(id), [key]);
+    // A's later erasure cannot lose or duplicate the independently held key.
+    await store.eraseUserData('former-member', 'deleted-former-member');
+    assert.equal((await store.eraseUserMessages('former-member', 'deleted-former-member', 1)).messagesProcessed, 0);
+    assert.deepEqual(await queued(id), [key]);
+  });
+
+  await t.test('historical whitespace-padded surviving references use JavaScript trim semantics', async () => {
+    const group = await store.create({ name: 'Trim media', creatorId: 'trim-owner', inviteeIds: ['trim-copy'] });
+    const id = group.conversation.conversationId;
+    await store.acceptInvitation({ conversationId: id, invitationId: group.invitations![0].invitationId, userId: 'trim-copy' });
+    const whitespace = ['\t\n', '\r\v\f', '\u00a0\u1680', '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a',
+      '\u2028\u2029\u202f\u205f\u3000\ufeff'];
+    const keys = whitespace.map((_, n) => `chatblobs/group_${id}/trim-${n}.jpg`);
+    for (const [n, padding] of whitespace.entries()) {
+      await store.saveMessage(media(id, 'trim-owner', `survivor-${n}`, `${padding}${keys[n]}${padding}`));
+      await store.saveMessage(media(id, 'trim-copy', `candidate-${n}`, ` ${keys[n]}\t`));
+    }
+    await store.eraseUserData('trim-copy', 'deleted-trim-copy');
+    assert.deepEqual((await store.eraseUserMessages('trim-copy', 'deleted-trim-copy', 500)).attachmentUrls, []);
+    assert.deepEqual(await queued(id), []);
+    for (const [n, padding] of whitespace.entries()) {
+      assert.equal((await store.getMessage(id, `survivor-${n}`, 'trim-owner'))?.attachment?.url, `${padding}${keys[n]}${padding}`);
+    }
+    await store.eraseUserData('trim-owner', 'deleted-trim-owner');
+    assert.deepEqual(await queued(id), keys);
+  });
+}
+
+async function attachmentCleanupRetries(t: Context, store: ConversationStore, reopen: () => ConversationStore) {
+  // Isolate the worker assertions from earlier store-level erasure cases.
+  for (const url of await store.listAttachmentCleanup(500)) await store.acknowledgeAttachmentCleanup(url);
+  const group = await store.create({ name: 'Retry media', creatorId: 'retry-owner', inviteeIds: [] });
+  const id = group.conversation.conversationId;
+  const keys = Array.from({ length: 501 }, (_, n) => `chatblobs/group_${id}/retry-${String(n).padStart(3, '0')}.jpg`);
+  for (const [n, key] of keys.entries()) {
+    await store.saveMessage({ ...message(id, 'retry-owner', `retry-${n}`), type: 'image',
+      attachment: { url: key, mimeType: 'image/jpeg', sizeBytes: 100 } });
+  }
+  await store.eraseUserData('retry-owner', 'deleted-retry-owner');
+  // Simulate a crash between commit of collection and the first object DELETE.
+  const restarted = reopen();
+  assert.deepEqual(await restarted.exportMemberships('deleted-retry-owner'), []);
+  assert.deepEqual(await restarted.listAttachmentCleanup(500), keys.slice(0, 500));
+  assert.deepEqual(await restarted.listAttachmentCleanup(500, keys[499]), keys.slice(500));
+  const envKeys = ['R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT', 'R2_ACCOUNT_ID'];
+  const previous = envKeys.map(key => process.env[key]);
+  t.after(() => envKeys.forEach((key, n) => {
+    if (previous[n] === undefined) delete process.env[key];
+    else process.env[key] = previous[n];
+  }));
+  envKeys.forEach(key => { delete process.env[key]; });
+  const stores = createMemoryStores();
+  stores.accountDeletions.set('retry-owner', { userId: 'retry-owner', status: 'completed',
+    requestedAt: new Date().toISOString(), scheduledFor: new Date().toISOString(), completedAt: new Date().toISOString() });
+  let failing = true;
+  const attempts: string[] = [];
+  const f = await fixture(t, { stores, conversationStore: restarted, attachmentFetch: async (input, init) => {
+    assert.equal(init?.method, 'DELETE');
+    const url = new URL(String(input));
+    const key = decodeURIComponent(url.pathname.slice('/chat/'.length));
+    attempts.push(key);
+    assert.ok(keys.includes(key));
+    if (failing && key === keys[0]) throw new Error('simulated object storage outage');
+    return new Response(null, { status: failing && key === keys[1] ? 503 : key === keys[500] ? 404 : 204 });
+  } });
+  assert.equal(await f.runAccountDeletionSweep(), 0);
+  assert.deepEqual(await restarted.listAttachmentCleanup(1), [keys[0]], 'no storage config must preserve the queue');
+  process.env.R2_BUCKET = 'chat';
+  process.env.R2_ACCESS_KEY_ID = 'test-key';
+  process.env.R2_SECRET_ACCESS_KEY = 'test-secret';
+  process.env.R2_ENDPOINT = 'https://storage.example';
+  assert.equal(await f.runAccountDeletionSweep(), 0, 'completed jobs must not need to run again');
+  assert.deepEqual(attempts, keys, 'failed keys cannot stall the bounded sweep');
+  assert.deepEqual(await restarted.listAttachmentCleanup(500), keys.slice(0, 2));
+  failing = false;
+  assert.equal(await f.runAccountDeletionSweep(), 0);
+  assert.deepEqual(attempts.slice(501), keys.slice(0, 2));
+  assert.deepEqual(await restarted.listAttachmentCleanup(500), []);
+  await f.runAccountDeletionSweep();
+  assert.equal(attempts.length, 503, 'acknowledged keys are not retried');
+}
+
+test('memory attachment erasure protects surviving references and pending cleanup', async t => {
+  const store = createConversationStore();
+  await attachmentErasure(t, store);
+  await t.test('bounded cleanup retries survive completed jobs', async t => attachmentCleanupRetries(t, store, () => store));
+});
+
+test('REST leave and removal notify all call participants, including the departing member', async t => {
+  for (const operation of ['leave', 'remove']) {
+    for (const status of ['ringing', 'accepted'] as const) {
+      await t.test(`${operation} ${status} participant`, async t => {
+        const store = createConversationStore();
+        const f = await fixture(t, { conversationStore: store });
+        const owner = await f.session('call-owner');
+        const member = await f.session('call-member');
+        const sockets = await Promise.all([owner, member].map(f.socket));
+        const group = await store.create({ name: 'REST calls', creatorId: 'call-owner', inviteeIds: ['call-member'] });
+        const id = group.conversation.conversationId;
+        await store.acceptInvitation({ conversationId: id, invitationId: group.invitations![0].invitationId, userId: 'call-member' });
+        const started = await store.startCall({ conversationId: id,
+          initiatorId: status === 'ringing' ? 'call-owner' : 'call-member', mediaType: 'audio', ringTimeoutMs: 60_000 });
+        assert.ok(started);
+        let previous = started;
+        if (status === 'accepted') {
+          const declined = await store.transitionCall({ callId: started.call.callId, userId: 'call-owner', action: 'decline' });
+          assert.ok(declined);
+          previous = declined;
+        }
+        const previousVersion = previous.call.stateVersion;
+        const notifications = sockets.map(socket => new Promise<any>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('REST departure call notification missing')), 1500);
+          socket.once(SERVER_EVENTS.CONVERSATION_CALL_UPDATED, payload => { clearTimeout(timer); resolve(payload); });
+        }));
+        const received = Promise.all(notifications);
+        const result = operation === 'leave'
+          ? await f.request('POST', `/groups/${id}/leave`, member)
+          : await f.request('DELETE', `/groups/${id}/members/call-member`, owner);
+        assert.equal(result.status, 200);
+        for (const payload of await received) {
+          assert.equal(payload.version, SIGNALING_VERSION);
+          assert.equal(payload.conversationId, id);
+          assert.equal(payload.callId, started.call.callId);
+          assert.equal(payload.call.stateVersion, previousVersion + 1);
+          assert.equal(payload.call.status, status === 'accepted' ? 'ended' : started.call.status);
+          assert.equal(payload.participants.find((participant: any) => participant.userId === 'call-member').status, 'left');
+        }
+        // An ended call must not be rescheduled by the ringing-timeout worker.
+        if (status === 'accepted') {
+          assert.equal(await store.expireCall(started.call.callId, Date.now() + 120_000), null);
+          assert.deepEqual(await store.listExpiredCallIds(Date.now() + 120_000), []);
+        }
+      });
+    }
+  }
+});
+
 test('memory store interval and race contract', async t => {
   await watermarkAndCapacity(t, createConversationStore());
 });
@@ -354,6 +602,9 @@ test('PostgreSQL migration, durable admission and transaction races', { skip: !p
   await migrate(db, { migrationsFolder: new URL('../db/migrations', import.meta.url).pathname });
   const store = createConversationStore({ db });
   await watermarkAndCapacity(t, store);
+  await attachmentErasure(t, store);
+  await t.test('durable cleanup survives store recreation and object storage failure', async t =>
+    attachmentCleanupRetries(t, store, () => createConversationStore({ db })));
   await t.test('invitation durability, database expiry and symmetric durable blocks', async () => {
     const group = await store.create({ name: 'Durable', creatorId: 'durable-owner', inviteeIds: ['durable-member'] });
     const id = group.conversation.conversationId;

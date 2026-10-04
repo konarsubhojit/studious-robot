@@ -180,6 +180,8 @@ export type ConversationStore = {
   eraseUserData: (userId: string, pseudonym: string) => Promise<{
     conversationIds: string[];
   }>;
+  listAttachmentCleanup: (limit: number, after?: string) => Promise<string[]>;
+  acknowledgeAttachmentCleanup: (url: string) => Promise<void>;
   eraseUserMessages: (userId: string, pseudonym: string, limit: number) => Promise<{
     attachmentUrls: string[];
     conversationIds: string[];

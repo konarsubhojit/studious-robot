@@ -218,9 +218,19 @@ and sockets. Own messages become content-free tombstones; managed attachment
 references enter the existing object-deletion workflow. Other entitled members
 retain shared history. Owner erasure transfers authority to a remaining active
 member as an erasure-only exception; ordinary departure requires explicit
-transfer to an admin. Last-member erasure collects the group and cascaded rows
-only after own message batches have captured attachment references; creator
-erasure alone never drops a populated group.
+transfer to an admin. Last-member erasure transactionally captures all live
+attachment references (including former members and concurrent erasures) in
+`group_attachment_cleanup` before collecting the group and cascaded rows.
+Own message batches also enqueue unshared references in the same transaction.
+This queue has no cascading foreign keys: restarts and completed account jobs
+cannot lose pending cleanup. The account-deletion sweep reads at most 500 keys
+per page and acknowledges only successful object deletions; storage failures
+remain queued for later sweeps. Duplicate attempts are safe (object DELETE is
+idempotent). Candidates and historical surviving references use the same
+ECMAScript whitespace trimming; a copied live reference prevents enqueueing.
+Only managed attachment references reach storage deletion (the existing key
+validator still applies); invalid historical references remain queued for
+operator review. Creator erasure alone never drops a populated group.
 
 ##### Server → Client
 
