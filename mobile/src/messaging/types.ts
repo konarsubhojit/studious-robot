@@ -53,6 +53,10 @@ export type OutboxItem = {
   attempts?: number;
   lastAttemptAt?: string | null;
   lastError?: string | null;
+  /** Legacy rows without a state remain pending until their attempt budget is exhausted. */
+  state?: 'pending' | 'failed';
+  /** Persisted wall-clock deadline in milliseconds; null means ready immediately. */
+  nextAttemptAt?: number | null;
 };
 
 export type TimelineCursor = {

@@ -150,7 +150,21 @@ Every SQL value is bound, not interpolated.
 | Data | Local copy | Synchronization / authority |
 | --- | --- | --- |
 | Conversations, messages, call timeline | SQLite; up to 100 recent histories and 200 entries per peer, plus pinned unsent messages/draft peers | Hydrate before rendering; refresh on registration, reconnect, foreground, opening a chat and manual refresh. Revalidate up to two 100-row pages for a cached chat; older pages remain on demand. |
-| Outgoing text and uploaded attachments | SQLite outbox and optimistic message | Commit before any socket send. Retry with the original compose-time UUID `clientMessageId` and existing capped backoff; server acknowledgements reconcile the provisional UUID to the persisted server ID/timestamp. Disk failure blocks sending and surfaces an error. |
+| Outgoing text and uploaded attachments | SQLite outbox and optimistic message | Commit before any socket send. Composition returns after the local commit, without waiting for a network acknowledgement. Retry with the original compose-time UUID `clientMessageId`; server acknowledgements reconcile the provisional UUID to the persisted server ID/timestamp. Disk failure blocks sending and surfaces an error. |
+
+SQLite schema v2 migrates queued sends into a dedicated `outbox` table while
+preserving identities and account/server scopes. Each row retains its attempt
+count, last error, pending/failed state, and next-attempt deadline across restart.
+A single worker drains on startup, socket connect, and foreground. Failed attempt
+N schedules a delay between half and all of `min(1000 * 2^(N-1), 60000)` ms;
+reconnect and foreground do not reset that deadline. A delayed conversation head
+gates later messages in that conversation without blocking other conversations.
+After five failed attempts, or an immediate structured permanent rejection
+(`bad_request`, `blocked`, `forbidden`, `not_found`, `unauthorized`, or
+`unsupported_version`), the bubble shows the existing retry affordance instead
+of retrying automatically. Explicit retry resets the budget and deadline while
+keeping the client identity. Terminal failed rows no longer block later sends;
+replies to failed parents remain unsendable until the parent succeeds.
 | Drafts | SQLite, local only | Debounced edits; flush on background/unmount. No automatic cross-device draft overwrite. |
 | Recent calls / missed-call acknowledgement / media type | SQLite recent-call cache; existing local media-type preferences | Cached calls render offline. Refresh on reconnect, foreground and existing call events. Preserve local read acknowledgement when fetching server rows. |
 | Block list | SQLite snapshot | Refresh on connect/foreground and update after successful mutations. Server still enforces blocks; block/unblock is not replayed offline. Directory caches are invalidated after block updates. |

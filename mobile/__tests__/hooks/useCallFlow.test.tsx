@@ -3009,6 +3009,9 @@ describe('useCallFlow chat', () => {
     // Drain until the automatic attempt budget is spent.
     for (let attempt = 1; attempt < 5; attempt += 1) {
       await act(async () => {
+        jest.advanceTimersByTime(1000 * 2 ** (attempt - 1));
+      });
+      await act(async () => {
         await resultRef.current.drainOutbox();
       });
     }
