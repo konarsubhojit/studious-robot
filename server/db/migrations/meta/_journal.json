@@ -176,6 +176,13 @@
       "when": 1791103922640,
       "tag": "0024_group_message_fanout",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791123870311,
+      "tag": "0025_message_changes_conversation_cursor",
+      "breakpoints": true
     }
   ]
 }

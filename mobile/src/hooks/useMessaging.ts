@@ -49,6 +49,7 @@ import {
 import { createMessageId, timelineEntryId } from '../messaging/messageIdentity';
 import { mergeMessageSearchResults } from '../messaging/messageSearch';
 import { resumeMessageBackfill } from '../messaging/messageBackfill';
+import { syncConversationDelta } from '../messaging/deltaSync';
 import {
   applyDeliveryReceipt,
   applyIncomingMessage,
@@ -120,6 +121,17 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
 /** How often `sendTypingIndicator(peerId, true)` may be emitted while the
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
+
+/** Direct conversations a delta sync covers: the chat list plus the open chat. */
+function directConversationPeers(conversations: ConversationSummary[], activePeer: string | null): Set<string> {
+  const peers = new Set(conversations
+    .filter(row => row.peerId && !row.group && !row.localMock)
+    .map(row => row.peerId));
+  if (activePeer && !conversations.some(row => row.peerId === activePeer && row.group)) {
+    peers.add(activePeer);
+  }
+  return peers;
+}
 
 /**
  * Delete any locally cached bytes for a message that has just been
@@ -219,6 +231,8 @@ export default function useMessaging({
   const [isBackfillingMessages, setIsBackfillingMessages] = useState(false);
   const [backfilledMessageCount, setBackfilledMessageCount] = useState(0);
   const backfillScopeRef = useRef<string | null>(null);
+  const deltaSyncScopeRef = useRef<string | null>(null);
+  const deltaSyncAgainRef = useRef(false);
   // Keyed by peerId → the composer text (and reply target) the user has typed
   // but not sent. Held here rather than in the composer's own state so it
   // survives switching conversations, backgrounding and process death.
@@ -580,6 +594,51 @@ export default function useMessaging({
     },
     [],
   );
+
+  /**
+   * Reconcile every direct conversation with the server's per-conversation
+   * delta (`GET /messages/delta`) from its persisted cursor. Run on reconnect
+   * and on foreground; merge rules live in `messaging/deltaSync`.
+   */
+  const syncConversationDeltas = useCallback(async () => {
+    if (!scope || !userId || !sessionIdRef.current) return;
+    if (deltaSyncScopeRef.current === scope) {
+      // A reconnect during a run must not be lost: go round once more after it.
+      deltaSyncAgainRef.current = true;
+      return;
+    }
+    deltaSyncScopeRef.current = scope;
+    try {
+      do {
+        deltaSyncAgainRef.current = false;
+        const peers = directConversationPeers(conversationsRef.current, activeChatPeerIdRef.current);
+        for (const peerId of peers) {
+          if (scopeRef.current !== scope || !sessionIdRef.current) return;
+          try {
+            await requests.run(`delta:${peerId}`, () => syncConversationDelta({
+              scope,
+              userId,
+              peerId,
+              signalingUrl,
+              authedFetch: authedFetchRef.current,
+              isCurrentScope: () => scopeRef.current === scope,
+              getMessages: () => messagesByPeerRef.current,
+              setMessages: next => {
+                messagesByPeerRef.current = next;
+                setMessagesByPeer(next);
+              },
+              onDeleted: evictTombstonedAttachment,
+            }));
+          } catch (error) {
+            logWarn('[Messaging] delta sync failed', { message: errorMessage(error) });
+          }
+        }
+      } while (deltaSyncAgainRef.current && scopeRef.current === scope);
+    } finally {
+      deltaSyncAgainRef.current = false;
+      if (deltaSyncScopeRef.current === scope) deltaSyncScopeRef.current = null;
+    }
+  }, [authedFetchRef, requests, scope, sessionIdRef, signalingUrl, userId]);
 
   const backfillMessages = useCallback(async () => {
     if (!scope || !userId || !sessionIdRef.current || backfillScopeRef.current === scope) return;
@@ -994,11 +1053,12 @@ export default function useMessaging({
       drainOutboxRef.current();
       void fetchConversations();
       void backfillMessages();
+      void syncConversationDeltas();
       const peer = activeChatPeerIdRef.current;
       if (peer) void fetchMessagesForPeer(peer);
     });
     return () => subscription?.remove?.();
-  }, [backfillMessages, fetchConversations, fetchMessagesForPeer]);
+  }, [backfillMessages, fetchConversations, fetchMessagesForPeer, syncConversationDeltas]);
 
   useEffect(
     () => () => {
@@ -1624,9 +1684,10 @@ export default function useMessaging({
     drainTimerRef.current = null;
     drainOutboxRef.current();
     void backfillMessages();
+    void syncConversationDeltas();
     const peer = activeChatPeerIdRef.current;
     if (peer) void fetchMessagesForPeer(peer);
-  }, [backfillMessages, fetchMessagesForPeer]);
+  }, [backfillMessages, fetchMessagesForPeer, syncConversationDeltas]);
 
   /** The socket went down: drive the offline banner. */
   const handleSocketDisconnected = useCallback(() => {
@@ -1710,6 +1771,7 @@ export default function useMessaging({
     fetchConversations,
     fetchMessagesForPeer,
     backfillMessages,
+    syncConversationDeltas,
     searchMessages,
     searchLocalMessages,
     isBackfillingMessages,

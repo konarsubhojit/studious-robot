@@ -208,6 +208,8 @@ async function advanceConversationProjection(tx: Tx, record: StoredMessage): Pro
     .where(eq(conversationsTable.conversationId, record.conversationId));
 }
 
+const READ_CHANGE_BATCH_SIZE = 500;
+
 async function recordMessageChange(
   tx: Tx,
   message: StoredMessage,
@@ -430,6 +432,56 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
       }));
     },
 
+    async listConversationChanges({
+      conversationId,
+      afterChangedAt,
+      afterChangeId,
+      createdAtAfter,
+      limit,
+    }) {
+      const afterCursor = afterChangedAt && afterChangeId
+        ? or(
+            gt(changesTable.changedAt, afterChangedAt),
+            and(
+              eq(changesTable.changedAt, afterChangedAt),
+              sql`${changesTable.changeId} > ${BigInt(afterChangeId)}`
+            )
+          )
+        : undefined;
+      // The live row, not the change's snapshot: a `new` change recorded
+      // before a deletion must surface as the tombstone, never the old body.
+      const rows = await db
+        .select({
+          changeId: changesTable.changeId,
+          changeType: changesTable.changeType,
+          changedAt: changesTable.changedAt,
+          message: messagesTable,
+        })
+        .from(changesTable)
+        .innerJoin(
+          messagesTable,
+          and(
+            eq(messagesTable.conversationId, changesTable.conversationId),
+            eq(messagesTable.messageId, changesTable.messageId)
+          )
+        )
+        .where(
+          and(
+            eq(changesTable.conversationId, conversationId),
+            createdAtAfter ? gte(messagesTable.createdAt, createdAtAfter) : undefined,
+            afterCursor
+          )
+        )
+        .orderBy(asc(changesTable.changedAt), asc(changesTable.changeId))
+        .limit(clampExportReadLimit(limit));
+      return rows.map((row) => ({
+        changeId: String(row.changeId),
+        type: row.changeType as MessageChange['type'],
+        changedAt: normalizeTimestamp(row.changedAt) as string,
+        message: toStoredMessage(row.message),
+      }));
+    },
+
     async listUserMessages({ userId, limit, before, beforeMessageId } = {}) {
       if (!userId) return [];
       const rows = await db
@@ -575,10 +627,11 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
         // `delivered_to` here — with the same idempotent `@>` guard used by
         // `markDelivered` — keeps that invariant true without a second
         // round-trip on this already-hot write path.
+        const readAt = nextTimestamp();
         const updated = await tx
           .update(messagesTable)
           .set({
-            readAt: nextTimestamp(),
+            readAt,
             deliveredTo: sql`case when ${messagesTable.deliveredTo} @> array[${userId}]::text[]
               then ${messagesTable.deliveredTo}
               else array_append(${messagesTable.deliveredTo}, ${userId}) end`,
@@ -590,7 +643,26 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
               isNull(messagesTable.readAt)
             )
           )
-          .returning({ messageId: messagesTable.messageId });
+          .returning();
+
+        // Read receipts are part of the change log so a delta sync after
+        // reconnect carries them; chunked to stay under the bind-parameter cap.
+        for (let i = 0; i < updated.length; i += READ_CHANGE_BATCH_SIZE) {
+          await tx.insert(changesTable).values(
+            updated.slice(i, i + READ_CHANGE_BATCH_SIZE).map((row) => {
+              const message = toStoredMessage(row);
+              return {
+                conversationId: message.conversationId,
+                messageId: message.messageId,
+                senderId: message.senderId,
+                recipientId: message.recipientId,
+                changeType: 'read',
+                changedAt: readAt,
+                message,
+              };
+            })
+          );
+        }
 
         // Set to zero rather than decrementing by `updated.length`: the
         // predicate above is already "every unread message addressed to this

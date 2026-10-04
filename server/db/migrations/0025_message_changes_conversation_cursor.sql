@@ -1,0 +1,1 @@
+CREATE INDEX "idx_message_changes_conversation_cursor" ON "message_changes" USING btree ("conversation_id","changed_at","change_id");

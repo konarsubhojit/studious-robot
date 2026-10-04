@@ -311,6 +311,7 @@ const messageChanges = pgTable(
     }).onDelete('cascade'),
     index('idx_message_changes_sender_cursor').on(t.senderId, t.changedAt, t.changeId),
     index('idx_message_changes_recipient_cursor').on(t.recipientId, t.changedAt, t.changeId),
+    index('idx_message_changes_conversation_cursor').on(t.conversationId, t.changedAt, t.changeId),
   ],
 );
 

@@ -228,6 +228,29 @@ test('listMessageChanges scopes participants, blocks, cursor and stable ordering
   assert.match(query.text, /order by "message_changes"\."changed_at" asc, "message_changes"\."change_id" asc/);
 });
 
+test('listConversationChanges reads one conversation along its cursor index, at live message state', async () => {
+  const live = messageRow({ body: '', deletedAt: '2024-01-03 00:00:00+00' });
+  const { store, queries } = createRecordingStore([
+    [[9, 'new', '2024-01-01 00:00:00+00', ...toTuple(live)]],
+  ]);
+
+  const changes = await store.listConversationChanges?.({
+    conversationId: 'alice:bob',
+    afterChangedAt: '2024-01-01T00:00:00.000Z',
+    afterChangeId: '3',
+    limit: 10,
+  });
+
+  const [query] = queries;
+  assert.match(query.text, /"message_changes"\."conversation_id" = \$\d+/);
+  assert.match(query.text, /"message_changes"\."change_id" > \$\d+/);
+  assert.match(query.text, /order by "message_changes"\."changed_at" asc, "message_changes"\."change_id" asc/);
+  assert.doesNotMatch(query.text, /"message_changes"\."message"/, 'the live row, not the snapshot, is returned');
+  assert.equal(changes?.[0].changeId, '9');
+  assert.equal(changes?.[0].message.body, '');
+  assert.equal(changes?.[0].message.deletedAt, '2024-01-03T00:00:00.000Z');
+});
+
 // ─── listUserMessages ─────────────────────────────────────────────────────────
 
 test('listUserMessages exports a bounded participant page including tombstones', async () => {
@@ -456,12 +479,15 @@ test('markDelivered warns when a caller omits the conversation id', async () => 
 });
 
 test('markRead returns how many messages it flipped, and zeroes the reader\'s counter in the same transaction', async () => {
-  // [begin, update messages returning, update conversations, commit]
-  const { store, queries } = createRecordingStore([[], [['m-1'], ['m-2']]]);
+  // [begin, update messages returning, insert read changes, update conversations, commit]
+  const { store, queries } = createRecordingStore([[], [
+    toTuple(messageRow({ messageId: 'm-1', readAt: '2024-01-02T00:00:00.000Z' })),
+    toTuple(messageRow({ messageId: 'm-2', readAt: '2024-01-02T00:00:00.000Z' })),
+  ]]);
 
   const count = await store.markRead('alice:bob', 'bob');
 
-  assert.equal(queries.length, 4, 'the flip and the counter reset share one transaction');
+  assert.equal(queries.length, 5, 'the flip, its change-log rows and the counter reset share one transaction');
   assert.equal(queries[0].text, 'begin');
   // Only the recipient's still-unread messages, which is exactly the partial
   // index `idx_messages_unread` covers.
@@ -473,6 +499,10 @@ test('markRead returns how many messages it flipped, and zeroes the reader\'s co
     queries[1].text,
     /"delivered_to" = case when "messages"\."delivered_to" @> array\[\$\d+\]::text\[\]/
   );
+  // Read receipts join the change log so a delta sync carries them.
+  assert.match(queries[2].text, /insert into "message_changes"/);
+  assert.equal(queries[2].params.filter((param) => param === 'read').length, 2);
+  queries.splice(2, 1);
   assert.match(queries[2].text, /update "conversations" set/);
   // Zero, not a decrement by the flipped count: self-healing against any
   // drift, and gated by a string comparison against the stored participant

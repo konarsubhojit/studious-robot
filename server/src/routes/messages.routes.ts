@@ -4,7 +4,7 @@ import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { DEFAULT_FIRST_MESSAGE_LIMIT, deriveConversationId, clampMessageLimit } from '../messageStore.ts';
 import { toCallTimelineEntry, readCallsBetween, augmentConversationsWithCalls, markMissedCallsRead, mergeTimeline } from '../domain/callTimeline.ts';
-import { readCached, writeCached, writeCachedIfNotInvalidated, invalidateCache, conversationsCacheKey, conversationsCachePrefix, messagesCacheKey, messagesFirstPageCacheKey, messagesCachePrefix } from '../cache.ts';
+import { readCached, writeCached, writeCachedIfNotInvalidated, invalidateCache, conversationsCacheKey, conversationsCachePrefix, messagesCacheKey, messagesFirstPageCacheKey, messagesCachePrefix, messagesDeltaCacheKey } from '../cache.ts';
 import { emitToUserSockets } from '../domain/notifications.ts';
 import { getPresenceSnapshot } from '../lib/state.ts';
 import { SIGNALING_VERSION } from '../config.ts';
@@ -103,6 +103,67 @@ function parseSyncCursor(value: unknown): { changedAt: string; changeId: string 
   } catch {
     return null;
   }
+}
+
+type MessageChange = import('../messageStore/types.ts').MessageChange;
+
+/**
+ * One raw delta page (with look-ahead), read through the cache. The key is
+ * nested under `messagesCachePrefix`, so it is evicted on every instance by
+ * the same bus-published invalidation as the conversation's history pages.
+ */
+async function readConversationChanges(
+  state: import('../stores/contracts.ts').ServerState,
+  conversationId: string,
+  rawCursor: string | null,
+  limit: number,
+): Promise<MessageChange[]> {
+  const cacheKey = messagesDeltaCacheKey(conversationId, rawCursor, limit);
+  const cacheStartedAt = Date.now();
+  const cached = await readCached(state, cacheKey);
+  if (Array.isArray(cached)) return cached;
+  if (!state.messageStore.listConversationChanges) throw new Error('delta sync unavailable');
+  const cursor = parseSyncCursor(rawCursor);
+  const changes = await state.messageStore.listConversationChanges({
+    conversationId,
+    afterChangedAt: cursor?.changedAt,
+    afterChangeId: cursor?.changeId,
+    createdAtAfter: state.messageRetentionMs > 0
+      ? new Date(Date.now() - state.messageRetentionMs).toISOString()
+      : undefined,
+    limit: limit + 1,
+  });
+  await writeCachedIfNotInvalidated(
+    state,
+    cacheKey,
+    changes,
+    [messagesCachePrefix(conversationId)],
+    cacheStartedAt
+  );
+  return changes;
+}
+
+/** Page a delta, reporting each message once at its latest change. */
+function deltaPageResponse(
+  conversationId: string,
+  changes: MessageChange[],
+  limit: number,
+  rawCursor: string | null,
+) {
+  const page = changes.slice(0, limit);
+  const hasMore = changes.length > limit;
+  const last = page[page.length - 1];
+  const latestByMessage = new Map<string, number>();
+  page.forEach((change, index) => latestByMessage.set(change.message.messageId, index));
+  const compacted = page.filter((change, index) => latestByMessage.get(change.message.messageId) === index);
+  return {
+    conversationId,
+    changes: compacted,
+    limit: compacted.length,
+    nextCursor: hasMore ? encodeSyncCursor(last) : null,
+    hasMore,
+    cursor: last ? encodeSyncCursor(last) : rawCursor,
+  };
 }
 
 async function visibleMessage(
@@ -582,6 +643,87 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
         : null,
       hasMore,
     });
+  });
+
+  /**
+   * GET /messages/delta?peerId=…&cursor=…&limit=…
+   *
+   * Everything in the conversation with `peerId` that changed after `cursor`
+   * — new messages, edits, reactions, deletions and read receipts — oldest
+   * change first. `cursor` is the opaque token a previous page returned;
+   * omit it to start from the beginning of the (retained) change log.
+   *
+   * Paging follows the history routes: `limit` is the size of the page that
+   * was returned and `nextCursor`/`hasMore` say whether to keep reading.
+   * `cursor` in the response is the position *after* this page (the request
+   * cursor echoed back when nothing changed), which is what a client persists
+   * as its per-conversation watermark.
+   *
+   * Each change carries the message's current server state, and a message
+   * changed several times within one page is reported once, at its latest
+   * change. A tombstone therefore never re-exposes deleted content.
+   *
+   * The raw page is cached under `msg::<conversationId>::` so the evictions
+   * every conversation write already publishes on the shared bus (send,
+   * delete, react, read) drop it on every instance; the block check is
+   * re-evaluated per request so it can never be served stale.
+   *
+   * Response 200: { conversationId, changes, limit, nextCursor, hasMore, cursor }
+   */
+  router.get(API_ROUTES.MESSAGES_DELTA, async (req, res) => {
+    const session = await requireSession(req, res);
+    if (!session) return;
+
+    const peerId = normaliseId(req.query?.peerId);
+    if (!peerId) {
+      res.status(400).json({ error: 'peerId is required' });
+      return;
+    }
+    if (peerId === session.userId) {
+      res.status(400).json({ error: 'peerId must be another user' });
+      return;
+    }
+    const rawCursor = normaliseOptionalString(req.query?.cursor);
+    const cursor = parseSyncCursor(rawCursor);
+    if (rawCursor && !cursor) {
+      res.status(400).json({ error: 'cursor is invalid' });
+      return;
+    }
+
+    const conversationId = deriveConversationId(session.userId, peerId);
+    const limit = clampMessageLimit(req.query?.limit);
+    const emptyPage = { conversationId, changes: [], limit: 0, nextCursor: null, hasMore: false, cursor: rawCursor ?? null };
+    try {
+      if (!(await isDirectoryVisibleAsync(state, session.userId, peerId))) {
+        res.status(200).json(emptyPage);
+        return;
+      }
+    } catch (error) {
+      console.error(`[messages] delta visibility check failed: ${describeError(error)}`);
+      res.status(503).json({ error: 'message store unavailable' });
+      return;
+    }
+
+    let changes: MessageChange[];
+    try {
+      changes = await readConversationChanges(state, conversationId, rawCursor ?? null, limit);
+    } catch (error) {
+      console.error(`[messages] delta failed: ${describeError(error)}`);
+      res.status(503).json({ error: 'message store unavailable' });
+      return;
+    }
+
+    // Defence in depth, as in `GET /messages`: the conversation id is derived
+    // from the caller, so anything else here is a store fault.
+    if (changes.some((change) =>
+      change.message.conversationId !== conversationId ||
+      (change.message.senderId !== session.userId && change.message.recipientId !== session.userId)
+    )) {
+      res.status(403).json({ error: 'not a participant in this conversation' });
+      return;
+    }
+
+    res.status(200).json(deltaPageResponse(conversationId, changes, limit, rawCursor ?? null));
   });
 
   /**
