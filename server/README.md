@@ -136,7 +136,10 @@ and a direct `conversationId` must identify the authenticated participant.
 Group events cross instances through the Socket.IO Redis adapter's
 server-to-server channel, with active membership and join-watermark checks on
 each receiving instance. Without an adapter, the shared message bus remains the
-fallback. Every member's conversation-list cache is invalidated on that bus.
+event fallback, but presence lookup is local: this configuration is for
+single-instance development, not multi-instance push delivery. The two-VM
+deployment requires the Redis adapter (`deploy/README.md` §5a). Every member's
+conversation-list cache is invalidated on the shared message bus.
 
 One accepted group message makes at most **15** push attempts: one per offline
 member, selecting their newest registered push device, with the group name as
