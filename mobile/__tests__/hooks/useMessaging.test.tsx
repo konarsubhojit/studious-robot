@@ -1287,7 +1287,10 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
       failed: true,
       syncState: 'failed',
+      deliveryState: 'failed',
     });
+    const original = { ...(chatDb as any).__snapshot.outbox[0] };
+    expect(resultRef.current.pendingSendCount).toBe(0);
     expect(params.updateStatus).toHaveBeenCalledWith('Message failed to send', 'error');
 
     await act(async () => {
@@ -1299,12 +1302,106 @@ describe('useMessaging', () => {
       expect.objectContaining({ clientMessageId: messageId }),
       expect.any(Function),
     );
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({
+      messageId: original.messageId, clientMessageId: original.clientMessageId,
+      recipientId: original.recipientId, body: original.body,
+    });
+    expect(resultRef.current.messagesByPeer.bob[0].deliveryState).toBe('queued');
+    expect(resultRef.current.pendingSendCount).toBe(1);
 
     act(() => {
       resultRef.current.discardMessage('bob', messageId);
     });
     expect(resultRef.current.messagesByPeer.bob).toEqual([]);
     expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test.each(['direct', 'group'])('%s delivery is sending only during the actual request, then uses server receipts', async kind => {
+    const peerId = kind === 'group' ? 'live-group' : 'bob';
+    if (kind === 'group') {
+      const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+      row.localMock = false;
+      (chatDb as any).__snapshot.conversations = [row];
+    }
+    const socket = makeSocket({ connected: false });
+    let acknowledge!: (response: any) => void;
+    socket.emit.mockImplementation((_event, _payload, callback) => { acknowledge = callback; });
+    const { resultRef } = setup({ socketRef: { current: socket }, groupTransport: 'live' });
+    await act(async () => {
+      await Promise.resolve();
+      resultRef.current.handleSocketDisconnected();
+      await resultRef.current.sendMessage(peerId, 'first');
+      await resultRef.current.sendMessage(peerId, 'waiting behind first');
+    });
+    const first = resultRef.current.messagesByPeer[peerId].find((message: any) => message.body === 'first');
+    expect(first.deliveryState).toBe('queued');
+    expect(resultRef.current.pendingSendCount).toBe(2);
+    expect(socket.emit).not.toHaveBeenCalled();
+    socket.connected = true;
+    await act(async () => { resultRef.current.handleSocketConnected(); await Promise.resolve(); });
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.body === 'first').deliveryState)
+      .toBe('sending');
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.body !== 'first').deliveryState)
+      .toBe('queued');
+    expect((chatDb as any).__snapshot.messagesByPeer[peerId].every((message: any) => !message.deliveryState)).toBe(true);
+    const confirmed = { ...first, messageId: 'server-first', pending: false, syncState: 'synced',
+      deliveryState: undefined, ...(kind === 'group' ? {
+        conversationId: peerId, recipientId: undefined, deliveredTo: ['alice'],
+      } : {}) };
+    await act(async () => { acknowledge({ ok: true, message: confirmed }); await Promise.resolve(); });
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
+      .toBe('sent');
+    await act(async () => {
+      resultRef.current.handleMessageDelivered({ ...confirmed, deliveredTo: ['bob'] });
+    });
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
+      .toBe('delivered');
+    if (kind === 'group') {
+      act(() => resultRef.current.handleMessageRead({ readerId: 'alice',
+        readAt: new Date(Date.now() + 1000).toISOString(), conversationId: peerId }));
+      expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
+        .toBe('delivered');
+    }
+    act(() => resultRef.current.handleMessageRead({ readerId: 'bob', readAt: new Date(Date.now() + 1000).toISOString(),
+      ...(kind === 'group' ? { conversationId: peerId } : {}) }));
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
+      .toBe('read');
+    socket.connected = false;
+    act(() => resultRef.current.handleSocketDisconnected());
+    expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.body !== 'first').deliveryState)
+      .toBe('queued');
+    await act(async () => { acknowledge({ ok: false, error: { message: 'disconnected' } }); });
+    expect(resultRef.current.pendingSendCount).toBe(1);
+  });
+
+  test('offline depth excludes terminal outbox failures and failed uploads and reacts to retry/discard', async () => {
+    const createdAt = '2026-10-03T06:00:00Z';
+    (chatDb as any).__snapshot.outbox = [
+      { messageId: 'queued', recipientId: 'bob', state: 'pending', attempts: 0, createdAt },
+      { messageId: 'failed', recipientId: 'bob', state: 'failed', attempts: 1, createdAt },
+      { messageId: 'exhausted', recipientId: 'bob', attempts: 5, createdAt },
+    ];
+    (chatDb as any).__snapshot.messagesByPeer = { bob: [
+      { messageId: 'queued', senderId: 'alice', pending: true, createdAt },
+      { messageId: 'failed', senderId: 'alice', failed: true, createdAt },
+      { messageId: 'exhausted', senderId: 'alice', failed: true, createdAt },
+      { messageId: 'upload', senderId: 'alice', uploadState: 'failed', failed: true, createdAt },
+    ] };
+    const { resultRef } = setup({ socketRef: { current: makeSocket({ connected: false }) } });
+    await act(async () => { await Promise.resolve(); resultRef.current.handleSocketDisconnected(); });
+    expect(resultRef.current.isOffline).toBe(true);
+    expect(resultRef.current.pendingSendCount).toBe(1);
+    await act(async () => { await resultRef.current.retryMessage('bob', 'failed'); });
+    expect(resultRef.current.pendingSendCount).toBe(2);
+    expect(resultRef.current.messagesByPeer.bob.find((message: any) => message.messageId === 'failed').deliveryState)
+      .toBe('queued');
+    act(() => resultRef.current.discardMessage('bob', 'queued'));
+    expect(resultRef.current.pendingSendCount).toBe(1);
+    act(() => resultRef.current.discardMessage('bob', 'failed'));
+    expect(resultRef.current.pendingSendCount).toBe(0);
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(2);
   });
 
   test('deleteMessage tombstones a sent message on the server and locally', async () => {

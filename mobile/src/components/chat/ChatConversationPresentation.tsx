@@ -32,7 +32,10 @@ import IconButton from '../IconButton';
 import MediaViewer from '../MediaViewer';
 import { Avatar, Banner, Chip, FAB, Icon, IconAction, Skeleton } from '../primitives';
 import { usePeerProfile } from '../../profile/ProfileContext';
-import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../../connectivityUx';
+import { messageDeliveryState as getMessageStatus } from '../../messaging/deliveryState';
+import type { DeliveryState as MessageStatus } from '../../messaging/deliveryState';
+import MessageDeliveryIndicator from './MessageDeliveryIndicator';
+import OutboxOfflineBanner from './OutboxOfflineBanner';
 import { announceForAccessibility, describeMessageDelivery } from '../../accessibilityAnnouncer';
 import SwipeableRow from '../SwipeableRow';
 import useVoiceNoteAutoAdvance from '../../hooks/useVoiceNoteAutoAdvance';
@@ -149,32 +152,7 @@ const BUBBLE_RADIUS = 18;
 const BUBBLE_TAIL_RADIUS = radius.xs;
 
 /** Where one of the current user's own messages has got to. */
-export type MessageStatus = 'sending' | 'failed' | 'sent' | 'delivered' | 'read';
-
-/**
- * Lifecycle state of one of the current user's own messages.
- *
- * - `sending`   optimistic local copy, not yet acked by the server
- * - `failed`    the send was rejected / the socket was down
- * - `sent`      stored by the server, not yet handed to the recipient
- * - `delivered` handed to at least one of the recipient's connected devices
- * - `read`      the recipient opened the conversation
- *
- * @param message
- */
-function getMessageStatus(message: {
-        pending?: boolean; failed?: boolean; readAt?: string | null;
-        deliveredTo?: string[]; recipientId?: string;
-    }): MessageStatus {
-  if (message?.failed) return 'failed';
-  if (message?.pending) return 'sending';
-  if (message?.readAt) return 'read';
-  const deliveredTo = Array.isArray(message?.deliveredTo) ? message.deliveredTo : [];
-  const reachedRecipient = message?.recipientId
-    ? deliveredTo.includes(message.recipientId)
-    : deliveredTo.length > 0;
-  return reachedRecipient ? 'delivered' : 'sent';
-}
+export type { MessageStatus };
 
 function messageAccessibilityLabel(message: ChatMessage, status: MessageStatus, progress = 0): string {
   const preview = describeMessagePreview(message) || 'Message';
@@ -183,6 +161,7 @@ function messageAccessibilityLabel(message: ChatMessage, status: MessageStatus, 
   }
   if (status === 'failed') return `${preview}. Failed to send. Tap to retry`;
   if (status === 'sending') return `${preview}. Sending`;
+  if (status === 'queued') return `${preview}. Queued`;
   return preview;
 }
 
@@ -206,12 +185,6 @@ function entryKey(entry: TimelineEntry): string {
 
 /** Only items at least this visible count for the pinned date pill. */
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 10 };
-
-const STATUS_LABELS: Record<string, string> = {
-  sent: 'Sent',
-  delivered: 'Delivered',
-  read: 'Read',
-};
 
 function formatMessageTimestamp(isoString: string | null | undefined): string {
   if (!isoString) return '';
@@ -985,17 +958,14 @@ function ReactionChips({ reactions, currentUserId, onToggle, styles }: {
  * bubble — a tick row that appeared only at the end of a group, an italic
  * "Sending…" line, and a red "Failed to send" line — so a message changed shape
  * as it progressed. They are now one slot in the footer that renders exactly
- * one of the five states.
- *
- * `queued` is what `sending` looks like while the device is offline: the
- * message is not in flight, it is waiting, and saying "Sending…" would be a
- * lie.
+ * one of the six states. Only an actual in-flight emit is `sending`;
+ * offline, backoff and dependency waits are `queued`.
  *
  * @param props
  */
-function DeliveryState({ status, isQueued, uploadState, uploadProgress, styles, onRetry, onCancelUpload }: {
-        status: MessageStatus; isQueued: boolean; uploadState?: ChatMessage['uploadState'];
-        uploadProgress?: number; styles: ChatStyles; onRetry?: () => void; onCancelUpload?: () => void;
+function DeliveryState({ status, uploadState, uploadProgress, styles, onRetry, onDiscard, onCancelUpload }: {
+        status: MessageStatus; uploadState?: ChatMessage['uploadState'];
+        uploadProgress?: number; styles: ChatStyles; onRetry?: () => void; onDiscard?: () => void; onCancelUpload?: () => void;
     }) {
   if (uploadState === 'uploading') {
     return (
@@ -1011,36 +981,11 @@ function DeliveryState({ status, isQueued, uploadState, uploadProgress, styles, 
     );
   }
 
-  if (status === 'failed') {
-    return (
-      <Pressable
-        onPress={onRetry}
-        accessibilityRole="button"
-        accessibilityLabel="Retry sending message"
-        accessibilityHint="Sends this message again"
-        hitSlop={touchSlop(20)}
-        testID="chat-message-failed">
-        <Text style={styles.failedText}>Failed · tap to retry</Text>
-      </Pressable>
-    );
-  }
-
-  if (status === 'sending') {
-    return (
-      <Text style={styles.pendingText} testID="chat-message-pending">
-        {isQueued ? 'Queued' : 'Sending…'}
-      </Text>
-    );
-  }
-
-  return (
-    <Text
-      style={[styles.tick, status === 'read' && styles.tickRead]}
-      testID="chat-message-tick"
-      accessibilityLabel={STATUS_LABELS[status]}>
-      {status === 'sent' ? '✓' : '✓✓'}
-    </Text>
-  );
+  return <MessageDeliveryIndicator status={status}
+    style={status === 'failed' ? styles.failedText :
+      status === 'queued' || status === 'sending' ? styles.pendingText :
+        [styles.tick, status === 'read' && styles.tickRead]}
+    onRetry={onRetry} onDiscard={onDiscard} />;
 }
 
 /**
@@ -1056,10 +1001,9 @@ export type MessageRowProps = {
   isGroupEnd: boolean;
   isOwn: boolean;
   isHighlighted: boolean;
-  /** Nothing can leave the device right now, so a pending send is queued. */
-  isQueued?: boolean;
   currentUserId: string;
   onRetry?: MessageAction;
+  onDiscard?: MessageAction;
   onDelete?: MessageAction;
   onReply?: MessageAction;
   onReact?: ReactionAction;
@@ -1171,13 +1115,13 @@ function MessageFooter({
   isOwn,
   isGroupEnd,
   isPendingOrFailed,
-  isQueued,
+  onDiscard,
   status,
   uploadProgress,
   retryFailedMessage,
   onCancelAttachmentUpload,
   styles,
-}: Pick<MessageRowProps, 'message' | 'isOwn' | 'isGroupEnd' | 'isQueued' |
+}: Pick<MessageRowProps, 'message' | 'isOwn' | 'isGroupEnd' | 'onDiscard' |
   'onCancelAttachmentUpload'> & {
   isPendingOrFailed: boolean;
   status: MessageStatus;
@@ -1185,7 +1129,7 @@ function MessageFooter({
   retryFailedMessage?: () => void;
   styles: ChatStyles;
 }) {
-  if (!isGroupEnd && !isPendingOrFailed) return null;
+  if (!isOwn && !isGroupEnd && !isPendingOrFailed) return null;
   return (
     <View style={styles.messageFooter}>
       <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
@@ -1194,11 +1138,11 @@ function MessageFooter({
       {isOwn ? (
         <DeliveryState
           status={status}
-          isQueued={isQueued ?? false}
           uploadState={message.uploadState}
           uploadProgress={uploadProgress}
           styles={styles}
           onRetry={retryFailedMessage}
+          onDiscard={onDiscard ? () => onDiscard(message) : undefined}
           onCancelUpload={message.uploadState === 'uploading' ? onCancelAttachmentUpload : undefined}
         />
       ) : null}
@@ -1212,7 +1156,7 @@ function MessageRowLayout({
   isGroupEnd,
   isOwn,
   isHighlighted,
-  isQueued,
+  onDiscard,
   currentUserId,
   onReact,
   onQuotePress,
@@ -1293,7 +1237,7 @@ function MessageRowLayout({
         isOwn={isOwn}
         isGroupEnd={isGroupEnd}
         isPendingOrFailed={isPendingOrFailed}
-        isQueued={isQueued}
+        onDiscard={onDiscard}
         status={status}
         uploadProgress={uploadProgress}
         retryFailedMessage={retryFailedMessage}
@@ -1320,9 +1264,9 @@ const MessageRow = memo(
   isGroupEnd,
   isOwn,
   isHighlighted,
-  isQueued = false,
   currentUserId,
   onRetry,
+  onDiscard,
   onDelete,
   onReply,
   onReact,
@@ -1337,7 +1281,7 @@ const MessageRow = memo(
 }: MessageRowProps) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
-  const isPendingOrFailed = isOwn && (status === 'sending' || status === 'failed');
+  const isPendingOrFailed = isOwn && (status === 'queued' || status === 'sending' || status === 'failed');
   // Long-press opens the reaction bar for this bubble only; it closes as soon
   // as an emoji is chosen or the bubble is pressed again.
   const [isReactionBarOpen, setIsReactionBarOpen] = useState(false);
@@ -1388,7 +1332,7 @@ const MessageRow = memo(
       isGroupEnd={isGroupEnd}
       isOwn={isOwn}
       isHighlighted={isHighlighted}
-      isQueued={isQueued}
+      onDiscard={onDiscard}
       currentUserId={currentUserId}
       onReact={onReact}
       onQuotePress={onQuotePress}
@@ -1445,8 +1389,10 @@ export type ChatConversationScreenProps = {
   /** newest-first, as delivered by the hook. Entries tagged `type: 'call'` are rendered as call records inline in the timeline; everything else is a text message. */
   messages?: TimelineEntry[];
   onSendMessage: (body: string, options?: { replyTo?: string | null }) => void;
-  /** Re-sends a failed message. Falls back to re-sending its body through `onSendMessage` when absent. */
+  /** Retries the original failed message without minting a new send identity. */
   onRetryMessage?: MessageAction;
+  /** Removes an unsent message from both local history and the durable outbox. */
+  onDiscardMessage?: MessageAction;
   /** Deletes one of the user's own messages, revealed by swiping the bubble left. */
   onDeleteMessage?: MessageAction;
   /** Adds or removes one of the user's emoji reactions, from the long-press reaction bar or by tapping an existing chip. */
@@ -1478,6 +1424,8 @@ export type ChatConversationScreenProps = {
   onRefreshMessages?: () => void;
   /** Shows a persistent banner explaining that queued messages will be delivered once connectivity returns. */
   isOffline?: boolean;
+  /** Account-wide retryable outbox depth; excludes terminal and upload failures. */
+  pendingSendCount?: number;
   /** Message the screen was opened at (a search result): the list scrolls to it and the bubble is emphasised. */
   highlightMessageId?: string | null;
   /** Opens the peer's profile screen. */
@@ -1716,11 +1664,12 @@ function ConversationTimeline({
 
 function ConversationNotices({
   isOffline,
+  pendingSendCount,
   showAttachmentsUnavailable,
   replyTarget,
   setReplyTarget,
   styles,
-}: Pick<ChatConversationScreenProps, 'isOffline'> & {
+}: Pick<ChatConversationScreenProps, 'isOffline' | 'pendingSendCount'> & {
   showAttachmentsUnavailable: boolean;
   replyTarget: ChatMessage | null;
   setReplyTarget: (message: ChatMessage | null) => void;
@@ -1728,14 +1677,7 @@ function ConversationNotices({
 }) {
   return (
     <View style={styles.noticeStack}>
-      {isOffline ? (
-        <Banner
-          icon={OFFLINE_ICON}
-          tone="warning"
-          message={describeOffline(OFFLINE_CONSEQUENCE.conversation)}
-          testID="chat-offline-notice"
-        />
-      ) : null}
+      <OutboxOfflineBanner offline={Boolean(isOffline)} count={pendingSendCount ?? 0} />
       {showAttachmentsUnavailable ? (
         <Banner
           icon="messageFailed"
@@ -1919,6 +1861,7 @@ function ChatConversationScreen({
   onOpenProfile,
   onSendMessage,
   onRetryMessage,
+  onDiscardMessage,
   onDeleteMessage,
   onReactToMessage,
   onDownloadAttachment,
@@ -1938,6 +1881,7 @@ function ChatConversationScreen({
   isLoadingMessages = false,
   isRefreshingMessages = false,
   isOffline = false,
+  pendingSendCount = 0,
   onTypingChange,
   unreadCount = 0,
   initialDraft = null,
@@ -2560,9 +2504,8 @@ function ChatConversationScreen({
         onRetryMessage(message);
         return;
       }
-      onSendMessage?.(message?.body);
     },
-    [onRetryMessage, onSendMessage],
+    [onRetryMessage],
   );
 
   const handleDelete = useCallback(
@@ -2674,12 +2617,12 @@ function ChatConversationScreen({
           }
           isGroupEnd={item.isGroupEnd}
           isOwn={item.message.senderId === currentUserId}
-          isQueued={isOffline}
           isHighlighted={
             Boolean(activeHighlightId) && item.message.messageId === activeHighlightId
           }
           currentUserId={currentUserId}
           onRetry={handleRetry}
+          onDiscard={onDiscardMessage}
           onDelete={onDeleteMessage ? handleDelete : undefined}
           onReply={handleReply}
           onReact={onReactToMessage ? handleReact : undefined}
@@ -2707,11 +2650,11 @@ function ChatConversationScreen({
       handleOpenMedia,
       handleReply,
       handleRetry,
-      isOffline,
       messagesById,
       onCallBack,
       onCancelAttachmentUpload,
       onDeleteMessage,
+      onDiscardMessage,
       onDownloadAttachment,
       onOpenAttachment,
       onReactToMessage,
@@ -2821,6 +2764,7 @@ function ChatConversationScreen({
         />
         <ConversationNotices
           isOffline={isOffline}
+          pendingSendCount={pendingSendCount}
           showAttachmentsUnavailable={showAttachmentsUnavailable}
           replyTarget={replyTarget}
           setReplyTarget={setReplyTarget}

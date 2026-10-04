@@ -48,6 +48,7 @@ import {
 } from '../messaging/messageHistory';
 import { createMessageId, timelineEntryId } from '../messaging/messageIdentity';
 import { mergeMessageSearchResults } from '../messaging/messageSearch';
+import { deriveDeliveryState } from '../messaging/deliveryState';
 import { resumeMessageBackfill } from '../messaging/messageBackfill';
 import { syncConversationDelta } from '../messaging/deltaSync';
 import {
@@ -259,7 +260,9 @@ export default function useMessaging({
   // every mutation so it survives process death. Held in a ref (not state) so
   // the drain loop always reads the latest queue.
   const outboxRef = useRef(([] as OutboxItem[]));
-  const [pendingSendCount, setPendingSendCount] = useState(0);
+  const [outbox, setOutbox] = useState<OutboxItem[]>([]);
+  const [inFlight, setInFlight] = useState<Record<string, number>>({});
+  const pendingSendCount = outbox.filter(isRetryable).length;
   // null until the socket reports either way, so the UI doesn't flash an
   // "offline" banner during the first connect.
   const [isSocketConnected, setIsSocketConnected] = useState(
@@ -292,7 +295,8 @@ export default function useMessaging({
     setActiveChatPeerId(null);
     setTypingByPeer({});
     setGroupTyping({});
-    setPendingSendCount(0);
+    setOutbox([]);
+    setInFlight({});
     outboxRef.current = [];
     conversationsRef.current = [];
     conversationsFetchedRef.current = false;
@@ -354,7 +358,7 @@ export default function useMessaging({
       const message = messagesByPeerRef.current[item.recipientId]?.find(row => row.messageId === item.messageId);
       if (message) restoredConversations = withOutgoingMessage(restoredConversations, message);
     }
-    setPendingSendCount(snapshot.outbox.length);
+    setOutbox(snapshot.outbox);
     // Only fill in what the network hasn't already provided: a response that
     // beat the disk read is newer than the cache.
     const pendingPeers = new Set(snapshot.outbox.map(item => item.recipientId));
@@ -701,7 +705,7 @@ export default function useMessaging({
   const persistOutbox = useCallback(/** @param next */ (next: OutboxItem[]) => {
     if (!scope || scopeRef.current !== scope) return;
     outboxRef.current = next;
-    setPendingSendCount(next.length);
+    setOutbox(next);
     saveChatSnapshot({
       outbox: next, messagesByPeer: messagesByPeerRef.current, conversations: conversationsRef.current,
     }, scope);
@@ -979,6 +983,7 @@ export default function useMessaging({
         if (prepared.status !== 'ready') return prepared.status;
         if (!isCurrent() || !socketRef.current?.connected) return false;
         item = prepared.item;
+        if (!item.localMock) setInFlight(prev => ({ ...prev, [item.messageId]: generation }));
         const ack = item.localMock
           ? { message: sendMockGroup(prepared.row, item, userId) }
           : await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, outboxSendPayload(item));
@@ -994,6 +999,13 @@ export default function useMessaging({
         return true;
       } catch (error) {
         return recordSendFailure(item, error, isCurrent);
+      } finally {
+        if (isCurrent()) setInFlight(prev => {
+          if (prev[item.messageId] !== generation) return prev;
+          const next = { ...prev };
+          delete next[item.messageId];
+          return next;
+        });
       }
     },
     [commitOutbox, patchMessage, persistOutbox, signalingRef, socketRef, scope, userId, prepareOutboxSend, recordSendFailure],
@@ -1520,13 +1532,14 @@ export default function useMessaging({
   );
 
   const handleMessageDelivered = useCallback(/** @param message */ (message: ChatMessage) => {
-    if (!message?.recipientId) return;
+    if (!message?.messageId) return;
     const group = conversationsRef.current.find(row => row.group && row.conversationId === message.conversationId);
     if (group) {
       commitMessageHistory(patchMessageIn(messagesByPeerRef.current, group.peerId, message.messageId,
         entry => asSent(entry, message)));
       return;
     }
+    if (!message.recipientId) return;
     commitMessageHistory(applyDeliveryReceipt(messagesByPeerRef.current, message));
   }, [commitMessageHistory]);
 
@@ -1692,6 +1705,7 @@ export default function useMessaging({
   /** The socket went down: drive the offline banner. */
   const handleSocketDisconnected = useCallback(() => {
     setIsSocketConnected(false);
+    setInFlight({});
     const disconnectedScope = scopeRef.current;
     if (!disconnectedScope) return;
     const persistLatest = () => {
@@ -1749,9 +1763,33 @@ export default function useMessaging({
     setDrafts(prev => withoutDraft(prev, peerId));
   }, []);
 
+  // Derive only at the presentation boundary: in-flight state must not survive
+  // a restart. For live groups, delivered/read means at least one other member.
+  const deliveryMessages = useMemo(() => {
+    const queued = new Map(outbox.map(item => [item.messageId, item]));
+    return Object.fromEntries(Object.entries(messagesByPeer).map(([peerId, messages]) => {
+      const group = conversations.find(row => row.peerId === peerId && row.group && !row.localMock);
+      return [peerId, messages.map(message => message.senderId === userId ? {
+        ...message,
+        deliveryState: deriveDeliveryState({
+          ...message,
+          ...(group ? {
+            recipientId: undefined,
+            deliveredTo: message.deliveredTo?.filter(id => id !== userId && group.group!.memberIds.includes(id)),
+          } : {}),
+          readAt: message.readAt ?? Object.entries(group?.readByMember ?? {}).find(([memberId, readAt]) =>
+            memberId !== userId && group?.group?.memberIds.includes(memberId) &&
+            Date.parse(readAt) >= Date.parse(message.createdAt ?? ''))?.[1],
+        }, queued.get(message.clientMessageId ?? message.messageId) ??
+          queued.get(message.messageId), isSocketConnected !== false && inFlight[message.messageId] !== undefined),
+      } : message),
+      ];
+    }));
+  }, [messagesByPeer, conversations, outbox, inFlight, isSocketConnected, userId]);
+
   return {
     conversations: stateScope === scope ? conversations : [],
-    messagesByPeer: stateScope === scope ? messagesByPeer : {},
+    messagesByPeer: stateScope === scope ? deliveryMessages : {},
     drafts: stateScope === scope ? drafts : {},
     saveDraft,
     clearDraft,

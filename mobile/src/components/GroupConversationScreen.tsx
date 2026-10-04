@@ -7,6 +7,9 @@ import { radius, spacing, typography } from '../theme';
 import { Sheet } from './primitives';
 import GroupDirectorySheet from './GroupDirectorySheet';
 import GroupCallPreview from './GroupCallPreview';
+import MessageDeliveryIndicator from './chat/MessageDeliveryIndicator';
+import OutboxOfflineBanner from './chat/OutboxOfflineBanner';
+import { messageDeliveryState } from '../messaging/deliveryState';
 import type { GroupCallSnapshot } from '../chat/groupCallAdapter';
 import type { ChatContextValue } from '../chat/ChatProvider';
 import type { ChatMessage, ConversationSummary } from '../messaging/types';
@@ -32,6 +35,8 @@ type Props = {
   onSearchUsers: (query: string) => Promise<ContactRow[]>;
   onSend: (body: string) => Promise<unknown>;
   onRetry: (messageId: string) => Promise<unknown>;
+  onDiscard?: (messageId: string) => void;
+  pendingSendCount?: number;
   onTyping: (typing: boolean) => void;
   onRead: () => Promise<void>;
   onBack: () => void;
@@ -52,10 +57,21 @@ function Action({ label, onPress, disabled = false, testID, styles }: {
   </Pressable>;
 }
 
-function GroupBubble({ message, row, currentUserId, onRetry, styles }: {
+type GroupBubbleProps = {
   message: ChatMessage; row: ConversationSummary; currentUserId: string;
-  onRetry: (id: string) => void; styles: Styles;
-}) {
+  onRetry: (id: string) => void; onDiscard?: (id: string) => void; styles: Styles;
+};
+
+function GroupDelivery({ message, row, onRetry, onDiscard, styles }: Omit<GroupBubbleProps, 'currentUserId'>) {
+  const status = messageDeliveryState(message);
+  const savedMock = row.localMock && ['sent', 'delivered', 'read'].includes(status);
+  if (savedMock) return <Text style={styles.secondary} accessibilityLabel="Saved locally (mock)">Saved locally (mock)</Text>;
+  return <MessageDeliveryIndicator status={status} style={styles.secondary} testPrefix="group"
+    onRetry={!row.left ? () => onRetry(message.messageId) : undefined}
+    onDiscard={onDiscard ? () => onDiscard(message.messageId) : undefined} />;
+}
+
+function GroupBubble({ message, row, currentUserId, onRetry, onDiscard, styles }: GroupBubbleProps) {
   const own = message.senderId === currentUserId;
   const readers = (row.group?.memberIds ?? []).filter(id => id !== currentUserId &&
     Date.parse(row.readByMember?.[id] ?? '') >= Date.parse(message.createdAt ?? ''));
@@ -63,17 +79,9 @@ function GroupBubble({ message, row, currentUserId, onRetry, styles }: {
     <Text style={styles.name}>{own ? 'You' : message.senderId}</Text>
     <Text style={styles.text}>{message.deletedAt ? 'Message deleted' :
       !message.type || message.type === 'text' ? message.body : describeMessagePreview(message)}</Text>
-    {own ? <Text style={styles.secondary}>{groupMessageStatus(message, Boolean(row.localMock))}</Text> : null}
+    {own ? <GroupDelivery message={message} row={row} styles={styles} onRetry={onRetry} onDiscard={onDiscard} /> : null}
     {own && readers.length ? <Text style={styles.secondary}>Read by {readers.join(', ')}</Text> : null}
-    {own && message.failed && !row.left ? <Action label="Retry message" styles={styles}
-      onPress={() => onRetry(message.messageId)} testID={`group-retry-${message.messageId}`} /> : null}
   </View>;
-}
-
-function groupMessageStatus(message: ChatMessage, mock: boolean) {
-  if (message.pending) return 'Queued';
-  if (message.failed) return 'Failed';
-  return mock ? 'Saved locally (mock)' : 'Sent';
 }
 
 function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, actions, preview, run, busy, styles }: {
@@ -118,8 +126,8 @@ function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, ac
 }
 
 export default function GroupConversationScreen({
-  conversation: row, messages, currentUserId, typing, actions, preview, callSnapshot, callActions, onSearchUsers, onSend, onRetry,
-  onTyping, onRead, onBack, draft, onDraft, offline, onRefresh, onLoadOlder, isRefreshing = false,
+  conversation: row, messages, currentUserId, typing, actions, preview, callSnapshot, callActions, onSearchUsers, onSend, onRetry, onDiscard,
+  onTyping, onRead, onBack, draft, onDraft, offline, pendingSendCount = 0, onRefresh, onLoadOlder, isRefreshing = false,
 }: Props) {
   const styles = useThemedStyles(createStyles);
   const insets = useContext(SafeAreaInsetsContext);
@@ -166,7 +174,7 @@ export default function GroupConversationScreen({
     <Text style={styles.title} accessibilityRole="header">{group.name}</Text>
     <Text style={styles.secondary}>{row.localMock ? 'Local mock group — not shared with other devices.' :
       'Live group — messages and lifecycle use the server. Read summaries are local.'}</Text>
-    {offline ? <Text style={styles.secondary}>Offline — sends are durably queued</Text> : null}
+    <OutboxOfflineBanner offline={offline} count={pendingSendCount} testID="group-offline-notice" />
     {!isMember ? <Text style={styles.text}>You left this group or were removed.</Text> : null}
     <View style={styles.controls}>
       <Action label="Members" styles={styles} onPress={() => setMembersVisible(true)} testID="group-open-members" />
@@ -180,7 +188,7 @@ export default function GroupConversationScreen({
       refreshControl={onRefresh ? <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} /> : undefined}
       ListEmptyComponent={<Text style={styles.text}>No group messages yet</Text>}
       renderItem={({ item }) => <GroupBubble message={item} row={row} currentUserId={currentUserId}
-        styles={styles} onRetry={id => { void run(() => onRetry(id)); }} />} />
+        styles={styles} onRetry={id => { void run(() => onRetry(id)); }} onDiscard={onDiscard} />} />
     {typists.length ? <Text style={styles.secondary} testID="group-typing">{typists.join(', ')} typing…</Text> : null}
     {error ? <Text style={styles.text} accessibilityRole="alert" testID="group-error">{error}</Text> : null}
     <TextInput style={styles.input} value={draft} onChangeText={text => { onDraft(text); reportTyping(Boolean(text.trim())); }}

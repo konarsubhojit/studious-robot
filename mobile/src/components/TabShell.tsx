@@ -136,6 +136,7 @@ function TabShell() {
     cancelAttachmentUpload,
     clearDraft,
     deleteMessage,
+    discardMessage,
     isPeerMuted,
     isUserBlocked,
     pickAndSendAttachment,
@@ -219,6 +220,7 @@ function TabShell() {
         onRefresh={chat.handleRefreshMessages} onLoadOlder={chat.handleLoadOlderMessages}
         isRefreshing={chat.isRefreshingMessages}
         onSend={body => sendMessage(peerId, body)} onRetry={id => retryMessage(peerId, id)}
+        onDiscard={id => discardMessage(peerId, id)} pendingSendCount={chat.pendingSendCount}
         onTyping={typing => sendTypingIndicator(peerId, typing)} onRead={() => markConversationRead(peerId)}
         onBack={closeChatConversation} draft={chat.drafts[peerId]?.text ?? ''}
         onDraft={text => saveDraft(peerId, text)} offline={chat.isChatOffline} />;
@@ -244,6 +246,7 @@ function TabShell() {
           }
         }}
         onDeleteMessage={message => deleteMessage(peerId, message.messageId)}
+        onDiscardMessage={message => discardMessage(peerId, message.messageId)}
         onReactToMessage={(message, emoji, action) =>
           reactToMessage(peerId, message.messageId, emoji, action)
         }
@@ -286,6 +289,7 @@ function TabShell() {
         }}
         isAttachmentOpenerSupported={isAttachmentOpenerSupported}
         isOffline={chat.isChatOffline}
+        pendingSendCount={chat.pendingSendCount}
         onLoadOlder={chat.handleLoadOlderMessages}
         onBack={closeChatConversation}
         currentUserId={chat.currentUserId}
@@ -330,6 +334,7 @@ function TabShell() {
     chat.handleLoadOlderMessages,
     chat.handleRefreshMessages,
     chat.isChatOffline,
+    chat.pendingSendCount,
     chat.isLoadingMessages,
     chat.isRefreshingMessages,
     chat.isRecordingVoiceNote,
@@ -349,6 +354,7 @@ function TabShell() {
     chat.groupCalls,
     clearDraft,
     deleteMessage,
+    discardMessage,
     insets.top,
     isAttachmentOpenerSupported,
     isPlacingCall,

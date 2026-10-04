@@ -1,4 +1,5 @@
 import type { AttachmentRecord, ConversationRecord, MessageRecord } from '../../../shared/signaling/schemas';
+import type { DeliveryState } from './deliveryState';
 
 /**
  * The vocabulary the messaging client is written in: the shapes every
@@ -17,6 +18,8 @@ import type { AttachmentRecord, ConversationRecord, MessageRecord } from '../../
 export type ChatMessage = Omit<MessageRecord, 'conversationId'> & {
   conversationId?: string | null;
   status?: string;
+  /** Derived at the hook boundary; never persisted as an in-flight state. */
+  deliveryState?: DeliveryState;
   peerId?: string;
   localId?: string;
   clientCreatedAt?: string;

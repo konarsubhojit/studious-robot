@@ -21,6 +21,7 @@ import {
   withUploadProgress,
   withoutMessage,
 } from '../../src/messaging/sendPipeline';
+import { deriveDeliveryState } from '../../src/messaging/deliveryState';
 
 /**
  * The send pipeline's pure half, exercised without mounting `useMessaging`:
@@ -44,6 +45,30 @@ const queued = (overrides: any = {}): any => ({
   createdAt: '2026-08-25T10:30:00.000Z',
   attempts: 0,
   ...overrides,
+});
+
+describe('delivery state', () => {
+  test('authoritative outbox determines waiting, in-flight and terminal states despite stale flags', () => {
+    const message = draft({ failed: true, pending: true, readAt: '2026-08-25T10:31:00Z' });
+    expect(deriveDeliveryState(message, queued())).toBe('queued');
+    expect(deriveDeliveryState(message, queued(), true)).toBe('sending');
+    expect(deriveDeliveryState(message, queued({ state: 'failed' }), true)).toBe('failed');
+    expect(deriveDeliveryState(message, queued({ attempts: OUTBOX_MAX_ATTEMPTS }))).toBe('failed');
+  });
+
+  test('server receipts determine sent, delivered and read after reconciliation', () => {
+    expect(deriveDeliveryState(draft())).toBe('sent');
+    expect(deriveDeliveryState(draft({ deliveredTo: ['other'] }))).toBe('sent');
+    expect(deriveDeliveryState(draft({ deliveredTo: ['bob'], pending: true }))).toBe('delivered');
+    expect(deriveDeliveryState(draft({ readAt: '2026-08-25T10:31:00Z', failed: true }))).toBe('read');
+    expect(deriveDeliveryState(draft({ recipientId: undefined, deliveredTo: ['bob'] }))).toBe('delivered');
+  });
+
+  test('legacy optimistic rows never imply an in-flight emit and failed uploads remain failed', () => {
+    expect(deriveDeliveryState(draft({ pending: true }))).toBe('queued');
+    expect(deriveDeliveryState(draft({ syncState: 'pending' }))).toBe('queued');
+    expect(deriveDeliveryState(draft({ uploadState: 'failed' }), queued(), true)).toBe('failed');
+  });
 });
 
 describe('optimistic send', () => {
