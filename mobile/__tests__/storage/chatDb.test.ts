@@ -53,6 +53,34 @@ function makeMessages(count: number, overrides: Partial<import('../../src/hooks/
 }
 
 describe('chatDb', () => {
+  test('multipart checkpoints and offline cleanup tombstones survive a SQLite cold reload', async () => {
+    const scope = 'https://example.test:multipart-checkpoints';
+    await loadChatSnapshot(scope);
+    const item = {
+      messageId: 'upload-1', clientMessageId: 'upload-1', recipientId: 'bob', body: '', attempts: 0,
+      type: 'file', attachment: { url: 'file:///docs/upload-1', mimeType: 'application/pdf', sizeBytes: 6_000_000 },
+      upload: { uri: 'file:///docs/upload-1', key: 'chatblobs/alice_bob/one.pdf',
+        uploadId: 'r2-upload-id', partSize: 5_242_880,
+        parts: [{ partNumber: 1, etag: '"first"', sizeBytes: 5_242_880 }], progress: 0.8738 },
+    };
+    saveChatSnapshot({ outbox: [item] }, scope);
+    await flushChatDb(scope);
+    resetChatDbCache();
+    let snapshot = await loadChatSnapshot(scope);
+    expect(snapshot.outbox[0]).toEqual(item);
+    const restored = restoreOutboxMessages({}, snapshot.outbox, 'alice');
+    expect(restored.bob[0]).toMatchObject({ uploadState: 'uploading', uploadProgress: 0.8738 });
+    const tombstone = { ...item, discarded: true, cleanupAfter: 123456789, nextAttemptAt: 123456789 };
+    saveChatSnapshot({ outbox: [tombstone], messagesByPeer: restored }, scope);
+    await flushChatDb(scope);
+    resetChatDbCache();
+    snapshot = await loadChatSnapshot(scope);
+    expect(snapshot.outbox[0]).toEqual(tombstone);
+    expect(restoreOutboxMessages(snapshot.messagesByPeer, snapshot.outbox, 'alice').bob).toEqual([]);
+    const records = await withDatabase(db => db.execute('SELECT payload FROM outbox WHERE scope = ?', [scope]));
+    expect(records.rows).toHaveLength(1);
+    expect(String(records.rows[0].payload)).not.toMatch(/X-Amz-|https:\/\//);
+  });
   test('explicit keys and server identities survive SQLite cold reload without duplicating a retained outbox', async () => {
     const scope = 'https://example.test:explicit-message-key';
     const clientMessageId = 'c936b4b1-f230-4d28-8e32-e28d1e76dff7';

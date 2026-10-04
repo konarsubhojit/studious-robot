@@ -1012,7 +1012,7 @@ export type MessageRowProps = {
   onOpenAttachment?: MessageAction;
   isAttachmentOpenerSupported?: boolean;
   onOpenMedia?: MessageAction;
-  onCancelAttachmentUpload?: () => void;
+  onCancelAttachmentUpload?: (message: ChatMessage) => void;
   onCancelDownload?: MessageAction;
   downloadState?: AttachmentDownloadState;
 };
@@ -1143,7 +1143,8 @@ function MessageFooter({
           styles={styles}
           onRetry={retryFailedMessage}
           onDiscard={onDiscard ? () => onDiscard(message) : undefined}
-          onCancelUpload={message.uploadState === 'uploading' ? onCancelAttachmentUpload : undefined}
+          onCancelUpload={message.uploadState === 'uploading' && onCancelAttachmentUpload
+            ? () => onCancelAttachmentUpload?.(message) : undefined}
         />
       ) : null}
     </View>
@@ -1457,7 +1458,7 @@ export type ChatConversationScreenProps = {
   isUploadingAttachment?: boolean;
   /** Upload progress, 0–1. */
   attachmentUploadProgress?: number;
-  onCancelAttachmentUpload?: () => void;
+  onCancelAttachmentUpload?: (message: ChatMessage) => void;
   /** A voice note is currently being recorded. */
   isRecordingVoiceNote?: boolean;
   /** Whether this server has attachment uploads configured; the attach control stays visible either way (never silently absent) but is disabled with an explanatory message when this is `false`. */

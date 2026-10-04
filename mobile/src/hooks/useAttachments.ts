@@ -3,7 +3,8 @@ import { MESSAGE_TYPES } from '../../../shared';
 import {
   ATTACHMENT_CANCELLED_MESSAGE,
   isAttachmentUploadKnownUnavailable,
-  uploadAttachment,
+  validateAttachment,
+  AttachmentError,
 } from '../attachmentUpload';
 import { logInfo, logWarn } from '../appLogger';
 import { pickCameraPhoto, pickDocument, pickPhoto } from '../attachmentPicker';
@@ -19,14 +20,12 @@ import {
 
 /**
  * Owns the send-side attachment pipeline the composer's attach/mic controls
- * drive: runtime permission → native picker/recorder → upload (validate →
- * presign → `PUT`) → `sendMessage`.
+ * drive: runtime permission → native picker/recorder → validation → durable
+ * queue. The outbox worker owns presigning, upload progress, and retries.
  *
- * A server without R2 configured only reports it on the *first* presign
- * attempt (`503`); this hook remembers that across the whole session
- * (`attachmentUpload`'s cache) so the control degrades to a clear, disabled
- * state instead of dead-ending silently on every subsequent tap — the bug
- * this whole pipeline exists to fix.
+ * Composition does not require connectivity. Storage availability failures
+ * belong to the queued bubble; local permission/picker/copy failures are
+ * surfaced immediately.
  *
  * @param params
  */
@@ -37,16 +36,15 @@ export type UseAttachmentsParams = {
   updateAttachmentUploadProgress: (peerId: string, messageId: string, progress: number) => void;
   finishAttachmentUpload: (peerId: string, messageId: string, type: string, attachment: AttachmentRecord) => Promise<void>;
   failAttachmentUpload: (peerId: string, messageId: string, error?: string | null) => void;
+  discardAttachmentUpload?: (peerId: string, messageId: string) => void;
   updateStatus: (message: string, severity?: CallStatus['severity']) => void;
 };
 
 export default function useAttachments({
-  authedFetchRef,
-  signalingUrl,
   beginAttachmentUpload,
-  updateAttachmentUploadProgress,
   finishAttachmentUpload,
   failAttachmentUpload,
+  discardAttachmentUpload,
   updateStatus,
 }: UseAttachmentsParams) {
   const [isUploading, setIsUploading] = useState(false);
@@ -55,15 +53,9 @@ export default function useAttachments({
   const [attachmentsAvailable, setAttachmentsAvailable] = useState(
     () => !isAttachmentUploadKnownUnavailable(),
   );
-  // Set for the lifetime of one `PUT`; calling it aborts the XHR, which
-  // rejects the upload with ATTACHMENT_CANCELLED_MESSAGE.
+  // Cancels composition while the app-owned copy is being committed. Bubble
+  // cancellation targets its message identity in the outbox, not this ref.
   const abortUploadRef = useRef<(() => void) | null>(null);
-
-  const authedFetch = useCallback(
-    (build: (sessionId: string) => { url: string; options?: object; }) =>
-      authedFetchRef.current?.(build) ?? Promise.resolve(null),
-    [authedFetchRef],
-  );
 
   const sendPicked = useCallback(
     async (peerId: string, type: string, picked: any, existingMessageId?: string | null) => {
@@ -91,29 +83,20 @@ export default function useAttachments({
         setIsUploading(false);
         return;
       }
+      let cancelled = false;
+      abortUploadRef.current = () => {
+        cancelled = true;
+        discardAttachmentUpload?.(peerId, messageId);
+      };
       try {
-        const attachment = await uploadAttachment({
-          authedFetch,
-          signalingUrl,
-          peerId,
-          type,
-          uri: picked.uri,
-          mimeType: picked.mimeType,
-          sizeBytes: picked.sizeBytes,
-          name: picked.name,
-          width: picked.width,
-          height: picked.height,
-          durationMs: picked.durationMs,
-          waveform: picked.waveform,
-          onProgress: progress => {
-            setUploadProgress(progress);
-            updateAttachmentUploadProgress(peerId, messageId, progress);
-          },
-          onAbortHandle: abort => {
-            abortUploadRef.current = abort;
-          },
-        });
+        const validation = validateAttachment({ type, mimeType: picked.mimeType, sizeBytes: picked.sizeBytes });
+        if (!validation.ok) throw new AttachmentError(validation.message);
+        // Composition queues a local descriptor only. Credentials and binary
+        // transfer belong exclusively to the durable outbox worker.
+        const { uri, ...metadata } = picked;
+        const attachment = { ...metadata, mimeType: picked.mimeType.trim().toLowerCase(), url: uri };
         await finishAttachmentUpload(peerId, messageId, type, attachment);
+        if (cancelled) throw new AttachmentError(ATTACHMENT_CANCELLED_MESSAGE);
       } catch (error) {
         const failure = ((error ?? {}) as { status?: number, message?: string });
         logWarn('[Attachments] composer upload error', {
@@ -134,12 +117,10 @@ export default function useAttachments({
       }
     },
     [
-      authedFetch,
       beginAttachmentUpload,
+      discardAttachmentUpload,
       failAttachmentUpload,
       finishAttachmentUpload,
-      signalingUrl,
-      updateAttachmentUploadProgress,
       updateStatus,
     ],
   );
@@ -169,8 +150,8 @@ export default function useAttachments({
   );
 
   /**
-   * Abort the in-flight upload, if there is one. Safe to call at any time: it
-   * is a no-op once the `PUT` has finished or has not started yet.
+   * Cancel a pending composition. Active/queued bubble cancellation is
+   * handled by useMessaging.discardMessage.
    */
   const cancelUpload = useCallback(() => {
     const abort = abortUploadRef.current;

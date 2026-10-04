@@ -34,6 +34,7 @@ const API_ROUTES = Object.freeze({
   /** Per-conversation, cursor-based delta for reconnect reconciliation. */
   MESSAGES_DELTA: '/messages/delta',
   ATTACHMENTS_PRESIGN: '/attachments/presign',
+  ATTACHMENTS_UPLOAD: '/attachments/upload',
   ATTACHMENTS_DOWNLOAD: '/attachments/download',
   AVATAR: '/avatar',
   AVATAR_PRESIGN: '/avatar/presign',

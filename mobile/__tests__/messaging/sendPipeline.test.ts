@@ -82,6 +82,37 @@ describe('delivery state', () => {
 });
 
 describe('optimistic send', () => {
+  test('discarded uploads hide reconciled server identities without hiding another sender', () => {
+    const item = queued({ messageId: 'original', clientMessageId: 'client', discarded: true });
+    const server = draft({ messageId: 'server', clientMessageId: 'client' });
+    const peer = { ...server, messageId: 'peer-message', senderId: 'bob' };
+    expect(restoreOutboxMessages({ bob: [server, peer] }, [item], 'alice').bob).toEqual([peer]);
+  });
+  test('cleanup tombstones stay retryable and do not block later sends during the final sweep delay', async () => {
+    const discarded = queued({
+      discarded: true, state: 'failed', attempts: 99, nextAttemptAt: Date.now() + 60_000,
+    });
+    const next = queued({ messageId: 'm2', createdAt: '2026-08-25T10:31:00.000Z' });
+    expect(isRetryable(discarded)).toBe(true);
+    const queue = drainOrder([next, discarded]);
+    expect(queue[0]).toBe(discarded);
+    expect(nextOutboxDeadline(queue)).toBeLessThanOrEqual(Date.now());
+    const send = jest.fn(async () => true);
+    await drainQueuedMessages(queue, send);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(next);
+  });
+  test('a completion checkpoint restores the opaque reference even if its UI mirror was interrupted', () => {
+    const item = queued({
+      body: '', type: 'file', attachment: { url: 'file:///docs/source', mimeType: 'application/pdf', sizeBytes: 10 },
+      upload: { uri: 'file:///docs/source', parts: [], completed: true, progress: 1, key: 'chatblobs/alice_bob/file.pdf' },
+    });
+    const stale = buildUploadingMessage(draft({ body: '', type: 'file', attachment: item.attachment }));
+    const restored = restoreOutboxMessages({ bob: [stale] }, [item], 'alice');
+    expect(restored.bob[0]).toMatchObject({
+      attachment: { url: 'chatblobs/alice_bob/file.pdf' }, uploadState: undefined, uploadProgress: undefined,
+    });
+  });
   test('an optimistic message is pending and carries the composed content', () => {
     const message = buildOptimisticMessage(draft({ replyTo: 'm0' }));
     expect(message).toMatchObject({

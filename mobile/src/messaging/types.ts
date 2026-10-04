@@ -60,6 +60,22 @@ export type OutboxItem = {
   state?: 'pending' | 'failed';
   /** Persisted wall-clock deadline in milliseconds; null means ready immediately. */
   nextAttemptAt?: number | null;
+  /** Local-only upload checkpoint. Signed URLs/credentials never belong here. */
+  upload?: {
+    uri: string;
+    key?: string;
+    uploadId?: string;
+    partSize?: number;
+    parts: { partNumber: number; etag: string; sizeBytes: number }[];
+    progress: number;
+    completed?: boolean;
+  };
+  /** Hidden from the timeline while server reconciliation and cleanup retry. */
+  discarded?: boolean;
+  /** Server tombstone confirmed before storage cleanup; survives cleanup retries. */
+  serverMessageDeleted?: boolean;
+  /** Final sweep after any pre-discard single-PUT grant and request can expire. */
+  cleanupAfter?: number;
 };
 
 export type TimelineCursor = {
