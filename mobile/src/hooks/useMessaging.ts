@@ -122,16 +122,6 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
 
-/**
- * Delete any locally cached bytes for a message that has just been
- * tombstoned, whichever side deleted it.
- *
- * The cache is an optimisation, never a second copy of the record: a cached
- * file that outlived its tombstone would let this device open content the
- * sender has already withdrawn. Best-effort, but a failure is logged rather
- * than swallowed — bytes left behind after a deletion is a privacy-relevant
- * condition, not a silent no-op.
- */
 /** Direct conversations a delta sync covers: the chat list plus the open chat. */
 function directConversationPeers(conversations: ConversationSummary[], activePeer: string | null): Set<string> {
   const peers = new Set(conversations
@@ -143,6 +133,16 @@ function directConversationPeers(conversations: ConversationSummary[], activePee
   return peers;
 }
 
+/**
+ * Delete any locally cached bytes for a message that has just been
+ * tombstoned, whichever side deleted it.
+ *
+ * The cache is an optimisation, never a second copy of the record: a cached
+ * file that outlived its tombstone would let this device open content the
+ * sender has already withdrawn. Best-effort, but a failure is logged rather
+ * than swallowed — bytes left behind after a deletion is a privacy-relevant
+ * condition, not a silent no-op.
+ */
 function evictTombstonedAttachment(messageId: string) {
   evictCachedAttachmentsForMessage(messageId).catch(error => {
     logWarn('[Messaging] Failed to evict the cached attachment of a deleted message', {
