@@ -318,7 +318,11 @@ export default function useMessaging({
     const mergedHistories: Record<string, ChatMessage[]> = {};
     for (const peerId of new Set([...Object.keys(cachedHistories), ...Object.keys(liveHistories)])) {
       mergedHistories[peerId] = dedupeAndSort([
-        ...(cachedHistories[peerId] ?? []),
+        ...(cachedHistories[peerId] ?? []).map(entry =>
+          entry.uploadState === 'uploading' && !attachmentUploadMetaRef.current[entry.messageId] &&
+          !snapshot.outbox.some(item => item.messageId === entry.messageId)
+            ? asUploadFailed(entry, 'Upload interrupted. Retry the attachment upload.')
+            : entry),
         ...(liveHistories[peerId] ?? []),
       ]);
     }

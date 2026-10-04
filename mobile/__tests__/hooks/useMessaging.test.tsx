@@ -122,6 +122,35 @@ afterEach(() => {
 });
 
 describe('useMessaging', () => {
+  test('cold restart fails an interrupted upload and its reply without blocking later sends', async () => {
+    const parentKey = 'interrupted-upload';
+    (chatDb as any).__snapshot.messagesByPeer = { bob: [{
+      messageId: parentKey, clientMessageId: parentKey, senderId: 'alice', recipientId: 'bob',
+      body: '', type: 'image', attachment: { url: 'file://preview.jpg' },
+      createdAt: '2026-10-03T06:00:00.000Z', syncState: 'pending', pending: true, uploadState: 'uploading',
+    }] };
+    (chatDb as any).__snapshot.outbox = [
+      { messageId: 'dependent-reply', clientMessageId: 'dependent-reply', recipientId: 'bob',
+        body: 'reply', replyTo: parentKey, replyToLocalMessageId: parentKey,
+        createdAt: '2026-10-03T06:00:01.000Z', attempts: 0 },
+      { messageId: 'later-send', clientMessageId: 'later-send', recipientId: 'bob',
+        body: 'independent', createdAt: '2026-10-03T06:00:02.000Z', attempts: 0 },
+    ];
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    await act(async () => {});
+    expect(resultRef.current.messagesByPeer.bob.find((entry: any) => entry.messageId === parentKey))
+      .toMatchObject({ uploadState: 'failed', syncState: 'failed', failed: true });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(socket.emit).toHaveBeenCalledTimes(1);
+    expect(socket.emit).toHaveBeenCalledWith('message.send',
+      expect.objectContaining({ body: 'independent', clientMessageId: 'later-send' }), expect.any(Function));
+    expect((chatDb as any).__snapshot.outbox).toEqual([
+      expect.objectContaining({ messageId: 'dependent-reply', clientMessageId: 'dependent-reply', attempts: 5 }),
+    ]);
+  });
+
   test('a delayed send ack preserves a newer call preview while reconciling the message', async () => {
     const socket = makeSocket();
     const { resultRef } = setup({ socketRef: { current: socket } });
