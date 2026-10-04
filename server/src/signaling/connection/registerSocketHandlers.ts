@@ -10,7 +10,7 @@ import {
   ownerDeviceIdForUser,
 } from '../../domain/calls.ts';
 import { placeCallWithShared } from '../../domain/sharedCalls.ts';
-import { notifyCallCreated, notifyIncomingCallAcknowledged, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice, notifyCallTransition } from '../../domain/notifications.ts';
+import { notifyCallCreated, notifyIncomingCallAcknowledged, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice, notifyCallTransition, callWithParticipants } from '../../domain/notifications.ts';
 import { handleSocketCallTransition, handleRtcRelay, handleCallConnected, handleCallStats } from '../callHandlers.ts';
 import { registerMessageHandlers } from '../messageHandlers.ts';
 import { registerConversationHandlers } from '../conversationHandlers.ts';
@@ -245,7 +245,7 @@ function registerSocketHandlers(
       // it had yet, then the ack resolved and painted a ringing screen over the
       // rejection. Acking first means the caller learns the verdict from the
       // reply and the notification only confirms it.
-      acknowledgeSuccess(socket, ack, CLIENT_EVENTS.CALL_INITIATE, { call });
+      acknowledgeSuccess(socket, ack, CLIENT_EVENTS.CALL_INITIATE, { call: callWithParticipants(call) });
       notifyCallCreated(io, state, call);
     });
 

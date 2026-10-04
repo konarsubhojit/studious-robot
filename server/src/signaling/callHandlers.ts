@@ -1,7 +1,7 @@
 import { RTC_ACTIVE_CALL_STATES, CONNECTED_CALL_STATUS } from '../config.ts';
 import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
 import { isCallOwnedByAnotherDevice, recordCallHeartbeat } from '../domain/calls.ts';
-import { notifyCallTransition, emitVersionedCallEvent, emitVersionedRtcSignal } from '../domain/notifications.ts';
+import { notifyCallTransition, emitVersionedCallEvent, emitVersionedRtcSignal, callWithParticipants } from '../domain/notifications.ts';
 import { hydrateCallFromShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
 import { userRoom } from '../lib/state.ts';
 import { describeError } from '../lib/errors.ts';
@@ -178,7 +178,7 @@ async function handleSocketCallTransition(socket: import('socket.io').Socket, ac
   // discarded when the transition was into a terminal state instead.
   flushBufferedRtcSignals(options.io, options.state, callId, result.call.status);
   options.onSuccess?.(result.call, transition, { actorDeviceId, actorSocketId: socket.id });
-  acknowledgeSuccess(socket, ack, options.eventName, { call: result.call });
+  acknowledgeSuccess(socket, ack, options.eventName, { call: callWithParticipants(result.call) });
 }
 
 /**

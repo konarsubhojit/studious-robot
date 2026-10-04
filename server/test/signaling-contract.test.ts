@@ -295,6 +295,10 @@ test('v3 RTC offers addressed outside the participant set are rejected', async (
       version: SIGNALING_VERSION,
       calleeId: 'peer-bob',
     });
+    assert.deepEqual(initiated.call.participants, [
+      { userId: 'peer-alice', state: 'joined' },
+      { userId: 'peer-bob', state: 'ringing' },
+    ]);
     const incoming = await incomingPromise;
     assert.deepEqual(incoming.call.participants, [
       { userId: 'peer-alice', state: 'joined' },
@@ -307,6 +311,10 @@ test('v3 RTC offers addressed outside the participant set are rejected', async (
       callId: initiated.call.callId,
     });
     assert.equal(accepted.ok, true);
+    assert.deepEqual(accepted.call.participants, [
+      { userId: 'peer-alice', state: 'joined' },
+      { userId: 'peer-bob', state: 'joined' },
+    ]);
     const [callerJoined, calleeJoined] = await Promise.all([callerJoinedPromise, calleeJoinedPromise]);
     assert.equal(callerJoined.state, 'joined');
     assert.equal(calleeJoined.participantId, 'peer-bob');

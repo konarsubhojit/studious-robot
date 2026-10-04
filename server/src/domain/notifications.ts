@@ -695,6 +695,7 @@ export {
   emitVersionedUserEvent,
   emitVersionedRtcSignal,
   createCallEnvelope,
+  callWithParticipants,
   getCallTransitionEventName,
   markIncomingCallAcknowledged,
   notifyCallCreated,
