@@ -69,6 +69,16 @@ describe('delivery state', () => {
     expect(deriveDeliveryState(draft({ syncState: 'pending' }))).toBe('queued');
     expect(deriveDeliveryState(draft({ uploadState: 'failed' }), queued(), true)).toBe('failed');
   });
+
+  test('persisted group readers exclude the sender and cannot override the outbox', () => {
+    const message = draft({ recipientId: undefined, readBy: ['alice'] });
+    expect(deriveDeliveryState(message)).toBe('sent');
+    message.readBy.push('bob');
+    expect(deriveDeliveryState(message)).toBe('read');
+    expect(deriveDeliveryState(message, queued())).toBe('queued');
+    expect(deriveDeliveryState(message, queued(), true)).toBe('sending');
+    expect(deriveDeliveryState(message, queued({ state: 'failed' }))).toBe('failed');
+  });
 });
 
 describe('optimistic send', () => {

@@ -1318,6 +1318,134 @@ describe('useMessaging', () => {
     expect((chatDb as any).__snapshot.outbox).toEqual([]);
   });
 
+  test.each(['direct', 'group'].flatMap(kind =>
+    ['server-id', 'original-id', 'client-id'].flatMap(identity =>
+      ['retry', 'discard'].map(action => ({ kind, identity, action })))))
+  ('$kind $action resolves $identity after history reconciliation without duplicating or orphaning the queue',
+    async ({ kind, identity, action }) => {
+      const peerId = kind === 'group' ? 'live-group' : 'bob';
+      const createdAt = '2026-10-03T06:00:00.000Z';
+      if (kind === 'group') {
+        const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+        row.localMock = false;
+        (chatDb as any).__snapshot.conversations = [row];
+      }
+      const original = {
+        messageId: 'original-id', clientMessageId: 'client-id', recipientId: peerId,
+        body: 'lost ack', createdAt, attempts: 5, state: 'failed',
+        lastAttemptAt: createdAt, lastError: 'ack timeout', nextAttemptAt: Date.now() + 60000,
+        ...(kind === 'group' ? { conversationId: peerId, targetKind: 'group' } : {}),
+      };
+      const unrelated = { ...original, recipientId: 'other-peer', messageId: 'other-id' };
+      (chatDb as any).__snapshot.outbox = [original, unrelated];
+      (chatDb as any).__snapshot.messagesByPeer = { [peerId]: [{
+        ...original, senderId: 'alice', pending: true, syncState: 'pending',
+      }] };
+      const socket = makeSocket({ connected: false, ackResponse: { ok: false, error: { message: 'ack timeout' } } });
+      const { resultRef, params } = setup({ socketRef: { current: socket }, groupTransport: 'live' });
+      await act(async () => {});
+      const confirmed = {
+        messageId: 'server-id', clientMessageId: 'client-id', senderId: 'alice', recipientId: peerId,
+        body: original.body, createdAt, conversationId: kind === 'group' ? peerId : 'direct-conversation',
+        ...(kind === 'group' ? { readBy: ['bob'] } : { readAt: createdAt }),
+      };
+      params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ messages: [confirmed] }) });
+      await act(async () => { await resultRef.current.fetchMessagesForPeer(peerId); });
+      expect(resultRef.current.messagesByPeer[peerId]).toHaveLength(1);
+      expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({
+        messageId: 'server-id', clientMessageId: 'client-id', deliveryState: 'failed',
+      });
+
+      if (action === 'retry') {
+        await act(async () => { await resultRef.current.retryMessage(peerId, identity); });
+        expect((chatDb as any).__snapshot.outbox).toEqual([
+          { ...original, attempts: 0, state: 'pending', lastAttemptAt: null, lastError: null, nextAttemptAt: null },
+          unrelated,
+        ]);
+        expect(resultRef.current.messagesByPeer[peerId]).toHaveLength(1);
+        // History keeps the server copy synced; the reset outbox owns delivery state.
+        expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({
+          messageId: 'server-id', clientMessageId: 'client-id', pending: false, failed: false,
+          syncState: 'synced', deliveryState: 'queued',
+        });
+        socket.connected = true;
+        await act(async () => { await resultRef.current.drainOutbox(); });
+        expect(socket.emit).toHaveBeenCalledTimes(1);
+        expect(socket.emit).toHaveBeenCalledWith('message.send', expect.objectContaining({
+          clientMessageId: 'client-id', body: original.body,
+          ...(kind === 'group' ? { conversationId: peerId } : { recipientId: peerId }),
+        }), expect.any(Function));
+        expect(resultRef.current.messagesByPeer[peerId]).toHaveLength(1);
+        expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({
+          messageId: 'original-id', clientMessageId: 'client-id', attempts: 1,
+        });
+      }
+      act(() => resultRef.current.discardMessage(peerId, identity));
+      expect(resultRef.current.messagesByPeer[peerId]).toEqual([]);
+      expect((chatDb as any).__snapshot.outbox).toEqual([unrelated]);
+      await act(async () => { await resultRef.current.drainOutbox(); });
+      expect((chatDb as any).__snapshot.outbox).toEqual([unrelated]);
+    });
+
+  test.each([
+    { readBy: ['alice'], expected: 'sent' },
+    { readBy: ['outsider'], expected: 'sent' },
+    { readBy: ['alice', 'outsider'], expected: 'sent' },
+    { readBy: ['alice', 'outsider', 'bob'], expected: 'read' },
+  ])('live group history readers $readBy yield $expected without a local read watermark', async ({ readBy, expected }) => {
+    const peerId = 'live-group';
+    const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+    row.localMock = false;
+    (chatDb as any).__snapshot.conversations = [row];
+    const { resultRef, params } = setup({ socketRef: { current: makeSocket({ connected: false }) }, groupTransport: 'live' });
+    await act(async () => {});
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ messages: [{
+      messageId: 'server-history', conversationId: peerId, recipientId: peerId, senderId: 'alice',
+      body: 'persisted readers', createdAt: '2026-10-03T06:00:00Z', readBy,
+    }] }) });
+    await act(async () => { await resultRef.current.fetchMessagesForPeer(peerId); });
+    expect(resultRef.current.conversations[0].readByMember).toBeUndefined();
+    expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({ readBy, deliveryState: expected });
+  });
+
+  test.each(['direct', 'group'])('%s history reconciliation during an active request stays sending until ack', async kind => {
+    const peerId = kind === 'group' ? 'live-group' : 'bob';
+    if (kind === 'group') {
+      const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+      row.localMock = false;
+      (chatDb as any).__snapshot.conversations = [row];
+    }
+    const socket = makeSocket();
+    let acknowledge!: (response: any) => void;
+    socket.emit.mockImplementation((_event, _payload, callback) => { acknowledge = callback; });
+    const { resultRef, params } = setup({ socketRef: { current: socket }, groupTransport: 'live' });
+    await act(async () => {});
+    let sending!: Promise<unknown>;
+    await act(async () => { sending = resultRef.current.sendMessage(peerId, 'active send'); });
+    const original = resultRef.current.messagesByPeer[peerId][0];
+    expect(original.deliveryState).toBe('sending');
+    expect(acknowledge).toEqual(expect.any(Function));
+    const confirmed = {
+      messageId: 'server-active', clientMessageId: original.clientMessageId,
+      conversationId: kind === 'group' ? peerId : 'alice:bob',
+      senderId: 'alice', recipientId: peerId, body: original.body, createdAt: original.createdAt,
+    };
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ messages: [confirmed] }) });
+    await act(async () => { await resultRef.current.fetchMessagesForPeer(peerId); });
+    expect((chatDb as any).__snapshot.outbox).toEqual([
+      expect.objectContaining({ messageId: original.messageId, clientMessageId: original.clientMessageId }),
+    ]);
+    expect(resultRef.current.messagesByPeer[peerId]).toEqual([
+      expect.objectContaining({ messageId: 'server-active', deliveryState: 'sending' }),
+    ]);
+    expect(socket.emit).toHaveBeenCalledTimes(1);
+    await act(async () => { acknowledge({ ok: true, message: confirmed }); await sending; });
+    expect(resultRef.current.messagesByPeer[peerId]).toEqual([
+      expect.objectContaining({ messageId: 'server-active', deliveryState: 'sent' }),
+    ]);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
   test.each(['direct', 'group'])('%s delivery is sending only during the actual request, then uses server receipts', async kind => {
     const peerId = kind === 'group' ? 'live-group' : 'bob';
     if (kind === 'group') {

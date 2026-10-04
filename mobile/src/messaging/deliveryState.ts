@@ -10,7 +10,7 @@ export function deriveDeliveryState(message: ChatMessage, outbox?: OutboxItem, i
     if (!isRetryable(outbox)) return 'failed';
     return inFlight ? 'sending' : 'queued';
   }
-  if (message.readAt) return 'read';
+  if (message.readAt || message.readBy?.some(id => id !== message.senderId)) return 'read';
   const delivered = message.deliveredTo ?? [];
   if (message.recipientId ? delivered.includes(message.recipientId) : delivered.length > 0) return 'delivered';
   if (message.failed || message.syncState === 'failed') return 'failed';

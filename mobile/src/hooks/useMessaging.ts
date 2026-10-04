@@ -1259,6 +1259,18 @@ export default function useMessaging({
     [patchMessage, persistOutbox, scope],
   );
 
+  // History can replace the visible id while the outbox retains its compose-time identity.
+  const resolveQueuedMessage = useCallback((peerId: string, messageId: string) => {
+    const messages = (messagesByPeerRef.current[peerId] ?? []).filter(entry => entry.senderId === userId);
+    let message = messages.find(entry => entry.messageId === messageId || entry.clientMessageId === messageId);
+    const identities = new Set([messageId, message?.messageId, message?.clientMessageId]);
+    const queued = outboxRef.current.find(item => item.recipientId === peerId &&
+      (identities.has(item.messageId) || Boolean(item.clientMessageId && identities.has(item.clientMessageId))));
+    message = message ?? messages.find(entry => entry.messageId === queued?.messageId ||
+      Boolean(queued?.clientMessageId && entry.clientMessageId === queued.clientMessageId));
+    return { message, queued };
+  }, [userId]);
+
   /**
    * Re-queue a message whose automatic retries were exhausted, putting it back
    * into `pending` and draining immediately.
@@ -1271,20 +1283,21 @@ export default function useMessaging({
       const group = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
       if (group && (group.left || !group.group!.memberIds.includes(userId))) return;
 
-      const queued = outboxRef.current.some(item => item.messageId === messageId);
+      const { message, queued } = resolveQueuedMessage(trimmedPeerId, messageId);
       // The retry keeps the original message identity, so a late-succeeding
       // original send cannot land alongside it as a duplicate.
       if (!queued) return;
 
-      patchMessage(trimmedPeerId, messageId, asQueued);
-      persistOutbox(withAttemptsReset(outboxRef.current, messageId));
+      patchMessage(trimmedPeerId, message?.messageId ?? messageId, asQueued);
+      const [reset] = withAttemptsReset([queued], queued.messageId);
+      persistOutbox(outboxRef.current.map(item => item === queued ? reset : item));
       clearTimeout(drainTimerRef.current ?? undefined);
       drainTimerRef.current = null;
       const generation = workerGenerationRef.current;
       if (!await commitOutbox(() => scopeRef.current === scope && workerGenerationRef.current === generation)) return;
       await drainOutbox();
     },
-    [commitOutbox, drainOutbox, patchMessage, persistOutbox, scope, userId],
+    [commitOutbox, drainOutbox, patchMessage, persistOutbox, resolveQueuedMessage, scope, userId],
   );
 
   /**
@@ -1306,10 +1319,11 @@ export default function useMessaging({
     (peerId: string, messageId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
-      removeMessageLocally(trimmedPeerId, messageId);
-      persistOutbox(withoutMessage(outboxRef.current, messageId));
+      const { message, queued } = resolveQueuedMessage(trimmedPeerId, messageId);
+      removeMessageLocally(trimmedPeerId, message?.messageId ?? messageId);
+      persistOutbox(outboxRef.current.filter(item => item !== queued));
     },
-    [persistOutbox, removeMessageLocally],
+    [persistOutbox, removeMessageLocally, resolveQueuedMessage],
   );
 
   /**
@@ -1766,23 +1780,32 @@ export default function useMessaging({
   // Derive only at the presentation boundary: in-flight state must not survive
   // a restart. For live groups, delivered/read means at least one other member.
   const deliveryMessages = useMemo(() => {
-    const queued = new Map(outbox.map(item => [item.messageId, item]));
+    const queued = new Map<string, OutboxItem>();
+    outbox.forEach(item => {
+      queued.set(JSON.stringify([item.recipientId, item.messageId]), item);
+      if (item.clientMessageId) queued.set(JSON.stringify([item.recipientId, item.clientMessageId]), item);
+    });
     return Object.fromEntries(Object.entries(messagesByPeer).map(([peerId, messages]) => {
       const group = conversations.find(row => row.peerId === peerId && row.group && !row.localMock);
-      return [peerId, messages.map(message => message.senderId === userId ? {
-        ...message,
-        deliveryState: deriveDeliveryState({
+      return [peerId, messages.map(message => {
+        if (message.senderId !== userId) return message;
+        const matchedRow = queued.get(JSON.stringify([peerId, message.clientMessageId ?? message.messageId])) ??
+          queued.get(JSON.stringify([peerId, message.messageId]));
+        return {
           ...message,
-          ...(group ? {
-            recipientId: undefined,
-            deliveredTo: message.deliveredTo?.filter(id => id !== userId && group.group!.memberIds.includes(id)),
-          } : {}),
-          readAt: message.readAt ?? Object.entries(group?.readByMember ?? {}).find(([memberId, readAt]) =>
-            memberId !== userId && group?.group?.memberIds.includes(memberId) &&
-            Date.parse(readAt) >= Date.parse(message.createdAt ?? ''))?.[1],
-        }, queued.get(message.clientMessageId ?? message.messageId) ??
-          queued.get(message.messageId), isSocketConnected !== false && inFlight[message.messageId] !== undefined),
-      } : message),
+          deliveryState: deriveDeliveryState({
+            ...message,
+            ...(group ? {
+              recipientId: undefined,
+              deliveredTo: message.deliveredTo?.filter(id => id !== userId && group.group!.memberIds.includes(id)),
+              readBy: message.readBy?.filter(id => id !== userId && group.group!.memberIds.includes(id)),
+            } : {}),
+            readAt: message.readAt ?? Object.entries(group?.readByMember ?? {}).find(([memberId, readAt]) =>
+              memberId !== userId && group?.group?.memberIds.includes(memberId) &&
+              Date.parse(readAt) >= Date.parse(message.createdAt ?? ''))?.[1],
+          }, matchedRow, isSocketConnected !== false && inFlight[matchedRow?.messageId ?? message.messageId] !== undefined),
+        };
+      }),
       ];
     }));
   }, [messagesByPeer, conversations, outbox, inFlight, isSocketConnected, userId]);
