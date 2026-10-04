@@ -1,4 +1,4 @@
-import { SIGNALING_VERSION } from '../../config.ts';
+import { SIGNALING_VERSION, SUPPORTED_SIGNALING_VERSIONS } from '../../config.ts';
 import { deriveConversationId } from '../../messageStore.ts';
 import { normaliseId } from '../../lib/normalize.ts';
 import { isBlockedAsync } from '../../security.ts';
@@ -464,9 +464,11 @@ function registerMessageHandlers(
 
   socket.on(CLIENT_EVENTS.MESSAGE_TYPING, async (payload = {}) => {
     if (!socket.data.identity?.sessionId) return;
-    if ((payload as Record<string, unknown>).version !== SIGNALING_VERSION) {
+    const version = (payload as Record<string, unknown>).version;
+    if (!SUPPORTED_SIGNALING_VERSIONS.some((supportedVersion) => supportedVersion === version)) {
       return;
     }
+    socket.data.signalingVersion = version;
 
     const parsed = parseEventPayload(CLIENT_EVENTS.MESSAGE_TYPING, payload);
     if (!parsed.success) {

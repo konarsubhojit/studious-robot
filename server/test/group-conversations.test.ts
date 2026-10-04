@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
-import { API_ROUTES, CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
+import { API_ROUTES, CLIENT_EVENTS, LEGACY_SIGNALING_VERSION, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
 import { fanoutConversationEvent } from '../src/domain/conversationFanout.ts';
+import { userProtocolRoom, userRoom } from '../src/lib/state.ts';
 import { createConversationStore, createMemoryMessageBus, createServer } from '../src/index.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
@@ -442,10 +443,17 @@ test('ring expiry declines pending invitees without ending an active group call'
 });
 
 test('call fan-out drops snapshots older than the newest committed state version', async () => {
-  const emitted: number[] = [];
+  const emitted: { room: string; excludedRoom?: string; version: number; stateVersion: number }[] = [];
   const io = {
-    to: () => ({
-      emit: (_eventName: string, payload: any) => emitted.push(payload.call.stateVersion),
+    to: (room: string) => ({
+      emit: (_eventName: string, payload: any) => emitted.push({
+        room, version: payload.version, stateVersion: payload.call.stateVersion,
+      }),
+      except: (excludedRoom: string) => ({
+        emit: (_eventName: string, payload: any) => emitted.push({
+          room, excludedRoom, version: payload.version, stateVersion: payload.call.stateVersion,
+        }),
+      }),
     }),
   };
   const event = (stateVersion: number) => ({
@@ -462,5 +470,9 @@ test('call fan-out drops snapshots older than the newest committed state version
 
   await fanoutConversationEvent(io, {} as any, event(2));
   await fanoutConversationEvent(io, {} as any, event(1));
-  assert.deepEqual(emitted, [2]);
+  const currentRoom = userProtocolRoom('version-member', SIGNALING_VERSION);
+  assert.deepEqual(emitted, [
+    { room: currentRoom, version: SIGNALING_VERSION, stateVersion: 2 },
+    { room: userRoom('version-member'), excludedRoom: currentRoom, version: LEGACY_SIGNALING_VERSION, stateVersion: 2 },
+  ]);
 });

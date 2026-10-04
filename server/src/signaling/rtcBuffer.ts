@@ -15,11 +15,10 @@
 import {
   MAX_BUFFERED_RTC_SIGNALS_PER_CALL,
   RTC_ACTIVE_CALL_STATES,
-  SIGNALING_VERSION,
   TERMINAL_CALL_STATES,
 } from '../config.ts';
-import { emitToUserSockets } from '../domain/notifications.ts';
-import { CLIENT_EVENTS } from '../../../shared/index.ts';
+import { emitVersionedRtcSignal } from '../domain/notifications.ts';
+import { CLIENT_EVENTS, SERVER_EVENTS } from '../../../shared/index.ts';
 
 type ServerState = import('../stores/contracts.ts').ServerState;
 type PendingRtcSignal = import('../stores/contracts.ts').PendingRtcSignal;
@@ -55,7 +54,7 @@ const BUFFERABLE_CALL_STATES = new Set(['ringing']);
  * is not evidence that an offer or answer was delivered. That question belongs
  * to the `rtc_relays_*` counters in `callHandlers.ts`.
  */
-const BUFFERABLE_RTC_EVENTS = new Set<string>([CLIENT_EVENTS.RTC_CANDIDATE]);
+const BUFFERABLE_RTC_EVENTS = new Set<string>([CLIENT_EVENTS.RTC_CANDIDATE, CLIENT_EVENTS.RTC_ICE]);
 
 /**
  * Whether a frame for this event, in this state, is worth holding rather than
@@ -137,9 +136,9 @@ function flushBufferedRtcSignals(io: any, state: ServerState, callId: string, st
   state.telemetry?.recordRtcBufferOutcome('replayed', pending.length);
 
   for (const signal of pending) {
-    emitToUserSockets(io, signal.toUserId, signal.eventName, {
-      version: SIGNALING_VERSION,
+    emitVersionedRtcSignal(io, signal.toUserId, SERVER_EVENTS.RTC_ICE, SERVER_EVENTS.RTC_CANDIDATE, {
       callId,
+      peerId: signal.fromUserId,
       fromUserId: signal.fromUserId,
       [signal.dataKey]: signal.value,
     });

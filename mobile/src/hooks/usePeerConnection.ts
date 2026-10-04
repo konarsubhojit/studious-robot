@@ -55,6 +55,7 @@ type RecoveryCallbacks = {
 
 type UsePeerConnectionParams = {
   activeCallIdRef: MutableRef<string | null>;
+  getPeerId: () => string | null;
   activeIceTransportPolicy: IceTransportPolicy;
   isCallerRef: MutableRef<boolean>;
   localStreamRef: MutableRef<WebrtcMediaStream | null>;
@@ -122,6 +123,7 @@ function mergeScreenAudioTracks(
 
 export default function usePeerConnection({
   activeCallIdRef,
+  getPeerId,
   activeIceTransportPolicy,
   isCallerRef,
   localStreamRef,
@@ -149,7 +151,8 @@ export default function usePeerConnection({
     const pc = peerConnectionRef.current;
     const socket = socketRef.current;
     const callId = activeCallIdRef.current;
-    if (!pc || !socket?.connected || !callId) return;
+    const peerId = getPeerId();
+    if (!pc || !socket?.connected || !callId || !peerId) return;
     if (isNegotiatingRef.current) {
       logWarn('[CallFlow] Skipping renegotiation while another is in flight');
       return;
@@ -163,6 +166,7 @@ export default function usePeerConnection({
         {
           version: SIGNALING_VERSION,
           callId,
+          peerId,
           sdp: pc.localDescription ?? offer,
         },
         ack => {
@@ -175,7 +179,7 @@ export default function usePeerConnection({
     } finally {
       isNegotiatingRef.current = false;
     }
-  }, [activeCallIdRef, signalingRef, socketRef]);
+  }, [activeCallIdRef, getPeerId, signalingRef, socketRef]);
 
   const closePeerConnection = useCallback(() => {
     if (missingRemoteTrackTimerRef.current) {
@@ -257,9 +261,12 @@ export default function usePeerConnection({
       if (!candidate || !socketRef.current?.connected) return;
       const summary = summarizeIceCandidate(candidate);
       logVerbose('[CallFlow] ICE candidate sent', summary);
-      signalingRef.current?.emit(CLIENT_EVENTS.RTC_CANDIDATE, {
+      const peerId = getPeerId();
+      if (!peerId) return;
+      signalingRef.current?.emit(CLIENT_EVENTS.RTC_ICE, {
         version: SIGNALING_VERSION,
         callId: activeCallIdRef.current,
+        peerId,
         candidate,
       });
     };
@@ -369,6 +376,7 @@ export default function usePeerConnection({
     activeCallIdRef,
     activeIceTransportPolicy,
     ensureIceSessionId,
+    getPeerId,
     isCallerRef,
     localStreamRef,
     recoveryCallbacks,

@@ -1,4 +1,4 @@
-import { userRoom } from '../lib/state.ts';
+import { emitVersionedUserEvent } from './notifications.ts';
 import type { ServerState } from './notifications.ts';
 import { SERVER_EVENTS } from '../../../shared/index.ts';
 import { requireGroupMember } from '../conversationStore/authorization.ts';
@@ -67,7 +67,7 @@ async function emitLocally(io: any, state: ServerState, event: ConversationFanou
   const localIo = io.local ?? io;
   for (const userId of new Set(event.recipientIds)) {
     if (typeof userId !== 'string' || userId.length === 0 || !(await mayDeliver(state, event, userId))) continue;
-    localIo.to(userRoom(userId)).emit(event.eventName, event.payload);
+    emitVersionedUserEvent(localIo, userId, event.eventName, event.payload as Record<string, unknown>);
   }
 }
 

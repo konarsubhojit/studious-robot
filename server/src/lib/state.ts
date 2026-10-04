@@ -512,6 +512,10 @@ function userRoom(userId: string): string {
   return `user:${userId}`;
 }
 
+function userProtocolRoom(userId: string, version: number): string {
+  return `${userRoom(userId)}:signaling:v${version}`;
+}
+
 export {
   ensurePresenceRecord,
   addSessionToUser,
@@ -531,4 +535,5 @@ export {
   isDeviceInActiveUse,
   summarizeDeviceFanout,
   userRoom,
+  userProtocolRoom,
 };

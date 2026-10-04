@@ -9,6 +9,7 @@ import { subscribeNetworkChanges } from '../networkMonitor';
 import { sendPushReceipt } from '../pushNotifications';
 import { describeLastIceServerFetch } from '../webrtcConfig';
 import { markAnswerStage, endAnswerTimeline } from '../call/answerTimeline';
+import { callPeerId } from '../call/callDecisions';
 import { describeCandidatePair, readSelectedCandidatePair } from '../call/iceStats';
 import { createRecoveryEpisode } from '../call/recoveryEpisode';
 import type { RecoveryPauseReason, RecoveryTrigger } from '../call/recoveryEpisode';
@@ -609,7 +610,9 @@ export default function useCallRecovery({
 
     // Unreachable: the machine only decides `restart` when both exist. Present
     // so `callId`/`pc` narrow to non-null for the negotiation below.
-    if (!callId || !pc) return;
+    const call = activeCallRef.current;
+    const peerId = call ? callPeerId(call, userIdRef.current) : null;
+    if (!callId || !pc || !peerId) return;
     restart.inFlight = true;
     publishRecoveryStatusRef.current?.();
     const attempt = restart.attempt;
@@ -621,7 +624,7 @@ export default function useCallRecovery({
       await pc.setLocalDescription(offer);
       signalingRef.current?.emit(
         CLIENT_EVENTS.RTC_OFFER,
-        { version: SIGNALING_VERSION, callId, sdp: pc.localDescription },
+        { version: SIGNALING_VERSION, callId, peerId, sdp: pc.localDescription },
         ack => {
           if (ack?.ok) return;
           logWarn('[CallFlow] ICE restart rtc.offer ack failed', {
@@ -649,7 +652,7 @@ export default function useCallRecovery({
       restart.inFlight = false;
       publishRecoveryStatusRef.current?.();
     }
-  }, [activeCallIdRef, activeIceTransportPolicy, cancelIceRestarts, fetchIceServersForRestart, isNegotiatingRef, peerConnectionRef, signalingRef, socketRef]);
+  }, [activeCallIdRef, activeCallRef, activeIceTransportPolicy, cancelIceRestarts, fetchIceServersForRestart, isNegotiatingRef, peerConnectionRef, signalingRef, socketRef, userIdRef]);
 
   /** The peer whose userId the glare tie-break is compared against. */
   const remotePeerUserId = useCallback(() => {

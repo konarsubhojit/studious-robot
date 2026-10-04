@@ -33,7 +33,7 @@ beforeEach(async () => {
   resetChatDbCache();
   await withDatabase(async db => {
     mockDb = db as jest.Mocked<DB>;
-    await db.executeBatch([['DELETE FROM chat_records'], ['DELETE FROM resource_cache']]);
+    await db.executeBatch([['DELETE FROM chat_records'], ['DELETE FROM outbox'], ['DELETE FROM resource_cache']]);
   });
 });
 afterEach(async () => {
@@ -666,7 +666,8 @@ describe('SQLite isolation and incremental writes', () => {
         expect(mockDb.executeBatch).toHaveBeenCalledTimes(1);
         const [commands] = mockDb.executeBatch.mock.calls[0];
         expect(commands).toHaveLength(1);
-        expect(commands[0][1]).toEqual(expect.arrayContaining(['outbox', 'q']));
+        expect(commands[0][0]).toContain('INSERT INTO outbox');
+        expect(commands[0][1]).toEqual(expect.arrayContaining(['q']));
       });
 
       test('clearing fences an in-flight load and pending writes', async () => {
@@ -681,8 +682,8 @@ describe('SQLite isolation and incremental writes', () => {
       test('rolls back the optimistic message if a later outbox statement fails', async () => {
         await loadChatSnapshot('atomic');
         await withDatabase(async db => {
-          await db.execute(`CREATE TEMP TRIGGER reject_outbox BEFORE INSERT ON chat_records
-            WHEN NEW.kind = 'outbox' BEGIN SELECT RAISE(ABORT, 'disk failure'); END`);
+          await db.execute(`CREATE TEMP TRIGGER reject_outbox BEFORE INSERT ON outbox
+            BEGIN SELECT RAISE(ABORT, 'disk failure'); END`);
         });
         saveChatSnapshot({
           messagesByPeer: { bob: makeMessages(1) },

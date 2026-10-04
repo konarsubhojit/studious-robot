@@ -30,7 +30,7 @@ async function fixture(t: Context, options: CreateServerOptions = {}) {
     return result.body.sessionId as string;
   }
   async function socket(sessionId: string): Promise<Socket> {
-    const client = connectClient(url, { auth: { sessionId }, forceNew: true, transports: ['websocket'] });
+    const client = connectClient(url, { auth: { sessionId, signalingVersion: SIGNALING_VERSION }, forceNew: true, transports: ['websocket'] });
     sockets.push(client);
     await new Promise<void>((resolve, reject) => {
       client.once('connect', resolve);

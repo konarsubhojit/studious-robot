@@ -337,7 +337,7 @@ function describePlacementFailure(error: unknown, callElsewhere: CallElsewhere |
  *   3. Outgoing calls via `call.initiate`
  *   4. Incoming calls via `call.incoming`
  *   5. State machine driven by `call.state_changed`
- *   6. WebRTC negotiation via `rtc.offer / rtc.answer / rtc.candidate`
+ *   6. WebRTC negotiation via `rtc.offer / rtc.answer / rtc.ice`
  *   7. In-call controls (mute, video, camera switch, speaker routing)
  *   8. Text chat: conversation list / history (`GET /conversations`,
  *      `GET /messages`), sending (`message.send`) with optimistic UI, unread
@@ -749,6 +749,10 @@ export default function useCallFlow({
     isScreenSharingRef,
   });
 
+  const getActiveCallPeerId = useCallback(() => {
+    const call = activeCallRef.current;
+    return call ? callPeerId(call, userIdRef.current) : null;
+  }, [activeCallRef, userIdRef]);
   const {
     closePeerConnection,
     ensurePeerConnection,
@@ -760,6 +764,7 @@ export default function useCallFlow({
     renegotiate,
   } = usePeerConnection({
     activeCallIdRef,
+    getPeerId: getActiveCallPeerId,
     activeIceTransportPolicy,
     isCallerRef,
     localStreamRef,
@@ -1335,6 +1340,7 @@ export default function useCallFlow({
           {
             version: SIGNALING_VERSION,
             callId,
+            peerId: getActiveCallPeerId(),
             sdp: pc.localDescription,
           },
           ack => {
@@ -1364,7 +1370,7 @@ export default function useCallFlow({
     // `scheduleOfferRetry` is a hoisted declaration read through a ref, so it is
     // deliberately absent here; including it would make this callback — and
     // therefore the socket handlers that hold it — unstable.
-    [cancelOfferRetries, sessionIdRef, signalingUrl, updateStatus],
+    [cancelOfferRetries, getActiveCallPeerId, sessionIdRef, signalingUrl, updateStatus],
   );
 
   useEffect(() => {

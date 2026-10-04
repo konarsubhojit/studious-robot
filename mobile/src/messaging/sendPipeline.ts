@@ -1,4 +1,4 @@
-import { MESSAGE_TYPES, SIGNALING_VERSION } from '../../../shared';
+import { ERROR_CODES, MESSAGE_TYPES, SIGNALING_VERSION } from '../../../shared';
 import { byOldestFirst } from './messageIdentity';
 import { prependMessage } from './messageHistory';
 import type { AttachmentRecord } from '../../../shared/signaling/schemas';
@@ -18,16 +18,38 @@ import type { ChatMessage, MessagesByPeer, OutboxItem } from './types';
 /** How many send attempts a queued message gets before it is marked failed
  * and left for the user to retry or delete explicitly. */
 export const OUTBOX_MAX_ATTEMPTS = 5;
-/** First outbox drain retry delay; doubles per attempt up to the cap. */
+/** First per-message retry window; doubles per failed attempt up to the cap. */
 export const OUTBOX_BASE_RETRY_MS = 1000;
-/** Ceiling for the exponential backoff between outbox drains. */
+/** Ceiling for the per-message exponential backoff. */
 export const OUTBOX_MAX_RETRY_MS = 60_000;
 
 /**
  * True while a queued message may still be sent automatically.
  */
 export function isRetryable(item: OutboxItem): boolean {
-  return (item?.attempts ?? 0) < OUTBOX_MAX_ATTEMPTS;
+  return item.state !== 'failed' && (item?.attempts ?? 0) < OUTBOX_MAX_ATTEMPTS;
+}
+
+/** Only structured permanent rejections are terminal; unknown/network errors get a bounded retry budget. */
+export function isPermanentSendError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return [
+    ERROR_CODES.BAD_REQUEST, ERROR_CODES.BLOCKED, ERROR_CODES.FORBIDDEN,
+    ERROR_CODES.NOT_FOUND, ERROR_CODES.UNAUTHORIZED, ERROR_CODES.UNSUPPORTED_VERSION,
+  ].some(permanent => permanent === code);
+}
+
+/** Only conversation heads can determine the next wakeup; a delayed head gates later sends. */
+export function nextOutboxDeadline(outbox: OutboxItem[], now = Date.now()): number | null {
+  const peers = new Set<string>();
+  let deadline: number | null = null;
+  for (const item of drainOrder(outbox)) {
+    if (peers.has(item.recipientId)) continue;
+    peers.add(item.recipientId);
+    const due = Math.max(now, item.nextAttemptAt ?? now);
+    deadline = deadline === null ? due : Math.min(deadline, due);
+  }
+  return deadline;
 }
 
 /**
@@ -35,7 +57,7 @@ export function isRetryable(item: OutboxItem): boolean {
  * half of the window so many clients coming back online together do not retry
  * in lockstep.
  *
- * @param attempt how many drains have already been scheduled
+ * @param attempt zero-based failed attempt number
  * @param jitter 0..1; injectable so the schedule is testable
  */
 export function nextDrainDelayMs(attempt: number, jitter: number = Math.random()): number {
@@ -61,15 +83,21 @@ export function withoutMessage(outbox: OutboxItem[], messageId: string): OutboxI
 export function withAttemptRecorded(
   outbox: OutboxItem[],
   messageId: string,
-  { attempts, lastError, lastAttemptAt }: {
+  { attempts, lastError, lastAttemptAt, state, nextAttemptAt }: {
     attempts: number;
     lastError?: string | null;
     lastAttemptAt: string;
+    state?: 'pending' | 'failed';
+    nextAttemptAt?: number | null;
   },
 ): OutboxItem[] {
   return outbox.map(queued =>
     queued.messageId === messageId
-      ? { ...queued, attempts, lastAttemptAt, lastError: lastError ?? null }
+      ? {
+        ...queued, attempts, lastAttemptAt, lastError: lastError ?? null,
+        state: state ?? (attempts >= OUTBOX_MAX_ATTEMPTS ? 'failed' : 'pending'),
+        nextAttemptAt: nextAttemptAt ?? null,
+      }
       : queued,
   );
 }
@@ -77,7 +105,8 @@ export function withAttemptRecorded(
 /** Give a message whose automatic retries were exhausted a fresh budget. */
 export function withAttemptsReset(outbox: OutboxItem[], messageId: string): OutboxItem[] {
   return outbox.map(item =>
-    item.messageId === messageId ? { ...item, attempts: 0, lastError: null } : item,
+    item.messageId === messageId
+      ? { ...item, attempts: 0, lastError: null, lastAttemptAt: null, state: 'pending', nextAttemptAt: null } : item,
   );
 }
 
@@ -181,6 +210,8 @@ export function buildOutboxItem({
     attempts: 0,
     lastAttemptAt: null,
     lastError: null,
+    state: 'pending',
+    nextAttemptAt: null,
     ...(targetKind ? { targetKind, localMock: Boolean(localMock) } : {}),
   };
 }
@@ -239,7 +270,7 @@ export function withResolvedReplies(outbox: OutboxItem[], localId: string, serve
 
 export type OutboxSendResult = boolean | 'waiting' | 'unavailable';
 
-/** Waiting dependencies pause their conversation, not independent conversations. */
+/** Delays/transient failures pause their conversation; terminal failures release later rows. */
 export async function drainQueuedMessages(
   queue: OutboxItem[], send: (item: OutboxItem) => Promise<OutboxSendResult>,
 ): Promise<boolean> {
@@ -247,11 +278,15 @@ export async function drainQueuedMessages(
   let allSent = true;
   for (const item of queue) {
     if (waitingPeers.has(item.recipientId)) continue;
+    if ((item.nextAttemptAt ?? 0) > Date.now()) {
+      waitingPeers.add(item.recipientId);
+      allSent = false;
+      continue;
+    }
     const result = await send(item);
     if (result === true) continue;
     allSent = false;
-    if (result === 'waiting') waitingPeers.add(item.recipientId);
-    if (result === false) break;
+    if (result === 'waiting' || result === false) waitingPeers.add(item.recipientId);
   }
   return allSent;
 }
@@ -260,8 +295,15 @@ export async function drainQueuedMessages(
 export function restoreOutboxMessages(messages: MessagesByPeer, outbox: OutboxItem[], senderId: string): MessagesByPeer {
   let restored = messages;
   for (const item of outbox) {
-    if (restored[item.recipientId]?.some(entry => entry.messageId === item.messageId ||
-      (item.clientMessageId && entry.senderId === senderId && entry.clientMessageId === item.clientMessageId))) continue;
+    const matches = (entry: ChatMessage) => entry.messageId === item.messageId ||
+      Boolean(item.clientMessageId && entry.senderId === senderId && entry.clientMessageId === item.clientMessageId);
+    if (restored[item.recipientId]?.some(matches)) {
+      if (!isRetryable(item)) {
+        restored = { ...restored, [item.recipientId]: restored[item.recipientId].map(entry =>
+          matches(entry) ? asFailed(entry) : entry) };
+      }
+      continue;
+    }
     const message = buildOptimisticMessage({
       ...item, senderId, createdAt: item.createdAt ?? new Date(0).toISOString(),
     });

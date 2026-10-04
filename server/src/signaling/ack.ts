@@ -1,4 +1,4 @@
-import { SIGNALING_VERSION } from '../config.ts';
+import { SIGNALING_VERSION, SUPPORTED_SIGNALING_VERSIONS } from '../config.ts';
 import { ERROR_CODES, SERVER_EVENTS, parseEventPayload } from '../../../shared/index.ts';
 
 /**
@@ -31,7 +31,8 @@ function requireSocketSession(socket: import('socket.io').Socket, ack: Function 
 }
 
 function validateSignalingVersion(socket: import('socket.io').Socket, payload: any, ack: Function | undefined, eventName: string): boolean {
-  if (payload?.version === SIGNALING_VERSION) {
+  if (SUPPORTED_SIGNALING_VERSIONS.includes(payload?.version)) {
+    socket.data.signalingVersion = payload.version;
     return true;
   }
 
@@ -40,7 +41,7 @@ function validateSignalingVersion(socket: import('socket.io').Socket, payload: a
     ack,
     eventName,
     ERROR_CODES.UNSUPPORTED_VERSION,
-    `version ${SIGNALING_VERSION} is required`
+    `supported versions are ${SUPPORTED_SIGNALING_VERSIONS.join(', ')}`
   );
   return false;
 }
@@ -86,7 +87,7 @@ function sanitizeForLog(value: string): string {
 function acknowledgeSuccess(socket: import('socket.io').Socket, ack: Function | undefined, eventName: string, data?: object) {
   const payload = {
     ok: true,
-    version: SIGNALING_VERSION,
+    version: socket?.data?.signalingVersion ?? SIGNALING_VERSION,
     event: eventName,
     ...data,
   };
@@ -124,7 +125,7 @@ function acknowledgeError(socket: import('socket.io').Socket, ack: Function | un
 
   const payload = {
     ok: false,
-    version: SIGNALING_VERSION,
+    version: socket?.data?.signalingVersion ?? SIGNALING_VERSION,
     event: eventName,
     error: {
       code,
