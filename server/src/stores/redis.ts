@@ -43,8 +43,17 @@ function deviceRevocationKey(userId: string, deviceId: string): string {
   return `signaling:user:${userId}:device:${deviceId}:revoked`;
 }
 
+function activeCallParticipantIds(call: import('./contracts.ts').CallRecord): Set<string> {
+  if (call.participants?.length) {
+    return new Set(call.participants
+      .filter(({ state }) => state === 'joined' || state === 'ringing' || state === 'invited')
+      .map(({ userId }) => userId));
+  }
+  return new Set([call.callerId, call.calleeId]);
+}
+
 /**
- * Write the record and reconcile both participants' active-call indexes in one
+ * Write the record and reconcile every participant's active-call index in one
  * round trip, so a `busy` verdict on any instance can be answered per *user*
  * rather than per known callId.
  *
@@ -54,16 +63,38 @@ function deviceRevocationKey(userId: string, deviceId: string): string {
  */
 const SAVE_CALL_LUA = `
 local ttl = tonumber(ARGV[2])
-redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
-if ARGV[3] == '1' then
-  redis.call('SREM', KEYS[2], ARGV[4])
-  redis.call('SREM', KEYS[3], ARGV[4])
+local call = cjson.decode(ARGV[1])
+local terminal = ARGV[3] == '1'
+local participants = {}
+if call.participants and #call.participants > 0 then
+  for _, participant in ipairs(call.participants) do
+    if participant.state == 'joined' or participant.state == 'ringing' or participant.state == 'invited' then
+      participants[participant.userId] = true
+    end
+  end
 else
-  redis.call('SADD', KEYS[2], ARGV[4])
-  redis.call('SADD', KEYS[3], ARGV[4])
-  redis.call('PEXPIRE', KEYS[2], ttl)
-  redis.call('PEXPIRE', KEYS[3], ttl)
+  participants[call.callerId] = true
+  participants[call.calleeId] = true
 end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
+for i = 2, #KEYS do
+  if terminal or not participants[ARGV[i + 3]] then
+    redis.call('SREM', KEYS[i], ARGV[4])
+  else
+    redis.call('SADD', KEYS[i], ARGV[4])
+    redis.call('PEXPIRE', KEYS[i], ttl)
+  end
+end
+return 1
+`;
+
+const REMOVE_CALL_LUA = `
+local raw = redis.call('GET', KEYS[1])
+if raw then
+  local call = cjson.decode(raw)
+  for i = 2, #KEYS do redis.call('SREM', KEYS[i], ARGV[i - 1]) end
+end
+redis.call('DEL', KEYS[1])
 return 1
 `;
 
@@ -114,8 +145,7 @@ call.updatedAt = nowIso
 if reason ~= '' then call.endReason = reason end
 redis.call('SET', KEYS[1], cjson.encode(call), 'PX', ttl)
 if terminal[toStatus] then
-  redis.call('SREM', KEYS[2], call.callId)
-  redis.call('SREM', KEYS[3], call.callId)
+  for i = 2, #KEYS do redis.call('SREM', KEYS[i], call.callId) end
 end
 return cjson.encode({ ok = true, idempotent = false, call = call })
 `;
@@ -224,6 +254,32 @@ async function createRedisPgStores(
   bundle.security = createRedisSecurity(busPub);
   bundle.instanceId = instanceId;
 
+  async function transitionCallWithoutLua(
+    call: import('./contracts.ts').CallRecord | null,
+    callId: string,
+    fromStatus: string,
+    toStatus: string,
+    reason: string | null
+  ) {
+    if (!call) return { ok: false, error: 'not_found' };
+    if (call.status === toStatus) return { ok: true, idempotent: true, call };
+    if (TERMINAL_CALL_STATES.has(call.status)) return { ok: false, error: 'terminal_state' };
+    if (call.status !== fromStatus) return { ok: false, error: 'stale_call_state' };
+
+    const updatedCall = {
+      ...call,
+      status: toStatus,
+      endReason: reason ?? call.endReason,
+      updatedAt: new Date().toISOString(),
+    };
+    if (typeof busPub.set === 'function') {
+      await bundle.callState.save(updatedCall);
+    } else {
+      callFallback.set(callId, updatedCall);
+    }
+    return { ok: true, idempotent: false, call: updatedCall };
+  }
+
   bundle.callState = {
     get: async (callId: string) => {
       if (typeof busPub.get === 'function') {
@@ -241,17 +297,29 @@ async function createRedisPgStores(
       return callFallback.get(callId) ?? null;
     },
     save: async (call: import('./contracts.ts').CallRecord) => {
+      const previous = await bundle.callState.get(call.callId);
+      const userIds = Array.from(new Set([
+        call.callerId,
+        call.calleeId,
+        ...(call.participants ?? []).map((participant: { userId: string }) => participant.userId),
+        ...(previous?.participants ?? []).map((participant: { userId: string }) => participant.userId),
+        ...(previous ? [previous.callerId, previous.calleeId] : []),
+      ]));
       if (evalFn) {
         await timeQuery(
           { backend: 'redis', operation: 'save', kind: 'write', target: 'call-state' },
           () =>
             evalFn(SAVE_CALL_LUA, {
-              keys: [callKey(call.callId), userCallsKey(call.callerId), userCallsKey(call.calleeId)],
+              keys: [
+                callKey(call.callId),
+                ...userIds.map(userCallsKey),
+              ],
               arguments: [
                 JSON.stringify(call),
                 String(SHARED_CALL_MAX_TTL_MS),
                 TERMINAL_CALL_STATES.has(call.status) ? '1' : '0',
                 call.callId,
+                ...userIds,
               ],
             })
         );
@@ -262,9 +330,38 @@ async function createRedisPgStores(
           { backend: 'redis', operation: 'save', kind: 'write', target: 'call-state' },
           () => busPub.set(callKey(call.callId), JSON.stringify(call), { PX: SHARED_CALL_MAX_TTL_MS })
         );
+        const activeUserIds = activeCallParticipantIds(call);
+        for (const userId of userIds) {
+          const key = userCallsKey(userId);
+          if (TERMINAL_CALL_STATES.has(call.status) || !activeUserIds.has(userId)) {
+            await busPub.sRem?.(key, call.callId);
+            continue;
+          }
+          await busPub.sAdd?.(key, call.callId);
+          await busPub.pExpire?.(key, SHARED_CALL_MAX_TTL_MS);
+        }
+        callFallback.set(call.callId, { ...call });
         return;
       }
       callFallback.set(call.callId, { ...call });
+    },
+    remove: async (callId: string) => {
+      const call = await bundle.callState.get(callId);
+      const userIds = Array.from(new Set([
+        ...(call ? [call.callerId, call.calleeId, ...(call.participants ?? []).map((participant: { userId: string }) => participant.userId)] : []),
+      ]));
+      if (evalFn) {
+        await evalFn(REMOVE_CALL_LUA, {
+          keys: [callKey(callId), ...userIds.map(userCallsKey)],
+          arguments: userIds,
+        });
+      } else {
+        if (typeof busPub.del === 'function') await busPub.del(callKey(callId));
+        for (const userId of userIds) {
+          if (typeof busPub.sRem === 'function') await busPub.sRem(userCallsKey(userId), callId);
+        }
+      }
+      callFallback.delete(callId);
     },
     listActiveCallsForUser: async (userId: string) => {
       if (evalFn) {
@@ -275,10 +372,24 @@ async function createRedisPgStores(
         const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         return Array.isArray(parsed) ? (parsed as import('./contracts.ts').CallRecord[]) : [];
       }
+      if (typeof busPub.sMembers === 'function' && typeof busPub.get === 'function') {
+        const ids = await busPub.sMembers(userCallsKey(userId));
+        const calls = await Promise.all(ids.map((callId: string) => bundle.callState.get(callId)));
+        const active = [];
+        for (let index = 0; index < calls.length; index++) {
+          const call = calls[index] as import('./contracts.ts').CallRecord | null;
+          if (!call || TERMINAL_CALL_STATES.has(call.status) || !activeCallParticipantIds(call).has(userId)) {
+            await busPub.sRem?.(userCallsKey(userId), ids[index]);
+            continue;
+          }
+          active.push(call);
+        }
+        return active;
+      }
       return Array.from(callFallback.values()).filter(
         (call) =>
           !TERMINAL_CALL_STATES.has(call.status) &&
-          (call.callerId === userId || call.calleeId === userId)
+          activeCallParticipantIds(call).has(userId)
       );
     },
     transitionAtomic: async ({
@@ -294,8 +405,8 @@ async function createRedisPgStores(
       reason?: string | null;
     }) => {
       // The index keys are resolved from the record this instance last read, so
-      // a transition into a terminal state can clear both participants' index
-      // members in the same atomic script that writes the record.
+      // a terminal transition clears every participant's index member in the
+      // same atomic script that writes the record.
       const known = callFallback.get(callId) ?? (await bundle.callState.get(callId));
       const redisResult = evalFn
         ? await timeQuery(
@@ -304,8 +415,11 @@ async function createRedisPgStores(
               evalFn(TRANSITION_CALL_LUA, {
                 keys: [
                   callKey(callId),
-                  userCallsKey(known?.callerId ?? callId),
-                  userCallsKey(known?.calleeId ?? callId),
+                  ...Array.from(new Set([
+                    known?.callerId ?? callId,
+                    known?.calleeId ?? callId,
+                    ...(known?.participants ?? []).map((participant: { userId: string }) => participant.userId),
+                  ]), userCallsKey),
                 ],
                 arguments: [
                   fromStatus,
@@ -317,17 +431,12 @@ async function createRedisPgStores(
               })
           )
         : null;
-      const resolved = evalFn
-        ? (typeof redisResult === 'string' ? JSON.parse(redisResult) : redisResult)
-        : (() => {
-            const call = callFallback.get(callId);
-            if (!call) return { ok: false, error: 'not_found' };
-            if (call.status === toStatus) return { ok: true, idempotent: true, call };
-            if (TERMINAL_CALL_STATES.has(call.status)) return { ok: false, error: 'terminal_state' };
-            if (call.status !== fromStatus) return { ok: false, error: 'stale_call_state' };
-            callFallback.set(callId, { ...call, status: toStatus, updatedAt: new Date().toISOString() });
-            return { ok: true, idempotent: false, call: callFallback.get(callId) };
-          })();
+      let resolved: any;
+      if (evalFn) {
+        resolved = typeof redisResult === 'string' ? JSON.parse(redisResult) : redisResult;
+      } else {
+        resolved = await transitionCallWithoutLua(known, callId, fromStatus, toStatus, reason);
+      }
       if (!resolved?.ok) {
         return {
           ok: false as const,

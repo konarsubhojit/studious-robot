@@ -106,6 +106,23 @@ const callEvents = pgTable(
   (t) => [index('idx_call_events_call').on(t.callId, t.createdAt)],
 );
 
+const callParticipants = pgTable(
+  'call_participants',
+  {
+    callId: uuid('call_id').notNull().references(() => calls.callId, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    state: text('state').notNull(),
+    ringTimeoutAt: timestamp('ring_timeout_at', { withTimezone: true }),
+    joinedAt: timestamp('joined_at', { withTimezone: true }),
+    leftAt: timestamp('left_at', { withTimezone: true }),
+    deviceId: text('device_id'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.callId, t.userId] }),
+    index('idx_call_participants_user').on(t.userId, t.callId),
+  ],
+);
+
 const callQualitySamples = pgTable(
   'call_quality_samples',
   {
@@ -501,6 +518,7 @@ export {
   users,
   calls,
   callEvents,
+  callParticipants,
   callQualitySamples,
   devices,
   auditLog,

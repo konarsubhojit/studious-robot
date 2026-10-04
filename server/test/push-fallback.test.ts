@@ -195,6 +195,34 @@ test('push fallback: push sent to all registered devices when callee is offline'
   }
 });
 
+test('push fallback: each offline invitee in a group call receives their own push', async (t) => {
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const caller = await createSession(url, 'group-push-caller');
+  const bob = await createSession(url, 'group-push-bob');
+  const carol = await createSession(url, 'group-push-carol');
+  await postJson(url, '/devices/register', { provider: 'fcm', pushToken: 'group-bob-token' }, bob);
+  await postJson(url, '/devices/register', { provider: 'apns', pushToken: 'group-carol-token' }, carol);
+
+  const result = await postJson(
+    url,
+    '/calls',
+    { calleeIds: ['group-push-bob', 'group-push-carol'] },
+    caller
+  );
+  assert.equal(result.status, 201);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(spy.calls.length, 2);
+  assert.deepEqual(
+    spy.calls.map(({ channel }) => channel.deviceId).sort(),
+    ['device-group-push-bob', 'device-group-push-carol'],
+  );
+  assert.ok(spy.calls.every(({ callData }) => callData.callId === result.body.callId));
+});
+
 test('push fallback: no push when callee is unknown (unreachable)', async (t) => {
   const spy = spyOnPush();
   t.after(() => spy.restore());

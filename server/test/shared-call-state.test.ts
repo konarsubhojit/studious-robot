@@ -49,7 +49,12 @@ function createSharedBackends() {
         const active: import('../src/stores/contracts.ts').CallRecord[] = [];
         for (const call of calls.values()) {
           if (terminal.has(call.status)) continue;
-          if (call.callerId === userId || call.calleeId === userId) active.push({ ...call });
+          const participant = call.participants?.find(({ userId: id }) => id === userId);
+          if (participant
+            ? participant.state === 'joined' || participant.state === 'ringing' || participant.state === 'invited'
+            : call.callerId === userId || call.calleeId === userId) {
+            active.push({ ...call });
+          }
         }
         return active;
       },
@@ -271,6 +276,44 @@ test('a call create and a transition each write the shared store exactly once', 
   }
 });
 
+test('shared active-call lookup indexes every invitee and removes departed/terminal participants', async () => {
+  const shared = createSharedBackends();
+  const stores = Object.assign(createMemoryStores(), {
+    stateAffinity: 'shared' as const,
+    instanceId: 'instance-a',
+    callState: shared.callState,
+    sessionState: shared.sessionState,
+  });
+  const server = await startServer(stores);
+  try {
+    const callerSession = (await postJson(server.url, '/session', { userId: 'index-caller', deviceId: 'device-caller' })).body.sessionId;
+    const bobSession = (await postJson(server.url, '/session', { userId: 'index-bob', deviceId: 'device-bob' })).body.sessionId;
+    const carolSession = (await postJson(server.url, '/session', { userId: 'index-carol', deviceId: 'device-carol' })).body.sessionId;
+    const created = await postJson(server.url, '/calls', {
+      calleeIds: ['index-bob', 'index-carol'],
+    }, callerSession);
+    const { callId } = created.body;
+
+    assert.deepEqual((await shared.callState.listActiveCallsForUser('index-carol')).map((call) => call.callId), [callId]);
+    assert.deepEqual((await shared.callState.listActiveCallsForUser('index-bob')).map((call) => call.callId), [callId]);
+
+    const declined = await postJson(server.url, `/calls/${callId}/decline`, {}, carolSession);
+    assert.equal(declined.body.status, 'ringing');
+    assert.deepEqual(await shared.callState.listActiveCallsForUser('index-carol'), []);
+    assert.deepEqual((await shared.callState.listActiveCallsForUser('index-bob')).map((call) => call.callId), [callId]);
+
+    await postJson(server.url, `/calls/${callId}/join`, {}, bobSession);
+    await postJson(server.url, `/calls/${callId}/end`, {}, callerSession);
+    const ended = await postJson(server.url, `/calls/${callId}/end`, {}, bobSession);
+    assert.equal(ended.body.status, 'ended');
+    for (const userId of ['index-caller', 'index-bob', 'index-carol']) {
+      assert.deepEqual(await shared.callState.listActiveCallsForUser(userId), []);
+    }
+  } finally {
+    await server.teardown();
+  }
+});
+
 // Decision 2: the deployment is a single systemd unit, so `REDIS_URL` is unset
 // and `state.callState` is absent. In that shape the in-memory registry plus
 // Postgres is the *only* authority — the Lua transition machine in
@@ -321,14 +364,18 @@ test('without shared call state the local registry is the only transition author
 
     const ended = await postJson(a.url, `/calls/${callId}/end`, {}, callerSession);
     assert.equal(ended.status, 200);
-    assert.equal(ended.body.status, 'ended');
+    assert.equal(ended.body.status, 'accepted', 'the call continues while the callee remains');
+
+    const calleeLeft = await postJson(a.url, `/calls/${callId}/end`, {}, calleeSession);
+    assert.equal(calleeLeft.status, 200);
+    assert.equal(calleeLeft.body.status, 'ended');
 
     // Re-ending is idempotent, but re-accepting a terminal call is rejected —
     // the state machine is enforced locally, not by the Lua copy.
     assert.equal((await postJson(a.url, `/calls/${callId}/end`, {}, callerSession)).status, 200);
     const reaccept = await postJson(a.url, `/calls/${callId}/accept`, {}, calleeSession);
     assert.equal(reaccept.status, 409);
-    assert.match(String(reaccept.body.error), /terminal state/);
+    assert.match(String(reaccept.body.error), /already over/);
 
     assert.deepEqual(touched, [], 'the shared store is never consulted without REDIS_URL');
     assert.deepEqual(shared.saves, []);

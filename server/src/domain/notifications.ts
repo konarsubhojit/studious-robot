@@ -83,8 +83,9 @@ function emitVersionedRtcSignal(
 }
 
 function callWithParticipants(call: CallRecord): CallRecord & {
-  participants: { userId: string; state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined'; }[];
+  participants: { userId: string; state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined' | 'missed' | 'busy' | 'unreachable'; ringTimeoutAt?: string | null; joinedAt?: string | null; leftAt?: string | null; deviceId?: string | null; }[];
 } {
+  if (call.participants?.length) return { ...call, participants: call.participants };
   const terminal = TERMINAL_CALL_STATES.has(call.status);
   const calleeState = call.status === 'ringing'
     ? 'ringing'
@@ -158,9 +159,9 @@ function getCallTransitionEventName(status: string, reason: string | null): stri
   return null;
 }
 
-function logIncomingCallPushSkip(call: CallRecord, reason: string, deviceId: string | null = null, details: string = ''): void {
+function logIncomingCallPushSkip(call: CallRecord, reason: string, deviceId: string | null = null, details: string = '', userId = call.calleeId): void {
   console.log(
-    `[push] Skipped call.incoming callId=${call.callId} user=${call.calleeId}` +
+    `[push] Skipped call.incoming callId=${call.callId} user=${userId}` +
       (deviceId ? ` device=${deviceId}` : '') +
       ` reason=${reason}` +
       details
@@ -189,6 +190,7 @@ function getIncomingCallPushStateForCall(state: ServerState, callId: string): In
     entry = {
       acknowledgedDeviceIds: new Set(),
       pushedDeviceIds: new Set(),
+      cancelledDeviceIds: new Set(),
       ackTimeouts: new Map(),
     };
     store.set(callId, entry);
@@ -239,7 +241,7 @@ function markIncomingCallAcknowledged(state: ServerState, callId: string | null 
 /**
  * @param trigger what prompted this (re)push, for the logs.
  */
-function attemptIncomingCallPush(state: ServerState, call: CallRecord, channel: PushChannel, trigger: string | null = null): void {
+function attemptIncomingCallPush(state: ServerState, call: CallRecord, channel: PushChannel, trigger: string | null = null, userId = call.calleeId): void {
   if (hasIncomingCallPushBeenDispatched(state, call.callId, channel.deviceId)) {
     logIncomingCallPushSkip(call, 'already_pushed', channel.deviceId, trigger ? ` trigger=${trigger}` : '');
     return;
@@ -247,7 +249,7 @@ function attemptIncomingCallPush(state: ServerState, call: CallRecord, channel: 
   markIncomingCallPushDispatched(state, call.callId, channel.deviceId);
   console.log(
     `[push] Attempting call.incoming callId=${call.callId}` +
-      ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}` +
+      ` user=${userId} device=${channel.deviceId} via ${channel.provider}` +
       (trigger ? ` trigger=${trigger}` : '')
   );
   pushSenders
@@ -256,18 +258,18 @@ function attemptIncomingCallPush(state: ServerState, call: CallRecord, channel: 
       mediaType: call.mediaType ?? 'video',
       callerId: call.callerId,
       callerDisplayName: state.users.get(call.callerId)?.displayName,
-      ringTimeoutAt: call.ringTimeoutAt ?? null,
+      ringTimeoutAt: call.participants?.find(({ userId: id }) => id === userId)?.ringTimeoutAt ?? call.ringTimeoutAt ?? null,
     })
     .then((outcome) => handleDeadTokenOutcome(state, outcome))
     .catch((err) => {
       console.error(
         `[push] Failed call.incoming callId=${call.callId}` +
-          ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`
+          ` user=${userId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`
       );
     });
 }
 
-function scheduleIncomingCallAckTimeout(state: ServerState, call: CallRecord, deviceId: string): void {
+function scheduleIncomingCallAckTimeout(state: ServerState, call: CallRecord, deviceId: string, userId = call.calleeId): void {
   const entry = getIncomingCallPushStateForCall(state, call.callId);
   if (entry.ackTimeouts.has(deviceId)) return;
   const configuredTimeoutMs = Number(process.env.INCOMING_CALL_ACK_TIMEOUT_MS);
@@ -277,33 +279,33 @@ function scheduleIncomingCallAckTimeout(state: ServerState, call: CallRecord, de
       : DEFAULT_INCOMING_CALL_ACK_TIMEOUT_MS;
   const timeoutId = setTimeout(() => {
     entry.ackTimeouts.delete(deviceId);
-    if (call.status !== 'ringing') return;
+    if (call.status !== 'ringing' && call.participants?.find(({ userId: id }) => id === userId)?.state !== 'ringing') return;
     if (hasIncomingCallBeenAcknowledged(state, call.callId, deviceId)) return;
     dispatchIncomingCallPushToDevice(state, call, deviceId, 'ack_timeout', {
       allowConnectedDevicePush: true,
-    });
+    }, userId);
   }, ackTimeoutMs);
   timeoutId.unref?.();
   entry.ackTimeouts.set(deviceId, timeoutId);
 }
 
-function dispatchIncomingCallPushes(state: ServerState, call: CallRecord): void {
-  const connections = state.userConnections.get(call.calleeId);
+function dispatchIncomingCallPushes(state: ServerState, call: CallRecord, userId = call.calleeId): void {
+  const connections = state.userConnections.get(userId);
   const connectedDeviceIds = new Set(
     Array.from(connections?.values() || [], (connection) => connection.deviceId)
   );
-  const pushChannels = resolveReachableChannels(state, call.calleeId).filter(
+  const pushChannels = resolveReachableChannels(state, userId).filter(
     (channel) => channel.type === 'push'
   );
   verboseLog('push', 'call.incoming.channels_resolved', {
     callId: call.callId,
-    calleeId: call.calleeId,
+    calleeId: userId,
     pushChannelCount: pushChannels.length,
     connectedDeviceCount: connectedDeviceIds.size,
   });
 
   if (pushChannels.length === 0) {
-    logIncomingCallPushSkip(call, getNoPushChannelReason(state, call.calleeId));
+    logIncomingCallPushSkip(call, getNoPushChannelReason(state, userId), null, '', userId);
     return;
   }
 
@@ -313,13 +315,14 @@ function dispatchIncomingCallPushes(state: ServerState, call: CallRecord): void 
         call,
         'callee_online',
         channel.deviceId,
-        ` activeSockets=${connections?.size ?? 0}`
+        ` activeSockets=${connections?.size ?? 0}`,
+        userId
       );
-      scheduleIncomingCallAckTimeout(state, call, channel.deviceId);
+      scheduleIncomingCallAckTimeout(state, call, channel.deviceId, userId);
       continue;
     }
 
-    attemptIncomingCallPush(state, call, channel);
+    attemptIncomingCallPush(state, call, channel, null, userId);
   }
 }
 
@@ -352,41 +355,45 @@ function dispatchIncomingCallPushToDevice(
   call: CallRecord,
   deviceId: string,
   trigger: string,
-  { allowConnectedDevicePush = false }: { allowConnectedDevicePush?: boolean; } = {}
+  { allowConnectedDevicePush = false }: { allowConnectedDevicePush?: boolean; } = {},
+  userId = call.calleeId
 ): void {
-  if (call.status !== 'ringing') return;
-  const ringTimeoutMs = call.ringTimeoutAt ? new Date(call.ringTimeoutAt).getTime() : null;
+  const participant = call.participants?.find(({ userId: id }) => id === userId);
+  if (call.status !== 'ringing' && participant?.state !== 'ringing') return;
+  const ringTimeoutAt = participant?.ringTimeoutAt ?? call.ringTimeoutAt;
+  const ringTimeoutMs = ringTimeoutAt ? new Date(ringTimeoutAt).getTime() : null;
   if (ringTimeoutMs !== null && Number.isNaN(ringTimeoutMs)) {
-    logIncomingCallPushSkip(call, 'invalid_ring_timeout', deviceId);
+    logIncomingCallPushSkip(call, 'invalid_ring_timeout', deviceId, '', userId);
     return;
   }
   if (ringTimeoutMs !== null && ringTimeoutMs <= Date.now()) {
-    logIncomingCallPushSkip(call, 'ring_timeout_elapsed', deviceId);
+    logIncomingCallPushSkip(call, 'ring_timeout_elapsed', deviceId, '', userId);
     return;
   }
   if (hasIncomingCallBeenAcknowledged(state, call.callId, deviceId)) {
-    logIncomingCallPushSkip(call, 'ack_received', deviceId);
+    logIncomingCallPushSkip(call, 'ack_received', deviceId, '', userId);
     return;
   }
-  if (!allowConnectedDevicePush && hasLiveConnectionForDevice(state, call.calleeId, deviceId)) {
-    logIncomingCallPushSkip(call, 'callee_online', deviceId);
+  if (!allowConnectedDevicePush && hasLiveConnectionForDevice(state, userId, deviceId)) {
+    logIncomingCallPushSkip(call, 'callee_online', deviceId, '', userId);
     return;
   }
 
-  const channel = findPushChannelForDevice(state, call.calleeId, deviceId);
+  const channel = findPushChannelForDevice(state, userId, deviceId);
   if (!channel) {
-    logIncomingCallPushSkip(call, 'no_push_token', deviceId);
+    logIncomingCallPushSkip(call, 'no_push_token', deviceId, '', userId);
     return;
   }
 
-  attemptIncomingCallPush(state, call, channel, trigger);
+  attemptIncomingCallPush(state, call, channel, trigger, userId);
 }
 
 function notifyRingingCallsForDisconnectedDevice(state: ServerState, userId: string | null | undefined, deviceId: string | null | undefined): void {
   if (!userId || !deviceId) return;
   for (const call of state.calls.values()) {
-    if (call.calleeId !== userId || call.status !== 'ringing') continue;
-    dispatchIncomingCallPushToDevice(state, call, deviceId, 'socket_disconnected');
+    if (call.status !== 'ringing' && !call.participants?.some((p) => p.state === 'ringing')) continue;
+    if (!call.participants?.some((p) => p.userId === userId && p.state === 'ringing')) continue;
+    dispatchIncomingCallPushToDevice(state, call, deviceId, 'socket_disconnected', {}, userId);
   }
 }
 
@@ -446,7 +453,7 @@ function notifyIncomingCallAcknowledged(io: any, state: ServerState, callId: str
   if (!callId) return;
   const call = state.calls.get(callId);
   if (!call || call.status !== 'ringing') return;
-  if (!userId || call.calleeId !== userId) return;
+  if (!userId || !(call.participants?.some((participant) => participant.userId === userId) ?? call.calleeId === userId)) return;
   emitVersionedCallEvent(io, call.callerId, SERVER_EVENTS.CALL_RINGING, {
     ...createCallEnvelope(call),
     delivery: 'ringing',
@@ -459,26 +466,24 @@ function notifyIncomingCallAcknowledged(io: any, state: ServerState, callId: str
 function notifyCallCreated(io: any, state: ServerState, call: CallRecord): void {
   state.telemetry.recordCallCreated(call);
   console.log(
-    `[signaling] call.created callId=${call.callId} callerId=${call.callerId} calleeId=${call.calleeId} status=${call.status}`
+    `[signaling] call.created callId=${call.callId} callerId=${call.callerId} calleeIds=${call.participants?.filter((p) => p.userId !== call.callerId).map((p) => p.userId).join(',') ?? call.calleeId} status=${call.status}`
   );
   verboseLog('calls', 'created', {
     callId: call.callId,
     callerId: call.callerId,
-    calleeId: call.calleeId,
+    calleeIds: call.participants?.filter((p) => p.userId !== call.callerId).map((p) => p.userId) ?? [call.calleeId],
     status: call.status,
     hasRingTimeout: Boolean(call.ringTimeoutAt),
   });
 
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
-    emitVersionedCallEvent(io, call.calleeId, SERVER_EVENTS.CALL_INCOMING, envelope);
+    const invitees = call.participants?.filter((p) => p.userId !== call.callerId && p.state === 'ringing') ?? [{ userId: call.calleeId }];
+    for (const participant of invitees) {
+      emitVersionedCallEvent(io, participant.userId, SERVER_EVENTS.CALL_INCOMING, envelope);
+      dispatchIncomingCallPushes(state, call, participant.userId);
+    }
     notifyCallRinging(io, state, call);
-
-    // Push fallback: deliver the incoming call to every registered device that
-    // has no live socket of its own.  This is decided per device rather than
-    // per user, so a callee who is connected on one device still gets a push on
-    // the phone that is asleep in their pocket — the device that has to ring.
-    dispatchIncomingCallPushes(state, call);
   } else {
     logIncomingCallPushSkip(call, `call_status_${call.status}`, null, describeBusyBlockers(state, call));
     clearIncomingCallPushState(state, call.callId);
@@ -497,15 +502,19 @@ function notifyCallCreated(io: any, state: ServerState, call: CallRecord): void 
  * `call.state_changed`) can dismiss the notification instead of leaving a
  * tappable ghost on screen.
  */
-function dispatchCallCancelledPushes(state: ServerState, call: CallRecord, reason: string | null): void {
+function dispatchCallCancelledPushes(state: ServerState, call: CallRecord, reason: string | null, recipientId?: string): void {
   const entry = getIncomingCallPushState(state).get(call.callId);
   if (!entry || entry.pushedDeviceIds.size === 0) return;
   for (const deviceId of entry.pushedDeviceIds) {
-    const channel = findPushChannelForDevice(state, call.calleeId, deviceId);
+    const owner = state.devices.get(deviceId)?.userId ?? call.calleeId;
+    if (recipientId && owner !== recipientId) continue;
+    if (entry.cancelledDeviceIds.has(deviceId)) continue;
+    entry.cancelledDeviceIds.add(deviceId);
+    const channel = findPushChannelForDevice(state, owner, deviceId);
     if (!channel) continue;
     console.log(
       `[push] Attempting call.cancelled callId=${call.callId}` +
-        ` user=${call.calleeId} device=${deviceId} via ${channel.provider}`
+        ` user=${owner} device=${deviceId} via ${channel.provider}`
     );
     pushSenders
       .sendCallCancelledPush(channel, { callId: call.callId, reason })
@@ -513,7 +522,7 @@ function dispatchCallCancelledPushes(state: ServerState, call: CallRecord, reaso
       .catch((err) => {
         console.error(
           `[push] Failed call.cancelled callId=${call.callId}` +
-            ` user=${call.calleeId} device=${deviceId} error=${err?.message ?? 'unknown'}`
+            ` user=${owner} device=${deviceId} error=${err?.message ?? 'unknown'}`
         );
       });
   }
@@ -546,6 +555,73 @@ type CallTransitionContext = {
   actorSocketId?: string | null;
   source?: string | null;
 };
+
+function updateCallPushState(state: ServerState, call: CallRecord, previousStatus: string | null, reason: string | null): void {
+  if (call.status === 'ringing') return;
+  if (previousStatus === 'ringing' && TERMINAL_CALL_STATES.has(call.status)) {
+    dispatchCallCancelledPushes(state, call, reason ?? call.endReason ?? null);
+  }
+  const pendingRings = call.participants?.some(({ state: participantState }) =>
+    participantState === 'ringing' || participantState === 'invited'
+  );
+  if (!pendingRings || TERMINAL_CALL_STATES.has(call.status)) clearIncomingCallPushState(state, call.callId);
+}
+
+function notifyParticipantChanges(
+  io: any,
+  state: ServerState,
+  call: CallRecord,
+  actor: string | null,
+  reason: string | null,
+  previousStatus: string | null,
+  recipients: string[]
+): void {
+  const participant = call.participants?.find(({ userId }) => userId === actor);
+  if (!participant) return;
+  if (participant.state === 'declined' || participant.state === 'left' || participant.state === 'missed') {
+    dispatchCallCancelledPushes(state, call, reason ?? participant.state, participant.userId);
+  }
+  if (participant.state === 'joined' && previousStatus !== null) {
+    const payload = { callId: call.callId, participantId: participant.userId, state: 'joined' };
+    for (const userId of recipients) emitCurrentCallEvent(io, userId, SERVER_EVENTS.CALL_PARTICIPANT_JOINED, payload);
+    return;
+  }
+  if ((participant.state !== 'left' && participant.state !== 'declined' && participant.state !== 'missed') ||
+    previousStatus === null || TERMINAL_CALL_STATES.has(call.status)) return;
+  const payload = { callId: call.callId, participantId: participant.userId, state: participant.state };
+  for (const userId of recipients) emitCurrentCallEvent(io, userId, SERVER_EVENTS.CALL_PARTICIPANT_LEFT, payload);
+}
+
+function notifyTerminalParticipantLeaves(io: any, call: CallRecord, recipients: string[]): void {
+  const departed = call.participants?.filter(({ state }) =>
+    state === 'left' || state === 'declined' || state === 'missed'
+  ).map(({ userId: participantId, state }) => ({ participantId, state })) ?? [
+    { participantId: call.calleeId, state: call.status === 'declined' ? 'declined' : 'left' },
+    { participantId: call.callerId, state: 'left' },
+  ];
+  for (const participant of departed) {
+    for (const userId of recipients) {
+      emitCurrentCallEvent(io, userId, SERVER_EVENTS.CALL_PARTICIPANT_LEFT, { callId: call.callId, ...participant });
+    }
+  }
+}
+
+function publishCallTransition(state: ServerState, call: CallRecord, payload: {
+  previousStatus: string | null;
+  status: string;
+  actor: string | null;
+  reason: string | null;
+}): void {
+  if (!state.messageBus || payload.previousStatus === null) return;
+  state.messageBus.publish(CALL_TRANSITION_CHANNEL, {
+    instanceId: state.instanceId ?? null,
+    callId: call.callId,
+    ...payload,
+  }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[signaling] message bus publish failed: ${message}`);
+  });
+}
 
 function logField(name: string, value: string | null | undefined): string {
   return value ? ` ${name}=${sanitizeForLog(value)}` : '';
@@ -587,13 +663,8 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, {
   actorSocketId?: string | null;
   source?: string | null;
 }): void {
-  if (call.status !== 'ringing') {
-    if (previousStatus === 'ringing' && TERMINAL_CALL_STATES.has(call.status)) {
-      dispatchCallCancelledPushes(state, call, reason ?? call.endReason ?? null);
-    }
-    clearIncomingCallPushState(state, call.callId);
-  }
-  if (previousStatus !== null) {
+  updateCallPushState(state, call, previousStatus, reason);
+  if (previousStatus !== null && previousStatus !== call.status) {
     state.telemetry.recordCallTransition(call, previousStatus);
     console.log(formatCallTransitionLog(state, call, {
       previousStatus,
@@ -621,55 +692,21 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, {
     reason: reason ?? call.endReason ?? null,
     call: callWithParticipants(call),
   };
-  emitVersionedCallEvent(io, call.callerId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
-  emitVersionedCallEvent(io, call.calleeId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
-  if (previousStatus === 'ringing' && call.status === 'accepted') {
-    const participantEvent = {
-      callId: call.callId,
-      participantId: call.calleeId,
-      state: 'joined',
-    };
-    emitCurrentCallEvent(io, call.callerId, SERVER_EVENTS.CALL_PARTICIPANT_JOINED, participantEvent);
-    emitCurrentCallEvent(io, call.calleeId, SERVER_EVENTS.CALL_PARTICIPANT_JOINED, participantEvent);
-  } else if (TERMINAL_CALL_STATES.has(call.status)) {
-    const departed = call.status === 'declined'
-      ? [
-          { participantId: call.calleeId, state: 'declined' as const },
-          { participantId: call.callerId, state: 'left' as const },
-        ]
-      : [
-          { participantId: call.callerId, state: 'left' as const },
-          { participantId: call.calleeId, state: 'left' as const },
-        ];
-    for (const participant of departed) {
-      const eventPayload = { callId: call.callId, ...participant };
-      emitCurrentCallEvent(io, call.callerId, SERVER_EVENTS.CALL_PARTICIPANT_LEFT, eventPayload);
-      emitCurrentCallEvent(io, call.calleeId, SERVER_EVENTS.CALL_PARTICIPANT_LEFT, eventPayload);
-    }
-  }
+  const recipients = Array.from(new Set(call.participants?.map(({ userId }) => userId) ?? [call.callerId, call.calleeId]));
+  for (const userId of recipients) emitVersionedCallEvent(io, userId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
+  notifyParticipantChanges(io, state, call, actor, reason, previousStatus, recipients);
+  if (TERMINAL_CALL_STATES.has(call.status)) notifyTerminalParticipantLeaves(io, call, recipients);
 
   // Broadcast the transition on the cross-instance bus (best-effort) so other
   // instances / external observers can react to call lifecycle changes. Socket
   // delivery to participants is handled by the Redis adapter above, so bus
   // subscribers must not re-emit to sockets (to avoid duplicate delivery).
-  if (state.messageBus && previousStatus !== null) {
-    state.messageBus
-      .publish(CALL_TRANSITION_CHANNEL, {
-        // The origin is what lets a subscriber skip the transition it just
-        // performed itself, so applying a peer's transition costs a shared-store
-        // read only on the instances that did not already know.
-        instanceId: state.instanceId ?? null,
-        callId: call.callId,
-        previousStatus,
-        status: call.status,
-        actor,
-        reason: statePayload.reason,
-      })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[signaling] message bus publish failed: ${message}`);
-      });
-  }
+  publishCallTransition(state, call, {
+    previousStatus,
+    status: call.status,
+    actor,
+    reason: statePayload.reason,
+  });
 
   const eventName = getCallTransitionEventName(call.status, statePayload.reason);
   if (!eventName) {
@@ -683,8 +720,7 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, {
     reason: statePayload.reason,
     call: callWithParticipants(call),
   };
-  emitVersionedCallEvent(io, call.callerId, eventName, eventPayload);
-  emitVersionedCallEvent(io, call.calleeId, eventName, eventPayload);
+  for (const userId of recipients) emitVersionedCallEvent(io, userId, eventName, eventPayload);
 }
 
 export {

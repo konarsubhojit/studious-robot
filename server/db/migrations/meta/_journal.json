@@ -162,6 +162,13 @@
       "when": 1791078242308,
       "tag": "0022_group_attachment_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791088709372,
+      "tag": "0023_call_participants",
+      "breakpoints": true
     }
   ]
 }

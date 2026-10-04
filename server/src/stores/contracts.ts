@@ -40,7 +40,11 @@ export type CallRecord = {
   calleeId: string;
   participants?: {
     userId: string;
-    state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined';
+    state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined' | 'missed' | 'busy' | 'unreachable';
+    ringTimeoutAt?: string | null;
+    joinedAt?: string | null;
+    leftAt?: string | null;
+    deviceId?: string | null;
   }[];
   status: string;
   endReason?: string | null;
@@ -129,6 +133,7 @@ export type Stores = {
   callState?: {
     get: (callId: string) => Promise<CallRecord | null>;
     save: (call: CallRecord) => Promise<void>;
+    remove?: (callId: string) => Promise<void>;
     transitionAtomic: (args: {
       callId: string;
       fromStatus: string;
@@ -163,6 +168,7 @@ export type Stores = {
 export type IncomingCallPushEntry = {
   acknowledgedDeviceIds: Set<string>;
   pushedDeviceIds: Set<string>;
+  cancelledDeviceIds: Set<string>;
   ackTimeouts: Map<string, NodeJS.Timeout>;
 };
 export type AuditLog = {

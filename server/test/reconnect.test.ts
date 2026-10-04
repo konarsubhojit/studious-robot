@@ -325,6 +325,47 @@ test('reconnect: all active sockets for a user receive call.incoming notificatio
   }
 });
 
+test('reconnect: a reconnected group participant receives signaling addressed to their peer room', async () => {
+  const { url, teardown } = await startServer();
+  const callerSession = await createSession(url, 'rtc-group-caller');
+  const bobSession = await createSession(url, 'rtc-group-bob');
+  const carolSession = await createSession(url, 'rtc-group-carol');
+  const caller = await connect(url, { sessionId: callerSession });
+  const bob = await connect(url, { sessionId: bobSession });
+  const carolOld = await connect(url, { sessionId: carolSession });
+  let carol: import('socket.io-client').Socket | undefined;
+  try {
+    const created = await postJson(url, '/calls', {
+      calleeIds: ['rtc-group-bob', 'rtc-group-carol'],
+    }, callerSession);
+    assert.equal(created.status, 201);
+    const callId = created.body.callId as string;
+    await postJson(url, `/calls/${callId}/join`, {}, bobSession);
+    await postJson(url, `/calls/${callId}/join`, {}, carolSession);
+
+    carolOld.disconnect();
+    await tick();
+    carol = await connect(url, { sessionId: carolSession });
+
+    const offerToCarol = waitFor(carol, 'rtc.offer');
+    const offerAtBob = new Promise((resolve) => {
+      bob.once('rtc.offer', resolve);
+      setTimeout(() => resolve(null), 100);
+    });
+    const relay = await emitWithAck(caller, 'rtc.offer', {
+      version: 3,
+      callId,
+      peerId: 'rtc-group-carol',
+      sdp: { type: 'offer', sdp: 'addressed-to-carol' },
+    });
+    assert.equal(relay.ok, true);
+    assert.equal((await offerToCarol).fromUserId, 'rtc-group-caller');
+    assert.equal(await offerAtBob, null, 'the non-addressed participant must not receive the frame');
+  } finally {
+    await teardown(caller, bob, carolOld, carol);
+  }
+});
+
 // ─── 7. Full network handoff: disconnect → reconnect → ICE restart → end ─────
 
 test('network handoff: call completes cleanly after callee switches networks mid-call', async () => {
@@ -387,9 +428,13 @@ test('network handoff: call completes cleanly after callee switches networks mid
     assert.equal(answerAck.ok, true);
     await restartAnswerRelayed;
 
-    // Step 6: Either party can end the call cleanly after the handoff.
+    // Step 6: The originator may leave, but the remaining participant keeps the
+    // call alive until they leave too.
     const endAck = await emitWithAck(caller, 'call.end', { version: 2, callId });
     assert.equal(endAck.ok, true);
+    assert.equal(getCall(callId)?.status, 'connecting_media');
+    const lastParticipantEnd = await emitWithAck(calleeNew, 'call.end', { version: 2, callId });
+    assert.equal(lastParticipantEnd.ok, true);
 
     const finalCall = getCall(callId);
     assert.equal(finalCall?.status, 'ended');

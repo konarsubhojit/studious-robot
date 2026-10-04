@@ -318,6 +318,8 @@ test('durationSeconds measures the connected time of an answered call', async (t
   record.answeredAt = new Date(Date.now() - 128_000).toISOString();
 
   await postJson(url, `/calls/${call.callId}/end`, {}, aliceSession);
+  assert.equal(getCall(call.callId)?.status, 'accepted');
+  await postJson(url, `/calls/${call.callId}/end`, {}, bobSession);
   assert.equal(getCall(call.callId)?.durationSeconds, 128);
 
   const res = await getJson(

@@ -371,7 +371,7 @@ test('cancel: idempotent – cancelling an already-ended call returns 200', asyn
 
 // ─── POST /calls/:callId/end ──────────────────────────────────────────────────
 
-test('end: either party can end an active call', async () => {
+test('end: the originator may leave while another participant keeps the call active', async () => {
   const { url, teardown } = await startServer();
   try {
     const callerSession = await createSession(url, 'user-alice');
@@ -384,8 +384,10 @@ test('end: either party can end an active call', async () => {
 
     const res = await postJson(url, `/calls/${callId}/end`, {}, callerSession);
     assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'ended');
-    assert.equal(res.body.endReason, 'user_hangup');
+    assert.equal(res.body.status, 'accepted');
+    assert.equal(res.body.participants.find((participant: any) => participant.userId === 'user-alice').state, 'left');
+    const final = await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
+    assert.equal(final.body.status, 'ended', 'the last participant leaving ends the call');
   } finally {
     await teardown();
   }
@@ -404,7 +406,9 @@ test('end: callee can also end the call', async () => {
 
     const res = await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
     assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'ended');
+    assert.equal(res.body.status, 'accepted');
+    const callerLeaves = await postJson(url, `/calls/${callId}/end`, {}, callerSession);
+    assert.equal(callerLeaves.body.status, 'ended');
   } finally {
     await teardown();
   }
@@ -420,10 +424,118 @@ test('end: idempotent – ending an already-ended call returns 200', async () =>
     const callId = created.body.callId;
 
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
+    await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
     await postJson(url, `/calls/${callId}/end`, {}, callerSession);
-    const res = await postJson(url, `/calls/${callId}/end`, {}, callerSession);
+    const res = await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'ended');
+  } finally {
+    await teardown();
+  }
+});
+
+test('three-party call: ring, join, originator leaves, final participant ends', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const caller = await createSession(url, 'group-caller');
+    const bob = await createSession(url, 'group-bob');
+    const carol = await createSession(url, 'group-carol');
+    const created = await postJson(url, '/calls', { calleeIds: ['group-bob', 'group-carol'] }, caller);
+    assert.equal(created.status, 201);
+    assert.deepEqual(created.body.participants.map((p: any) => p.userId), ['group-caller', 'group-bob', 'group-carol']);
+    assert.deepEqual(created.body.participants.slice(1).map((p: any) => p.state), ['ringing', 'ringing']);
+
+    const callId = created.body.callId;
+    const joined = await postJson(url, `/calls/${callId}/join`, {}, bob);
+    assert.equal(joined.body.status, 'accepted');
+    assert.equal(joined.body.participants.find((p: any) => p.userId === 'group-bob').state, 'joined');
+    await postJson(url, `/calls/${callId}/decline`, {}, carol);
+
+    const originatorLeaves = await postJson(url, `/calls/${callId}/end`, {}, caller);
+    assert.equal(originatorLeaves.body.status, 'accepted');
+    assert.equal(originatorLeaves.body.participants.find((p: any) => p.userId === 'group-caller').state, 'left');
+    const final = await postJson(url, `/calls/${callId}/end`, {}, bob);
+    assert.equal(final.body.status, 'ended');
+    assert.equal(final.body.participants.find((p: any) => p.userId === 'group-bob').state, 'left');
+    assert.equal((await getJson(url, '/calls', carol)).body.calls[0].participants.length, 3);
+  } finally {
+    await teardown();
+  }
+});
+
+test('originator leaves like any participant; pending invitee keeps call alive until everyone leaves', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const caller = await createSession(url, 'pending-caller');
+    const joinedInvitee = await createSession(url, 'pending-bob');
+    const pendingInvitee = await createSession(url, 'pending-carol');
+    const created = await postJson(url, '/calls', {
+      calleeIds: ['pending-bob', 'pending-carol'],
+    }, caller);
+    const callId = created.body.callId;
+
+    await postJson(url, `/calls/${callId}/join`, {}, joinedInvitee);
+    const callerLeaves = await postJson(url, `/calls/${callId}/end`, {}, caller);
+    assert.equal(callerLeaves.body.status, 'accepted');
+
+    const joinedInviteeLeaves = await postJson(url, `/calls/${callId}/end`, {}, joinedInvitee);
+    assert.equal(joinedInviteeLeaves.body.status, 'accepted');
+    assert.equal(
+      joinedInviteeLeaves.body.participants.find((participant: any) => participant.userId === 'pending-carol').state,
+      'ringing',
+      'a still-ringing invitee remains eligible after the other participants leave'
+    );
+
+    const lateJoin = await postJson(url, `/calls/${callId}/join`, {}, pendingInvitee);
+    assert.equal(lateJoin.status, 200);
+    assert.equal(lateJoin.body.participants.find((participant: any) => participant.userId === 'pending-carol').state, 'joined');
+    const finalLeave = await postJson(url, `/calls/${callId}/end`, {}, pendingInvitee);
+    assert.equal(finalLeave.body.status, 'ended', 'the final active participant leaving ends the call');
+  } finally {
+    await teardown();
+  }
+});
+
+test('three-party decline is participant-local while the other invitee can join', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const caller = await createSession(url, 'decline-caller');
+    const bob = await createSession(url, 'decline-bob');
+    const carol = await createSession(url, 'decline-carol');
+    const created = await postJson(url, '/calls', { calleeIds: ['decline-bob', 'decline-carol'] }, caller);
+    const callId = created.body.callId;
+    const declined = await postJson(url, `/calls/${callId}/decline`, {}, bob);
+    assert.equal(declined.body.status, 'ringing');
+    assert.equal(declined.body.participants.find((p: any) => p.userId === 'decline-bob').state, 'declined');
+    const joined = await postJson(url, `/calls/${callId}/join`, {}, carol);
+    assert.equal(joined.body.status, 'accepted');
+    assert.equal(joined.body.participants.find((p: any) => p.userId === 'decline-carol').state, 'joined');
+  } finally {
+    await teardown();
+  }
+});
+
+test('ringing deadline is tracked independently for each invitee', async () => {
+  const { url, getCall, tickRingingTimeouts, teardown } = await startServer();
+  try {
+    const caller = await createSession(url, 'timeout-caller');
+    await createSession(url, 'timeout-bob');
+    await createSession(url, 'timeout-carol');
+    const created = await postJson(url, '/calls', { calleeIds: ['timeout-bob', 'timeout-carol'] }, caller);
+    const call = getCall(created.body.callId);
+    assert.ok(call?.participants);
+    const bobParticipant = call.participants.find((p: any) => p.userId === 'timeout-bob');
+    const carolParticipant = call.participants.find((p: any) => p.userId === 'timeout-carol');
+    assert.ok(bobParticipant && carolParticipant);
+    bobParticipant.ringTimeoutAt = new Date(Date.now() - 1).toISOString();
+    carolParticipant.ringTimeoutAt = new Date(Date.now() + 60_000).toISOString();
+
+    assert.equal(tickRingingTimeouts(Date.now()), 0);
+    assert.equal(call.status, 'ringing');
+    assert.equal(bobParticipant.state, 'missed');
+    assert.equal(carolParticipant.state, 'ringing');
+    assert.equal(tickRingingTimeouts(Date.now() + 61_000), 1);
+    assert.equal(call.status, 'missed');
   } finally {
     await teardown();
   }
@@ -509,13 +621,16 @@ test('full lifecycle: ringing → accepted → ended produces consistent event l
 
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     await postJson(url, `/calls/${callId}/end`, {}, callerSession);
+    await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
 
     const events = getCallEvents(callId);
-    assert.equal(events.length, 3);
     assert.equal(events[0].event, 'created');
-    assert.equal(events[1].event, 'accepted');
-    assert.equal(events[2].event, 'ended');
-    assert.equal(events[2].reason, 'user_hangup');
+    assert.ok(events.some((event: any) => event.event === 'accepted'));
+    assert.ok(events.some((event: any) => event.event === 'participant_joined'));
+    const lastEvent = events.at(-1);
+    assert.ok(lastEvent);
+    assert.equal(lastEvent.event, 'ended');
+    assert.equal(lastEvent.reason, 'user_hangup');
   } finally {
     await teardown();
   }

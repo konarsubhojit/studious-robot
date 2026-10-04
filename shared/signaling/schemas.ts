@@ -53,11 +53,19 @@ export type CallRecord = {
 };
 export type CallParticipant = {
   userId: string;
-  state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined';
+  state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined' | 'missed' | 'busy' | 'unreachable';
+  ringTimeoutAt?: string | null;
+  joinedAt?: string | null;
+  leftAt?: string | null;
+  deviceId?: string | null;
 };
 const callParticipant = s.object({
   userId: idField,
-  state: s.enum(['invited', 'ringing', 'joined', 'left', 'declined']),
+  state: s.enum(['invited', 'ringing', 'joined', 'left', 'declined', 'missed', 'busy', 'unreachable']),
+  ringTimeoutAt: s.string().optional().nullable(),
+  joinedAt: s.string().optional().nullable(),
+  leftAt: s.string().optional().nullable(),
+  deviceId: s.id().optional().nullable(),
 });
 const callRecord = s.object(
   {
@@ -379,7 +387,7 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     version: currentVersionField,
     callId: idField,
     participantId: idField,
-    state: s.enum(['left', 'declined']),
+    state: s.enum(['left', 'declined', 'missed']),
   }),
   [SERVER_EVENTS.RTC_OFFER]: s.union([
     s.object({ version: legacyVersionField.optional(), callId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),

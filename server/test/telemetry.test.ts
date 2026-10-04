@@ -219,7 +219,7 @@ test('GET /metrics increments calls_declined after callee declines', async () =>
   }
 });
 
-test('GET /metrics increments calls_ended after caller ends the call', async () => {
+test('GET /metrics increments calls_ended after all call participants leave', async () => {
   const { url, teardown } = await startServer();
   try {
     const callerSession = await createSession(url, 'alice');
@@ -230,6 +230,7 @@ test('GET /metrics increments calls_ended after caller ends the call', async () 
 
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     await postJson(url, `/calls/${callId}/end`, {}, callerSession);
+    await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
 
     const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_ended, 1);
@@ -306,6 +307,7 @@ test('GET /metrics call_connect_rate is a number after a connected call', async 
     const callId = callRes.body.callId;
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     await postJson(url, `/calls/${callId}/end`, {}, callerSession);
+    await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
 
     const snap = (await getMetricsHttp(url)).body;
     // calls_in_call is 0 until rtc transitions; but connect_rate should not throw
@@ -346,6 +348,7 @@ test('GET /calls/:callId/events returns event timeline for participant', async (
     const callId = callRes.body.callId;
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     await postJson(url, `/calls/${callId}/end`, {}, callerSession);
+    await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
 
     const res = await getJson(url, `/calls/${callId}/events`, callerSession);
     assert.equal(res.status, 200);
@@ -441,6 +444,7 @@ test('GET /calls/:callId/events events are in chronological order', async () => 
     const callId = callRes.body.callId;
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     await postJson(url, `/calls/${callId}/end`, {}, callerSession);
+    await postJson(url, `/calls/${callId}/end`, {}, calleeSession);
 
     const res = await getJson(url, `/calls/${callId}/events`, callerSession);
     const { events } = res.body;

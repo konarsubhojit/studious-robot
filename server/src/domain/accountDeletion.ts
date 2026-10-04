@@ -34,12 +34,14 @@
  * own name.
  */
 
-import { eq, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import {
   accountDeletions as accountDeletionsTable,
   auditLog as auditLogTable,
   blocks as blocksTable,
   calls as callsTable,
+  callParticipants as callParticipantsTable,
+  callEvents as callEventsTable,
   conversations as conversationsTable,
   devices as devicesTable,
   users as usersTable,
@@ -337,19 +339,127 @@ async function eraseAvatar(
  * that belongs to the other participant.  Call events and quality samples
  * cascade with their call.
  */
-async function eraseCalls(state: ServerState, userId: string): Promise<number> {
-  let removed = 0;
-  for (const [callId, call] of state.calls) {
-    if (call.callerId !== userId && call.calleeId !== userId) continue;
+function eraseOneCallFromMemory(
+  state: ServerState,
+  callId: string,
+  call: import('../stores/contracts.ts').CallRecord,
+  userId: string,
+  survivingUsers: Set<string>
+): boolean | null {
+  const participates = call.participants?.some(({ userId: participantId }) => participantId === userId) ??
+    (call.callerId === userId || call.calleeId === userId);
+  if (!participates) return null;
+  const remaining = call.participants?.filter(({ userId: participantId }) => participantId !== userId) ?? [];
+  if (remaining.length === 0) {
     state.calls.delete(callId);
     state.callEvents.delete(callId);
-    removed += 1;
+    return true;
   }
+  call.participants = remaining;
+  for (const event of state.callEvents.get(callId) ?? []) {
+    if (event.actor === userId) event.actor = `deleted-${randomUUID()}`;
+  }
+  const ids = remaining.map(({ userId: participantId }) => participantId);
+  for (const id of ids) survivingUsers.add(id);
+  if (call.callerId === userId) call.callerId = ids[0];
+  if (call.calleeId === userId) call.calleeId = ids.find((id) => id !== call.callerId) ?? ids[0];
+  return false;
+}
 
-  if (state.db) {
-    await state.db
-      .delete(callsTable)
-      .where(or(eq(callsTable.callerId, userId), eq(callsTable.calleeId, userId)));
+function eraseCallHistoryFromMemory(
+  state: ServerState,
+  userId: string
+): { removed: number; removedCallIds: string[]; survivingCalls: import('../stores/contracts.ts').CallRecord[]; survivingUsers: Set<string>; } {
+  let removed = 0;
+  const survivingUsers = new Set<string>();
+  const removedCallIds: string[] = [];
+  const survivingCalls: import('../stores/contracts.ts').CallRecord[] = [];
+  for (const [callId, call] of state.calls) {
+    const erasedCall = eraseOneCallFromMemory(state, callId, call, userId, survivingUsers);
+    if (erasedCall === true) {
+      removedCallIds.push(callId);
+      removed += 1;
+    } else if (erasedCall === false) {
+      survivingCalls.push(call);
+    }
+  }
+  return { removed, removedCallIds, survivingCalls, survivingUsers };
+}
+
+async function eraseOneCallParticipantFromDb(
+  db: NonNullable<ServerState['db']>,
+  callId: string,
+  userId: string,
+  participants: { userId: string }[]
+): Promise<boolean> {
+  const remaining = participants.filter(({ userId: participantId }) => participantId !== userId);
+  if (remaining.length === 0) {
+    await db.delete(callsTable).where(eq(callsTable.callId, callId));
+    return true;
+  }
+  const callerId = remaining[0].userId;
+  const calleeId = remaining.find(({ userId: participantId }) => participantId !== callerId)?.userId ?? callerId;
+  await db.delete(callParticipantsTable).where(and(
+    eq(callParticipantsTable.callId, callId),
+    eq(callParticipantsTable.userId, userId),
+  ));
+  await db.update(callsTable).set({ callerId, calleeId }).where(eq(callsTable.callId, callId));
+  await db.update(callEventsTable).set({ actor: `deleted-${randomUUID()}` })
+    .where(and(eq(callEventsTable.callId, callId), eq(callEventsTable.actor, userId)));
+  return false;
+}
+
+async function eraseParticipantCallRows(
+  db: NonNullable<ServerState['db']>,
+  userId: string,
+  callIds: Set<string>
+): Promise<Set<string>> {
+  const survivingUsers = new Set<string>();
+  if (callIds.size === 0) return survivingUsers;
+
+  const rows = await db.select().from(callParticipantsTable)
+    .where(inArray(callParticipantsTable.callId, Array.from(callIds)));
+  const byCall = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const participants = byCall.get(row.callId) ?? [];
+    participants.push(row);
+    byCall.set(row.callId, participants);
+  }
+  for (const callId of callIds) {
+    const participants = byCall.get(callId) ?? [];
+    if (await eraseOneCallParticipantFromDb(db, callId, userId, participants)) continue;
+    for (const { userId: participantId } of participants) {
+      if (participantId !== userId) survivingUsers.add(participantId);
+    }
+  }
+  return survivingUsers;
+}
+
+async function eraseCallRowsFromDb(db: NonNullable<ServerState['db']>, userId: string): Promise<Set<string>> {
+  const participantRows = await db.select().from(callParticipantsTable)
+    .where(eq(callParticipantsTable.userId, userId));
+  const callIds = new Set(participantRows.map(({ callId }) => callId));
+  const survivingUsers = await eraseParticipantCallRows(db, userId, callIds);
+  await db.delete(callsTable).where(and(
+    or(eq(callsTable.callerId, userId), eq(callsTable.calleeId, userId)),
+    sql`not exists (select 1 from call_participants where call_id = ${callsTable.callId})`,
+  ));
+  return survivingUsers;
+}
+
+async function eraseCalls(state: ServerState, userId: string): Promise<number> {
+  const memory = eraseCallHistoryFromMemory(state, userId);
+  const removed = memory.removed;
+  const databaseSurvivors = state.db ? await eraseCallRowsFromDb(state.db, userId) : new Set<string>();
+  const survivingUsers = new Set([...memory.survivingUsers, ...databaseSurvivors]);
+  if (survivingUsers.size && state.cache) {
+    await invalidateCache(state, ...Array.from(survivingUsers, callHistoryCachePrefix));
+  }
+  if (state.callState) {
+    await Promise.all([
+      ...memory.survivingCalls.map((call) => state.callState!.save(call)),
+      ...memory.removedCallIds.map((callId) => state.callState!.remove?.(callId)),
+    ]);
   }
   return removed;
 }
