@@ -21,6 +21,7 @@ import {
   withUploadProgress,
   withoutMessage,
 } from '../../src/messaging/sendPipeline';
+import { deriveDeliveryState } from '../../src/messaging/deliveryState';
 
 /**
  * The send pipeline's pure half, exercised without mounting `useMessaging`:
@@ -46,7 +47,47 @@ const queued = (overrides: any = {}): any => ({
   ...overrides,
 });
 
+describe('delivery state', () => {
+  test('authoritative outbox determines waiting, in-flight and terminal states despite stale flags', () => {
+    const message = draft({ failed: true, pending: true, readAt: '2026-08-25T10:31:00Z' });
+    expect(deriveDeliveryState(message, queued())).toBe('queued');
+    expect(deriveDeliveryState(message, queued(), true)).toBe('sending');
+    expect(deriveDeliveryState(message, queued({ state: 'failed' }), true)).toBe('failed');
+    expect(deriveDeliveryState(message, queued({ attempts: OUTBOX_MAX_ATTEMPTS }))).toBe('failed');
+  });
+
+  test('server receipts determine sent, delivered and read after reconciliation', () => {
+    expect(deriveDeliveryState(draft())).toBe('sent');
+    expect(deriveDeliveryState(draft({ deliveredTo: ['other'] }))).toBe('sent');
+    expect(deriveDeliveryState(draft({ deliveredTo: ['bob'], pending: true }))).toBe('delivered');
+    expect(deriveDeliveryState(draft({ readAt: '2026-08-25T10:31:00Z', failed: true }))).toBe('read');
+    expect(deriveDeliveryState(draft({ recipientId: undefined, deliveredTo: ['bob'] }))).toBe('delivered');
+  });
+
+  test('legacy optimistic rows never imply an in-flight emit and failed uploads remain failed', () => {
+    expect(deriveDeliveryState(draft({ pending: true }))).toBe('queued');
+    expect(deriveDeliveryState(draft({ syncState: 'pending' }))).toBe('queued');
+    expect(deriveDeliveryState(draft({ uploadState: 'failed' }), queued(), true)).toBe('failed');
+  });
+
+  test('persisted group readers exclude the sender and cannot override the outbox', () => {
+    const message = draft({ recipientId: undefined, readBy: ['alice'] });
+    expect(deriveDeliveryState(message)).toBe('sent');
+    message.readBy.push('bob');
+    expect(deriveDeliveryState(message)).toBe('read');
+    expect(deriveDeliveryState(message, queued())).toBe('queued');
+    expect(deriveDeliveryState(message, queued(), true)).toBe('sending');
+    expect(deriveDeliveryState(message, queued({ state: 'failed' }))).toBe('failed');
+  });
+});
+
 describe('optimistic send', () => {
+  test('discarded uploads hide reconciled server identities without hiding another sender', () => {
+    const item = queued({ messageId: 'original', clientMessageId: 'client', discarded: true });
+    const server = draft({ messageId: 'server', clientMessageId: 'client' });
+    const peer = { ...server, messageId: 'peer-message', senderId: 'bob' };
+    expect(restoreOutboxMessages({ bob: [server, peer] }, [item], 'alice').bob).toEqual([peer]);
+  });
   test('cleanup tombstones stay retryable and do not block later sends during the final sweep delay', async () => {
     const discarded = queued({
       discarded: true, state: 'failed', attempts: 99, nextAttemptAt: Date.now() + 60_000,

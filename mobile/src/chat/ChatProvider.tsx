@@ -39,6 +39,8 @@ export type ChatContextValue = {
   currentUserId: CallFlow['userId'];
   sendMessage: CallFlow['sendMessage'];
   retryMessage: CallFlow['retryMessage'];
+  discardMessage: CallFlow['discardMessage'];
+  pendingSendCount: CallFlow['pendingSendCount'];
   retryAttachmentUpload: CallFlow['retryAttachmentUpload'];
   deleteMessage: CallFlow['deleteMessage'];
   reactToMessage: CallFlow['reactToMessage'];
@@ -70,7 +72,6 @@ export type ChatContextValue = {
   stopRecordingVoiceNoteAndSend: CallFlow['stopRecordingVoiceNoteAndSend'];
   cancelRecordingVoiceNote: CallFlow['cancelRecordingVoiceNote'];
   cancelAttachmentUpload: CallFlow['cancelAttachmentUpload'];
-  discardMessage: CallFlow['discardMessage'];
   isUploadingAttachment: CallFlow['isUploadingAttachment'];
   attachmentUploadProgress: CallFlow['attachmentUploadProgress'];
   isRecordingVoiceNote: CallFlow['isRecordingVoiceNote'];
@@ -102,7 +103,6 @@ const selectChatSlice = (state: CallContextValue) => ({
   clearDraft: state.callFlow.clearDraft,
   conversations: state.callFlow.conversations,
   deleteMessage: state.callFlow.deleteMessage,
-  discardMessage: state.callFlow.discardMessage,
   drafts: state.callFlow.drafts,
   fetchConversations: state.callFlow.fetchConversations,
   fetchMessagesForPeer: state.callFlow.fetchMessagesForPeer,
@@ -121,6 +121,8 @@ const selectChatSlice = (state: CallContextValue) => ({
   reactToMessage: state.callFlow.reactToMessage,
   retryAttachmentUpload: state.callFlow.retryAttachmentUpload,
   retryMessage: state.callFlow.retryMessage,
+  discardMessage: state.callFlow.discardMessage,
+  pendingSendCount: state.callFlow.pendingSendCount,
   saveDraft: state.callFlow.saveDraft,
   searchMessages: state.callFlow.searchMessages,
   searchLocalMessages: state.callFlow.searchLocalMessages,
@@ -235,6 +237,8 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       currentUserId: callFlow.userId,
       sendMessage: callFlow.sendMessage,
       retryMessage: callFlow.retryMessage,
+      discardMessage: callFlow.discardMessage,
+      pendingSendCount: callFlow.pendingSendCount,
       retryAttachmentUpload: callFlow.retryAttachmentUpload,
       deleteMessage: callFlow.deleteMessage,
       reactToMessage: callFlow.reactToMessage,
@@ -264,7 +268,6 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       stopRecordingVoiceNoteAndSend: callFlow.stopRecordingVoiceNoteAndSend,
       cancelRecordingVoiceNote: callFlow.cancelRecordingVoiceNote,
       cancelAttachmentUpload: callFlow.cancelAttachmentUpload,
-      discardMessage: callFlow.discardMessage,
       isUploadingAttachment: callFlow.isUploadingAttachment,
       attachmentUploadProgress: callFlow.attachmentUploadProgress,
       isRecordingVoiceNote: callFlow.isRecordingVoiceNote,
@@ -292,6 +295,8 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.isChatOffline,
       callFlow.retryAttachmentUpload,
       callFlow.retryMessage,
+      callFlow.discardMessage,
+      callFlow.pendingSendCount,
       callFlow.reactToMessage,
       callFlow.sendMessage,
       callFlow.sendTypingIndicator,
@@ -308,7 +313,6 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.stopRecordingVoiceNoteAndSend,
       callFlow.cancelRecordingVoiceNote,
       callFlow.cancelAttachmentUpload,
-      callFlow.discardMessage,
       callFlow.isUploadingAttachment,
       callFlow.attachmentUploadProgress,
       callFlow.isRecordingVoiceNote,

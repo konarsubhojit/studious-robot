@@ -296,9 +296,11 @@ export async function drainQueuedMessages(
 export function restoreOutboxMessages(messages: MessagesByPeer, outbox: OutboxItem[], senderId: string): MessagesByPeer {
   let restored = messages;
   for (const item of outbox) {
+    const matches = (entry: ChatMessage) => entry.messageId === item.messageId ||
+      Boolean(item.clientMessageId && entry.senderId === senderId && entry.clientMessageId === item.clientMessageId);
     if (item.discarded) {
       restored = { ...restored, [item.recipientId]: (restored[item.recipientId] ?? []).filter(entry =>
-        entry.messageId !== item.messageId) };
+        !matches(entry)) };
       continue;
     }
     const restoreUpload = (entry: ChatMessage): ChatMessage => {
@@ -311,8 +313,6 @@ export function restoreOutboxMessages(messages: MessagesByPeer, outbox: OutboxIt
       }
       return { ...entry, uploadState: isRetryable(item) ? 'uploading' : 'failed', uploadProgress: item.upload.progress };
     };
-    const matches = (entry: ChatMessage) => entry.messageId === item.messageId ||
-      Boolean(item.clientMessageId && entry.senderId === senderId && entry.clientMessageId === item.clientMessageId);
     if (restored[item.recipientId]?.some(matches)) {
       restored = { ...restored, [item.recipientId]: restored[item.recipientId].map(entry =>
         matches(entry) ? restoreUpload(isRetryable(item) ? entry : asFailed(entry)) : entry) };

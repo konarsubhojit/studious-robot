@@ -107,9 +107,44 @@ function groupProps(currentUserId = 'alice') {
     preview: { activity: jest.fn(async () => {}) },
     onSearchUsers: jest.fn(async () => []), onSend: jest.fn(async () => 'm1'),
     onRetry: jest.fn(async () => {}), onTyping: jest.fn(), onRead: jest.fn(async () => {}),
+    onDiscard: jest.fn(), pendingSendCount: 1,
     onBack: jest.fn(), draft: 'hello group', onDraft: jest.fn(), offline: true,
   };
 }
+
+test.each([
+  ['queued', 'Queued'], ['sending', 'Sending'], ['sent', 'Sent'],
+  ['delivered', 'Delivered'], ['read', 'Read'], ['failed', 'Failed'],
+] as const)('live group uses the shared accessible %s indicator', async (deliveryState, label) => {
+  const props = groupProps();
+  props.conversation.localMock = false;
+  props.messages = [{ messageId: 'original', senderId: 'alice', recipientId: 'mock-group-1', body: 'live', deliveryState }];
+  const tree = await render(<GroupConversationScreen {...props} />);
+  const indicator = tree.root.findAll(node => typeof node.type === 'string' &&
+    node.props.accessibilityLabel === label)[0];
+  expect(indicator).toBeDefined();
+  expect(text(tree)).not.toContain('Saved locally (mock)');
+  if (deliveryState === 'read') expect(indicator.props.children).toBe('✓✓ Read');
+  if (deliveryState === 'delivered') expect(indicator.props.children).toBe('✓✓');
+  if (deliveryState === 'failed') {
+    await act(async () => { find(tree, 'group-message-failed').props.onPress(); });
+    expect(props.onRetry).toHaveBeenCalledWith('original');
+    act(() => find(tree, 'group-message-discard').props.onPress());
+    expect(props.onDiscard).toHaveBeenCalledWith('original');
+  }
+});
+
+test('group offline banner tracks socket state and retryable count', async () => {
+  const props = { ...groupProps(), pendingSendCount: 3 };
+  const tree = await render(<GroupConversationScreen {...props} />);
+  expect(text(tree)).toContain("3 messages will send when you're back online");
+  await act(async () => { tree.update(<GroupConversationScreen {...props} pendingSendCount={1} />); });
+  expect(text(tree)).toContain("1 message will send when you're back online");
+  await act(async () => { tree.update(<GroupConversationScreen {...props} pendingSendCount={0} />); });
+  expect(tree.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'group-offline-notice')).toHaveLength(0);
+  await act(async () => { tree.update(<GroupConversationScreen {...props} offline={false} />); });
+  expect(tree.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'group-offline-notice')).toHaveLength(0);
+});
 
 test('group timeline attributes bubbles, summarizes read members and clears a durably accepted draft', async () => {
   const props = groupProps();
@@ -123,7 +158,8 @@ test('group timeline attributes bubbles, summarizes read members and clears a du
   expect(text(tree)).toContain('You');
   expect(text(tree)).toContain('Read by bob, carol');
   expect(text(tree)).toContain('bob, carol');
-  expect(text(tree)).toContain('durably queued');
+  expect(text(tree)).toContain("1 message will send when you're back online");
+  expect(text(tree)).toContain('Saved locally (mock)');
   expect(props.onRead).toHaveBeenCalledTimes(1);
   act(() => find(tree, 'group-composer').props.onChangeText('new text'));
   expect(props.onDraft).toHaveBeenCalledWith('new text');

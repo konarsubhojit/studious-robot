@@ -49,6 +49,7 @@ import {
 } from '../messaging/messageHistory';
 import { createMessageId, timelineEntryId } from '../messaging/messageIdentity';
 import { mergeMessageSearchResults } from '../messaging/messageSearch';
+import { deriveDeliveryState } from '../messaging/deliveryState';
 import { resumeMessageBackfill } from '../messaging/messageBackfill';
 import { syncConversationDelta } from '../messaging/deltaSync';
 import {
@@ -260,7 +261,9 @@ export default function useMessaging({
   // every mutation so it survives process death. Held in a ref (not state) so
   // the drain loop always reads the latest queue.
   const outboxRef = useRef(([] as OutboxItem[]));
-  const [pendingSendCount, setPendingSendCount] = useState(0);
+  const [outbox, setOutbox] = useState<OutboxItem[]>([]);
+  const [inFlight, setInFlight] = useState<Record<string, number>>({});
+  const pendingSendCount = outbox.filter(item => !item.discarded && isRetryable(item)).length;
   // null until the socket reports either way, so the UI doesn't flash an
   // "offline" banner during the first connect.
   const [isSocketConnected, setIsSocketConnected] = useState(
@@ -294,7 +297,8 @@ export default function useMessaging({
     setActiveChatPeerId(null);
     setTypingByPeer({});
     setGroupTyping({});
-    setPendingSendCount(0);
+    setOutbox([]);
+    setInFlight({});
     outboxRef.current = [];
     conversationsRef.current = [];
     conversationsFetchedRef.current = false;
@@ -358,7 +362,7 @@ export default function useMessaging({
       const message = messagesByPeerRef.current[item.recipientId]?.find(row => row.messageId === item.messageId);
       if (message) restoredConversations = withOutgoingMessage(restoredConversations, message);
     }
-    setPendingSendCount(snapshot.outbox.filter(item => !item.discarded).length);
+    setOutbox(snapshot.outbox);
     // Only fill in what the network hasn't already provided: a response that
     // beat the disk read is newer than the cache.
     const pendingPeers = new Set(snapshot.outbox.map(item => item.recipientId));
@@ -674,15 +678,28 @@ export default function useMessaging({
     }
   }, [authedFetchRef, scope, sessionIdRef, signalingUrl, userId]);
 
+  // History can replace the visible id while the outbox retains its compose-time identity.
+  const resolveQueuedMessage = useCallback((peerId: string, messageId: string) => {
+    const messages = (messagesByPeerRef.current[peerId] ?? []).filter(entry => entry.senderId === userId);
+    let message = messages.find(entry => entry.messageId === messageId || entry.clientMessageId === messageId);
+    const identities = new Set([messageId, message?.messageId, message?.clientMessageId]);
+    const queued = outboxRef.current.find(item => item.recipientId === peerId &&
+      (identities.has(item.messageId) || Boolean(item.clientMessageId && identities.has(item.clientMessageId))));
+    message = message ?? messages.find(entry => entry.messageId === queued?.messageId ||
+      Boolean(queued?.clientMessageId && entry.clientMessageId === queued.clientMessageId));
+    return { message, queued };
+  }, [userId]);
+
   /**
    * Update one local message in `peerId`'s history, by id.
    */
   const patchMessage = useCallback(
     (peerId: string, messageId: string, update: (message: ChatMessage) => ChatMessage) => {
+      messageId = resolveQueuedMessage(peerId, messageId).message?.messageId ?? messageId;
       messagesByPeerRef.current = patchMessageIn(messagesByPeerRef.current, peerId, messageId, update, userId);
       setMessagesByPeer(prev => patchMessageIn(prev, peerId, messageId, update, userId));
     },
-    [userId],
+    [resolveQueuedMessage, userId],
   );
 
   const recordCallActivity = useCallback((peerId: string, activity: CallActivity) => {
@@ -705,7 +722,7 @@ export default function useMessaging({
   const persistOutbox = useCallback(/** @param next */ (next: OutboxItem[]) => {
     if (!scope || scopeRef.current !== scope) return;
     outboxRef.current = next;
-    setPendingSendCount(next.filter(item => !item.discarded).length);
+    setOutbox(next);
     saveChatSnapshot({
       outbox: next, messagesByPeer: messagesByPeerRef.current, conversations: conversationsRef.current,
     }, scope);
@@ -1100,6 +1117,7 @@ export default function useMessaging({
         item = uploaded;
         if (!isCurrent() || !socketRef.current?.connected ||
           !outboxRef.current.some(row => row.messageId === item.messageId && !row.discarded)) return 'waiting';
+        if (!item.localMock) setInFlight(prev => ({ ...prev, [item.messageId]: generation }));
         const ack = item.localMock
           ? { message: sendMockGroup(prepared.row, item, userId) }
           : await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, outboxSendPayload(item));
@@ -1107,6 +1125,13 @@ export default function useMessaging({
         return await confirmOutboxSend(item, ack, isCurrent);
       } catch (error) {
         return recordSendFailure(item, error, isCurrent);
+      } finally {
+        if (isCurrent()) setInFlight(prev => {
+          if (prev[item.messageId] !== generation) return prev;
+          const next = { ...prev };
+          delete next[item.messageId];
+          return next;
+        });
       }
     },
     [confirmOutboxSend, cleanupDiscardedUpload, prepareAttachmentSend, commitOutbox, signalingRef, socketRef, scope, userId, prepareOutboxSend, recordSendFailure],
@@ -1309,11 +1334,12 @@ export default function useMessaging({
 
   const updateAttachmentUploadProgress = useCallback(
     (peerId: string, messageId: string, progress: number) => {
+      messageId = resolveQueuedMessage(peerId, messageId).queued?.messageId ?? messageId;
       patchMessage(peerId, messageId, entry => withUploadProgress(entry, progress));
       persistOutbox(outboxRef.current.map(item => item.messageId === messageId && item.upload
         ? { ...item, upload: { ...item.upload, progress: Math.max(0, Math.min(1, progress)) } } : item));
     },
-    [patchMessage, persistOutbox],
+    [patchMessage, persistOutbox, resolveQueuedMessage],
   );
 
   const finishAttachmentUpload = useCallback(
@@ -1321,24 +1347,28 @@ export default function useMessaging({
       if (!scope || scopeRef.current !== scope) return;
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId || !attachment?.url) return;
-      if (!messagesByPeerRef.current[trimmedPeerId]?.some(row => row.messageId === messageId)) return;
-      const existing = outboxRef.current.find(row => row.messageId === messageId);
+      const { message, queued: existing } = resolveQueuedMessage(trimmedPeerId, messageId);
+      if (!message) return;
       if (existing?.discarded) return;
       if (existing?.upload) {
-        persistOutbox(withAttemptsReset(outboxRef.current, messageId));
+        patchMessage(trimmedPeerId, message.messageId, entry => existing.upload!.completed
+          ? asUploaded(entry, existing.attachment!)
+          : { ...asQueued(entry), uploadState: 'uploading', uploadProgress: existing.upload!.progress, uploadError: null });
+        persistOutbox(withAttemptsReset(outboxRef.current, existing.messageId));
         await flushChatDb(scope);
         await drainOutbox();
         return;
       }
+      messageId = existing?.messageId ?? message.clientMessageId ?? message.messageId;
       const meta = attachmentUploadMetaRef.current[messageId];
       const conversationId =
         meta?.conversationId ?? conversationIdForPeer(conversationsRef.current, trimmedPeerId);
-      const createdAt = meta?.createdAt ?? new Date().toISOString();
+      const createdAt = meta?.createdAt ?? existing?.createdAt ?? message.clientCreatedAt ?? message.createdAt ?? new Date().toISOString();
 
       const local = !attachment.url.startsWith('chatblobs/');
       const uri = local ? await retainQueuedAttachment(attachment.url, messageId) : null;
       if (scopeRef.current !== scope ||
-        !messagesByPeerRef.current[trimmedPeerId]?.some(row => row.messageId === messageId)) {
+        !resolveQueuedMessage(trimmedPeerId, messageId).message) {
         if (uri) await releaseQueuedAttachment(uri);
         return;
       }
@@ -1350,7 +1380,7 @@ export default function useMessaging({
       const groupRow = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
       const nextItem = buildOutboxItem({
         messageId,
-        clientMessageId: messageId,
+        clientMessageId: existing?.clientMessageId ?? message.clientMessageId ?? messageId,
         conversationId,
         recipientId: trimmedPeerId,
         createdAt,
@@ -1367,7 +1397,7 @@ export default function useMessaging({
       if (local) void drainOutbox();
       else await drainOutbox();
     },
-    [drainOutbox, patchMessage, persistOutbox, scope],
+    [drainOutbox, patchMessage, persistOutbox, resolveQueuedMessage, scope],
   );
 
   const failAttachmentUpload = useCallback(
@@ -1375,6 +1405,9 @@ export default function useMessaging({
       if (scopeRef.current !== scope) return;
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
+      const { message, queued } = resolveQueuedMessage(trimmedPeerId, messageId);
+      if (queued?.discarded) return;
+      messageId = queued?.messageId ?? message?.clientMessageId ?? messageId;
       delete attachmentUploadMetaRef.current[messageId];
       // The bubble stays, in a failed state: a cancelled or failed upload must
       // never silently vanish.
@@ -1382,7 +1415,7 @@ export default function useMessaging({
       persistOutbox(outboxRef.current.map(item => item.messageId === messageId
         ? { ...item, state: 'failed', lastError: error } : item));
     },
-    [patchMessage, persistOutbox, scope],
+    [patchMessage, persistOutbox, resolveQueuedMessage, scope],
   );
 
   /**
@@ -1397,20 +1430,23 @@ export default function useMessaging({
       const group = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
       if (group && (group.left || !group.group!.memberIds.includes(userId))) return;
 
-      const queued = outboxRef.current.some(item => item.messageId === messageId);
+      const { message, queued } = resolveQueuedMessage(trimmedPeerId, messageId);
       // The retry keeps the original message identity, so a late-succeeding
       // original send cannot land alongside it as a duplicate.
-      if (!queued) return;
+      if (!queued || queued.discarded) return;
 
-      patchMessage(trimmedPeerId, messageId, asQueued);
-      persistOutbox(withAttemptsReset(outboxRef.current, messageId));
+      patchMessage(trimmedPeerId, message?.messageId ?? messageId, entry => queued.upload && !queued.upload.completed
+        ? { ...asQueued(entry), uploadState: 'uploading', uploadProgress: queued.upload.progress, uploadError: null }
+        : asQueued(entry));
+      const [reset] = withAttemptsReset([queued], queued.messageId);
+      persistOutbox(outboxRef.current.map(item => item === queued ? reset : item));
       clearTimeout(drainTimerRef.current ?? undefined);
       drainTimerRef.current = null;
       const generation = workerGenerationRef.current;
       if (!await commitOutbox(() => scopeRef.current === scope && workerGenerationRef.current === generation)) return;
       await drainOutbox();
     },
-    [commitOutbox, drainOutbox, patchMessage, persistOutbox, scope, userId],
+    [commitOutbox, drainOutbox, patchMessage, persistOutbox, resolveQueuedMessage, scope, userId],
   );
 
   /**
@@ -1433,22 +1469,23 @@ export default function useMessaging({
       if (!scope || scopeRef.current !== scope) return;
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
-      const item = outboxRef.current.find(row => row.messageId === messageId);
-      if (item?.discarded) return;
-      delete attachmentUploadMetaRef.current[messageId];
-      removeMessageLocally(trimmedPeerId, messageId);
-      if (item?.upload) {
-        persistOutbox(outboxRef.current.map(row => row.messageId === messageId
+      const { message, queued } = resolveQueuedMessage(trimmedPeerId, messageId);
+      if (queued?.discarded) return;
+      const queuedId = queued?.messageId ?? messageId;
+      delete attachmentUploadMetaRef.current[queuedId];
+      removeMessageLocally(trimmedPeerId, message?.messageId ?? messageId);
+      if (queued?.upload) {
+        persistOutbox(outboxRef.current.map(row => row === queued
           ? { ...row, discarded: true, state: 'pending', attempts: 0, nextAttemptAt: null } : row));
-        uploadAbortRef.current[messageId]?.();
+        uploadAbortRef.current[queuedId]?.();
         void flushChatDb(scope).then(() => drainOutboxRef.current()).catch(() => {
           updateStatus('Cannot save attachment discard on this device. Retry after freeing storage.', 'error');
         });
       } else {
-        persistOutbox(withoutMessage(outboxRef.current, messageId));
+        persistOutbox(outboxRef.current.filter(item => item !== queued));
       }
     },
-    [persistOutbox, removeMessageLocally, scope, updateStatus],
+    [persistOutbox, removeMessageLocally, resolveQueuedMessage, scope, updateStatus],
   );
 
   /**
@@ -1465,7 +1502,7 @@ export default function useMessaging({
       if (!trimmedPeerId || !messageId) return false;
 
       // Never delivered: nothing on the server to delete.
-      if (outboxRef.current.some(item => item.messageId === messageId)) {
+      if (resolveQueuedMessage(trimmedPeerId, messageId).queued) {
         discardMessage(trimmedPeerId, messageId);
         return true;
       }
@@ -1495,7 +1532,7 @@ export default function useMessaging({
       evictTombstonedAttachment(messageId);
       return true;
     },
-    [discardMessage, patchMessage, signalingRef, socketRef, updateStatus, scope],
+    [discardMessage, patchMessage, resolveQueuedMessage, signalingRef, socketRef, updateStatus, scope],
   );
 
   /**
@@ -1671,13 +1708,14 @@ export default function useMessaging({
   );
 
   const handleMessageDelivered = useCallback(/** @param message */ (message: ChatMessage) => {
-    if (!message?.recipientId) return;
+    if (!message?.messageId) return;
     const group = conversationsRef.current.find(row => row.group && row.conversationId === message.conversationId);
     if (group) {
       commitMessageHistory(patchMessageIn(messagesByPeerRef.current, group.peerId, message.messageId,
         entry => asSent(entry, message)));
       return;
     }
+    if (!message.recipientId) return;
     commitMessageHistory(applyDeliveryReceipt(messagesByPeerRef.current, message));
   }, [commitMessageHistory]);
 
@@ -1843,6 +1881,7 @@ export default function useMessaging({
   /** The socket went down: drive the offline banner. */
   const handleSocketDisconnected = useCallback(() => {
     setIsSocketConnected(false);
+    setInFlight({});
     const disconnectedScope = scopeRef.current;
     if (!disconnectedScope) return;
     const persistLatest = () => {
@@ -1900,9 +1939,42 @@ export default function useMessaging({
     setDrafts(prev => withoutDraft(prev, peerId));
   }, []);
 
+  // Derive only at the presentation boundary: in-flight state must not survive
+  // a restart. For live groups, delivered/read means at least one other member.
+  const deliveryMessages = useMemo(() => {
+    const queued = new Map<string, OutboxItem>();
+    outbox.forEach(item => {
+      queued.set(JSON.stringify([item.recipientId, item.messageId]), item);
+      if (item.clientMessageId) queued.set(JSON.stringify([item.recipientId, item.clientMessageId]), item);
+    });
+    return Object.fromEntries(Object.entries(messagesByPeer).map(([peerId, messages]) => {
+      const group = conversations.find(row => row.peerId === peerId && row.group && !row.localMock);
+      return [peerId, messages.map(message => {
+        if (message.senderId !== userId) return message;
+        const matchedRow = queued.get(JSON.stringify([peerId, message.clientMessageId ?? message.messageId])) ??
+          queued.get(JSON.stringify([peerId, message.messageId]));
+        return {
+          ...message,
+          deliveryState: deriveDeliveryState({
+            ...message,
+            ...(group ? {
+              recipientId: undefined,
+              deliveredTo: message.deliveredTo?.filter(id => id !== userId && group.group!.memberIds.includes(id)),
+              readBy: message.readBy?.filter(id => id !== userId && group.group!.memberIds.includes(id)),
+            } : {}),
+            readAt: message.readAt ?? Object.entries(group?.readByMember ?? {}).find(([memberId, readAt]) =>
+              memberId !== userId && group?.group?.memberIds.includes(memberId) &&
+              Date.parse(readAt) >= Date.parse(message.createdAt ?? ''))?.[1],
+          }, matchedRow, isSocketConnected !== false && inFlight[matchedRow?.messageId ?? message.messageId] !== undefined),
+        };
+      }),
+      ];
+    }));
+  }, [messagesByPeer, conversations, outbox, inFlight, isSocketConnected, userId]);
+
   return {
     conversations: stateScope === scope ? conversations : [],
-    messagesByPeer: stateScope === scope ? messagesByPeer : {},
+    messagesByPeer: stateScope === scope ? deliveryMessages : {},
     drafts: stateScope === scope ? drafts : {},
     saveDraft,
     clearDraft,
