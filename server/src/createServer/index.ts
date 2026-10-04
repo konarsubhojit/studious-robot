@@ -266,6 +266,7 @@ function createServer(opts: CreateServerOptions = {}) {
     devices: stores.devices,
     userDevices: stores.userDevices,
     userConnections: stores.userConnections,
+    attachAdapter: stores.attachAdapter,
     userPresence: stores.userPresence,
     /** callId → call record */
     calls: stores.calls,

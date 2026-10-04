@@ -10,6 +10,10 @@ import { getPresenceSnapshot } from '../lib/state.ts';
 import { SIGNALING_VERSION } from '../config.ts';
 import { API_ROUTES, SERVER_EVENTS } from '../../../shared/index.ts';
 import { describeError } from '../lib/errors.ts';
+import { ConversationStoreError } from '../conversationStore/types.ts';
+import { activeGroupMember } from '../conversationStore/authorization.ts';
+import { compareMessageChanges } from '../messageStore/changeCursor.ts';
+import { fanoutConversationEvent } from '../domain/conversationFanout.ts';
 
 /**
  * Text-chat history endpoints.
@@ -98,6 +102,69 @@ function parseSyncCursor(value: unknown): { changedAt: string; changeId: string 
     return { changedAt: parsed.changedAt, changeId: parsed.changeId };
   } catch {
     return null;
+  }
+}
+
+async function visibleMessage(
+  state: import('../stores/contracts.ts').ServerState,
+  userId: string,
+  message: MessageRecord
+): Promise<boolean> {
+  if (message.recipientId === message.conversationId) {
+    const member = await state.conversationStore.getMember(message.conversationId, userId);
+    return activeGroupMember(member) && Boolean(message.createdAt && message.createdAt >= member.joinedAt);
+  }
+  return (message.senderId === userId || message.recipientId === userId) &&
+    await isDirectoryVisibleAsync(state, userId, message.senderId === userId ? message.recipientId : message.senderId);
+}
+
+async function searchConversationMessages(
+  state: import('../stores/contracts.ts').ServerState,
+  options: import('../messageStore/types.ts').SearchMessagesOptions & { userId: string; query: string }
+): Promise<MessageRecord[]> {
+  const isGroup = options.conversationId && !options.conversationId.includes(':');
+  const [directMatches, groupMatches] = await Promise.all([
+    isGroup ? [] : state.messageStore.searchMessages(options),
+    options.conversationId && !isGroup ? [] : state.conversationStore.searchMessages(options),
+  ]);
+  return [...directMatches, ...groupMatches].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt) || b.messageId.localeCompare(a.messageId));
+}
+
+async function markGroupRead(
+  state: import('../stores/contracts.ts').ServerState,
+  io: import('socket.io').Server | undefined,
+  conversationId: string,
+  userId: string
+): Promise<number> {
+  const updated = await state.conversationStore.markRead(conversationId, userId);
+  if (!updated) return 0;
+  const members = await state.conversationStore.listMembers(conversationId);
+  await invalidateCache(state, messagesCachePrefix(conversationId),
+    ...members.map(member => conversationsCachePrefix(member.userId)));
+  state.telemetry.recordMessageDeliveryMarksIssued(updated);
+  if (io) {
+    await fanoutConversationEvent(io, state, { conversationId, eventName: SERVER_EVENTS.MESSAGE_READ,
+      recipientIds: members.map(member => member.userId),
+      payload: { version: SIGNALING_VERSION, conversationId, readerId: userId, readAt: new Date().toISOString() } });
+  }
+  return updated;
+}
+
+async function respondGroupRead(
+  state: import('../stores/contracts.ts').ServerState,
+  io: import('socket.io').Server | undefined,
+  res: express.Response,
+  conversationId: string,
+  userId: string
+): Promise<void> {
+  try {
+    const updated = await markGroupRead(state, io, conversationId, userId);
+    res.status(200).json({ conversationId, updated, missedCallsRead: 0 });
+  } catch (error) {
+    const forbidden = error instanceof ConversationStoreError;
+    res.status(forbidden ? 403 : 503)
+      .json({ error: forbidden ? 'not a member of this conversation' : 'message store unavailable' });
   }
 }
 
@@ -382,7 +449,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
 
     let matches: Array<MessageRecord>;
     try {
-      matches = await state.messageStore.searchMessages({
+      const options = {
         userId: session.userId,
         query,
         conversationId: conversationId ?? undefined,
@@ -392,8 +459,13 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
         before: cursor?.before,
         beforeMessageId: cursor?.beforeMessageId,
         withLookahead: true,
-      });
+      };
+      matches = await searchConversationMessages(state, options);
     } catch (error) {
+      if (error instanceof ConversationStoreError) {
+        res.status(403).json({ error: 'not a member of this conversation' });
+        return;
+      }
       console.error(`[messages] search failed: ${describeError(error)}`);
       res.status(503).json({ error: 'message store unavailable' });
       return;
@@ -408,7 +480,8 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       (message) =>
         !message.deletedAt &&
         (!conversationId || message.conversationId === conversationId) &&
-        (message.senderId === session.userId || message.recipientId === session.userId)
+        (message.recipientId === message.conversationId ||
+          message.senderId === session.userId || message.recipientId === session.userId)
     );
     if (participantMatches.length !== matches.length) {
       console.error(
@@ -420,7 +493,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       .map((message) => ({
         ...message,
         peerId: message.senderId === session.userId ? message.recipientId : message.senderId,
-      })), message => isDirectoryVisibleAsync(state, session.userId, message.peerId));
+      })), message => visibleMessage(state, session.userId, message));
     const results = resultsWithLookahead.slice(0, limit);
     const nextCursor = resultsWithLookahead.length > limit
       ? cursorForEntry(results[results.length - 1])
@@ -476,7 +549,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     let changes: import('../messageStore/types.ts').MessageChange[];
     try {
       if (!state.messageStore.listMessageChanges) throw new Error('message sync unavailable');
-      changes = await state.messageStore.listMessageChanges({
+      const options = {
         userId: session.userId,
         since,
         afterChangedAt: cursor?.changedAt,
@@ -484,7 +557,12 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
         excludedUserIds: await listBlocksAsync(state, session.userId, true),
         createdAtAfter,
         limit: limit + 1,
-      });
+      };
+      const [directChanges, groupChanges] = await Promise.all([
+        state.messageStore.listMessageChanges(options),
+        state.conversationStore.listMessageChanges(options),
+      ]);
+      changes = [...directChanges, ...groupChanges].sort(compareMessageChanges);
     } catch (error) {
       console.error(`[messages] sync failed: ${describeError(error)}`);
       res.status(503).json({ error: 'message store unavailable' });
@@ -492,16 +570,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     }
 
     const participantChanges = await filterVisible(changes,
-      async (change) =>
-        (change.message.senderId === session.userId ||
-          change.message.recipientId === session.userId) &&
-        await isDirectoryVisibleAsync(
-          state,
-          session.userId,
-          change.message.senderId === session.userId
-            ? change.message.recipientId
-            : change.message.senderId
-        )
+      change => visibleMessage(state, session.userId, change.message)
     );
     const page = participantChanges.slice(0, limit);
     const hasMore = participantChanges.length > limit;
@@ -603,6 +672,12 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
   router.post(API_ROUTES.MESSAGES_READ, async (req, res) => {
     const session = await requireSession(req, res);
     if (!session) return;
+
+    const groupId = normaliseId(req.body?.conversationId);
+    if (groupId) {
+      await respondGroupRead(state, io, res, groupId, session.userId);
+      return;
+    }
 
     const peerId = normaliseId(req.body?.peerId);
     if (!peerId) {

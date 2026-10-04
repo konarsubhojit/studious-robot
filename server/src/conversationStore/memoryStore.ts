@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { applyReaction, applyTombstone } from '../messageStore/records.ts';
 import type { StoredMessage } from '../messageStore/types.ts';
+import type { MessageChange } from '../messageStore/types.ts';
+import { compareMessageChanges, nextMessageChangeId } from '../messageStore/changeCursor.ts';
+import { bodyMatches, clampExportReadLimit } from '../messageStore/queries.ts';
 import type {
   ConversationChange,
   ConversationMember,
@@ -30,11 +33,17 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
   const conversations = new Map<string, GroupConversation>();
   const members = new Map<string, ConversationMember>();
   const messages = new Map<string, StoredMessage>();
+  const changes: Array<Omit<MessageChange, 'message'> & { key: string }> = [];
   const calls = new Map<string, GroupCall>();
   const callParticipants = new Map<string, GroupCallParticipant>();
   const invitations = new Map<string, GroupInvitation>();
   const events: GroupMembershipEvent[] = [];
   const attachmentCleanup = new Set<string>();
+
+  function recordMessageChange(message: StoredMessage, type: MessageChange['type'], changedAt: string): void {
+    changes.push({ changeId: nextMessageChangeId(), type, changedAt,
+      key: messageKey(message.conversationId, message.messageId) });
+  }
 
   function activityTime(conversation: GroupConversation): string {
     return new Date(Math.max(Date.now(), Date.parse(conversation.updatedAt) + 1)).toISOString();
@@ -212,6 +221,8 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       const reactions = Object.entries(message.reactions ?? {}).map(([emoji, ids]) =>
         [emoji, ids.filter(id => id !== userId)] as const);
       message.reactions = Object.fromEntries(reactions.filter(([, ids]) => ids.length > 0));
+      message.readBy = message.readBy?.filter(id => id !== userId);
+      message.deliveredTo = message.deliveredTo.filter(id => id !== userId);
     }
   }
 
@@ -425,13 +436,58 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
         .slice(0, Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
     },
 
-    async searchMessages({ conversationId, userId, query, limit, before, beforeMessageId }) {
-      const member = requireActiveMember(conversationId, userId);
-      return [...messages.values()].filter(message => message.conversationId === conversationId && !message.deletedAt &&
-        Date.parse(message.createdAt) >= Date.parse(member.joinedAt) && message.body.toLowerCase().includes(query.toLowerCase()) &&
-        (!before || message.createdAt < before || (Boolean(beforeMessageId) && message.createdAt === before && message.messageId < beforeMessageId!)))
+    async searchMessages({ conversationId, userId, query, limit, before, beforeMessageId, createdAtAfter }) {
+      if (conversationId) requireActiveMember(conversationId, userId);
+      return [...messages.values()].filter(message => {
+        const member = listMembers(message.conversationId).find(candidate => candidate.userId === userId);
+        return member && !conversations.get(message.conversationId)?.deletedAt &&
+        (!conversationId || message.conversationId === conversationId) && !message.deletedAt &&
+        (!createdAtAfter || message.createdAt >= createdAtAfter) &&
+        Date.parse(message.createdAt) >= Date.parse(member.joinedAt) && bodyMatches(message, query) &&
+        (!before || message.createdAt < before || (Boolean(beforeMessageId) && message.createdAt === before && message.messageId < beforeMessageId!));
+      })
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.messageId.localeCompare(a.messageId))
-        .slice(0, Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
+        .slice(0, clampExportReadLimit(limit));
+    },
+
+    async listMessageChanges({ userId, since, afterChangedAt, afterChangeId, createdAtAfter, limit }) {
+      return changes.flatMap(change => {
+        const message = messages.get(change.key);
+        if (!message) return [];
+        const member = listMembers(message.conversationId).find(candidate => candidate.userId === userId);
+        if (!member || conversations.get(message.conversationId)?.deletedAt ||
+            message.createdAt < member.joinedAt || (createdAtAfter && message.createdAt < createdAtAfter) ||
+            change.changedAt <= since ||
+            (afterChangedAt && afterChangeId &&
+              compareMessageChanges(change, { changedAt: afterChangedAt, changeId: afterChangeId }) <= 0)) return [];
+        return [{ changeId: change.changeId, type: change.type, changedAt: change.changedAt,
+          message: structuredClone(message) }];
+      }).sort(compareMessageChanges).slice(0, clampExportReadLimit(limit));
+    },
+
+    async markRead(conversationId, userId) {
+      const member = requireActiveMember(conversationId, userId);
+      const conversation = conversations.get(conversationId)!;
+      const changedAt = activityTime(conversation);
+      let updated = 0;
+      for (const message of messages.values()) {
+        if (message.conversationId !== conversationId || message.senderId === userId ||
+            message.createdAt < member.joinedAt || message.deletedAt || message.readBy?.includes(userId)) continue;
+        message.readBy = [...(message.readBy ?? []), userId];
+        if (!message.deliveredTo.includes(userId)) message.deliveredTo.push(userId);
+        recordMessageChange(message, 'edited', changedAt);
+        updated++;
+      }
+      if (updated) conversation.updatedAt = changedAt;
+      return updated;
+    },
+
+    async markDelivered(conversationId, messageId, userId) {
+      const member = requireActiveMember(conversationId, userId);
+      const message = messages.get(messageKey(conversationId, messageId));
+      if (!message || message.createdAt < member.joinedAt) return null;
+      if (!message.deliveredTo.includes(userId)) message.deliveredTo.push(userId);
+      return structuredClone(message);
     },
 
     async updateName({ conversationId, actorId, name }) {
@@ -565,6 +621,8 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       message.createdAt = activityTime(conversation);
       conversation.updatedAt = message.createdAt;
       messages.set(key, message);
+      message.readBy = [];
+      recordMessageChange(message, 'new', message.createdAt);
       return { message, recipients: recipientsFor(message.conversationId), inserted: true };
     },
 
@@ -579,7 +637,10 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       const message = messages.get(messageKey(conversationId, messageId));
       if (!message || Date.parse(message.createdAt) < Date.parse(member.joinedAt) ||
           message.deletedAt || message.senderId !== userId) return null;
-      applyTombstone(message, new Date().toISOString());
+      const conversation = conversations.get(conversationId)!;
+      conversation.updatedAt = activityTime(conversation);
+      applyTombstone(message, conversation.updatedAt);
+      recordMessageChange(message, 'deleted', message.deletedAt!);
       return { message, recipients: recipientsFor(conversationId) };
     },
 
@@ -587,7 +648,13 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       const member = requireActiveMember(conversationId, userId);
       const message = messages.get(messageKey(conversationId, messageId));
       if (!message || Date.parse(message.createdAt) < Date.parse(member.joinedAt) || message.deletedAt) return null;
-      message.reactions = applyReaction(message.reactions ?? {}, emoji, userId, action);
+      const reactions = applyReaction(message.reactions ?? {}, emoji, userId, action);
+      if (JSON.stringify(reactions) !== JSON.stringify(message.reactions)) {
+        message.reactions = reactions;
+        const conversation = conversations.get(conversationId)!;
+        conversation.updatedAt = activityTime(conversation);
+        recordMessageChange(message, 'reactions', conversation.updatedAt);
+      }
       return { message, recipients: recipientsFor(conversationId) };
     },
 
@@ -741,6 +808,7 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
           const url = (message.attachment as { url?: unknown } | null)?.url;
           if (typeof url === 'string') attachmentCandidates.add(url.trim());
           applyTombstone(message, now);
+          recordMessageChange(message, 'deleted', now);
         }
         message.senderId = pseudonym;
       }

@@ -157,6 +157,8 @@ export type MessageRecord = {
   reactions?: Record<string, string[]> | null;
   deletedAt?: string | null;
   createdAt?: string;
+  /** Group read receipts: unique member IDs, not a conversation-wide read flag. */
+  readBy?: string[];
 };
 const messageRecord = s.object(
   {
@@ -171,6 +173,7 @@ const messageRecord = s.object(
     replyTo: s.string({ max: 128 }).optional().nullable(),
     reactions: s.record(s.array(s.id())).optional().nullable(),
     deletedAt: s.string().optional().nullable(),
+    readBy: s.array(s.id()).optional(),
   },
   { passthrough: true }
 );

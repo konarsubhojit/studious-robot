@@ -169,6 +169,13 @@
       "when": 1791088709372,
       "tag": "0023_call_participants",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791103922640,
+      "tag": "0024_group_message_fanout",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ const ALLOWED_FANOUT_EVENTS = new Set<string>([
   SERVER_EVENTS.MESSAGE_DELETED,
   SERVER_EVENTS.MESSAGE_REACTION,
   SERVER_EVENTS.MESSAGE_TYPING,
+  SERVER_EVENTS.MESSAGE_READ,
 ]);
 const CALL_VERSION_CACHE_LIMIT = 4096;
 const callVersionsByServer = new WeakMap<object, Map<string, number>>();
@@ -94,6 +95,13 @@ async function fanoutConversationEvent(
   state: ServerState,
   event: ConversationFanout
 ): Promise<void> {
+  if (state.attachAdapter) {
+    // Use the adapter's server-to-server channel, not an unchecked client-room
+    // broadcast: each receiving instance authorizes against current membership.
+    io.serverSideEmit(CONVERSATION_FANOUT_CHANNEL, event);
+    await emitLocally(io, state, event);
+    return;
+  }
   if (!state.messageBus) {
     await emitLocally(io, state, event);
     return;
@@ -110,11 +118,16 @@ async function subscribeToConversationFanout(
   io: any,
   state: ServerState
 ): Promise<(() => Promise<void>) | null> {
-  if (!state.messageBus) return null;
-  return state.messageBus.subscribe(CONVERSATION_FANOUT_CHANNEL, (message) => {
+  const receive = (message: unknown) => {
     const event = parseFanout(message);
     if (event) void emitLocally(io, state, event).catch(() => console.error('[conversations] local fan-out failed'));
-  });
+  };
+  if (state.attachAdapter) {
+    io.on(CONVERSATION_FANOUT_CHANNEL, receive);
+    return async () => { io.off(CONVERSATION_FANOUT_CHANNEL, receive); };
+  }
+  if (!state.messageBus) return null;
+  return state.messageBus.subscribe(CONVERSATION_FANOUT_CHANNEL, receive);
 }
 
 export {
