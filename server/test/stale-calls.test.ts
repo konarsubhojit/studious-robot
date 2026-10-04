@@ -933,7 +933,7 @@ test('call.end: an idle second device does not end the call held by the first', 
 
     const rejected = await emitWithAck(idleDevice, 'call.end', { version: 2, callId });
     assert.equal(rejected.ok, false);
-    assert.equal(rejected.error.code, 'forbidden');
+    assert.equal(rejected.error.code, 'answered_elsewhere');
     assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
     assert.ok(
       logs.lines.some(
@@ -947,16 +947,9 @@ test('call.end: an idle second device does not end the call held by the first', 
 
     const ended = await emitWithAck(ownerDevice, 'call.end', { version: 2, callId });
     assert.equal(ended.ok, true);
-    assert.equal(getCall(callId)?.endReason, 'user_hangup');
-    assert.ok(
-      logs.lines.some(
-        line =>
-          line.includes(`[signaling] call.transition callId=${callId} in_call->ended`) &&
-          line.includes('reason=user_hangup') &&
-          line.includes('actorDevice=device-alice-live') &&
-          line.includes('source=socket'),
-      ),
-    );
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
+    assert.equal(getCall(callId)?.participants?.find(({ userId }) => userId === 'user-alice')?.state, 'left');
+    assert.equal(getCall(callId)?.endReason, null, 'the callee still participates after the caller leaves');
   } finally {
     logs.restore();
     await teardown(ownerDevice, idleDevice);

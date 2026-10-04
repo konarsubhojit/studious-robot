@@ -1,5 +1,5 @@
-import { and, count, desc, eq, or } from 'drizzle-orm';
-import { calls as callsTable } from '../../db/schema.ts';
+import { and, count, desc, eq, inArray, or } from 'drizzle-orm';
+import { calls as callsTable, callParticipants as callParticipantsTable } from '../../db/schema.ts';
 import { describeError } from '../lib/errors.ts';
 import type { Database } from '../../db/client.ts';
 
@@ -67,6 +67,7 @@ function callRecordFromRow(row: any): CallRecord {
     createdAt: toIsoString(row.createdAt) ?? new Date(0).toISOString(),
     updatedAt: toIsoString(row.updatedAt),
     ringTimeoutAt: toIsoString(row.ringTimeoutAt),
+    participants: row.participants,
   };
 }
 
@@ -90,7 +91,8 @@ function lastActivityMs(call: CallRecord): number {
 function readFromMemory(state: ServerState, { userId, statusFilter = null, limit, offset = 0 }: CallHistoryQuery): CallHistoryPage {
   const userCalls: CallRecord[] = [];
   for (const call of state.calls.values()) {
-    if (call.callerId !== userId && call.calleeId !== userId) continue;
+    if (!(call.participants?.some(({ userId: participantId }) => participantId === userId) ??
+      (call.callerId === userId || call.calleeId === userId))) continue;
     if (statusFilter && call.status !== statusFilter) continue;
     userCalls.push(call);
   }
@@ -113,7 +115,21 @@ function readFromMemory(state: ServerState, { userId, statusFilter = null, limit
  * when rows share a timestamp.
  */
 async function readFromDb(db: Database, { userId, statusFilter = null, limit, offset = 0 }: CallHistoryQuery): Promise<CallHistoryPage> {
-  const participantFilter = or(eq(callsTable.callerId, userId), eq(callsTable.calleeId, userId));
+  const participantRows = await db
+    .select({ callId: callParticipantsTable.callId })
+    .from(callParticipantsTable)
+    .where(eq(callParticipantsTable.userId, userId));
+  const participantCallIds = (participantRows ?? []).map(({ callId }) => callId);
+  const participantFilter = participantCallIds.length > 0
+    ? or(
+    eq(callsTable.callerId, userId),
+    eq(callsTable.calleeId, userId),
+    inArray(callsTable.callId, participantCallIds),
+    )
+    : or(
+      eq(callsTable.callerId, userId),
+      eq(callsTable.calleeId, userId),
+    );
   const where = statusFilter
     ? and(participantFilter, eq(callsTable.status, statusFilter))
     : participantFilter;
@@ -131,8 +147,28 @@ async function readFromDb(db: Database, { userId, statusFilter = null, limit, of
     db.select({ value: count() }).from(callsTable).where(where),
   ]);
 
+  const rowCallIds = (rows ?? []).map((row) => row.callId);
+  const participants = rowCallIds.length > 0 && participantCallIds.length > 0
+    ? await db.select().from(callParticipantsTable).where(inArray(callParticipantsTable.callId, rowCallIds))
+    : [];
+  const participantsByCall = new Map<string, NonNullable<CallRecord['participants']>>();
+  for (const participant of participants) {
+    const list = participantsByCall.get(participant.callId) ?? [];
+    list.push({
+      userId: participant.userId,
+      state: participant.state as NonNullable<CallRecord['participants']>[number]['state'],
+      ringTimeoutAt: toIsoString(participant.ringTimeoutAt),
+      joinedAt: toIsoString(participant.joinedAt),
+      leftAt: toIsoString(participant.leftAt),
+      deviceId: participant.deviceId,
+    });
+    participantsByCall.set(participant.callId, list);
+  }
   return {
-    calls: (rows ?? []).map(callRecordFromRow),
+    calls: (rows ?? []).map((row) => callRecordFromRow({
+      ...row,
+      participants: participantsByCall.get(row.callId),
+    })),
     total: Number(totals?.[0]?.value ?? 0),
     source: 'db',
   };

@@ -156,7 +156,7 @@ Search and sync exclude departed members and pre-join history. Group search
 reuses the current PostgreSQL full-text GIN approach (which superseded the
 older trigram indexes in migration 0018).
 
-Apply `0023_group_message_fanout.sql` before deploying this server. It adds
+Apply `0024_group_message_fanout.sql` before deploying this server. It adds
 durable group receipts, the group change log and search index, and backfills
 existing group messages into sync. Its matching Drizzle snapshot is included;
 the migration uses transactional DDL, so plan for locks on populated tables.

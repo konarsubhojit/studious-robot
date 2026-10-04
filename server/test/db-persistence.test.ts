@@ -17,6 +17,7 @@ import { pruneDeadDevice, pruneStaleDevices } from '../src/lib/persistence.ts';
 import { upsertDevice, resolveReachableChannels, summarizeDeviceFanout } from '../src/lib/state.ts';
 import { createStores } from '../src/stores/index.ts';
 import { createMemoryCache } from '../src/cache.ts';
+import { hydrateCallsAndEventsFromDb } from '../src/callPersistence.ts';
 import * as schema from '../db/schema.ts';
 import { asDatabase, closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
@@ -734,13 +735,53 @@ test('POST /calls persists call records and call events to the DB', async () => 
 
     const insertsIntoCalls = db.inserts.filter((entry) => entry.table === schema.calls);
     const insertsIntoCallEvents = db.inserts.filter((entry) => entry.table === schema.callEvents);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const participants = db.inserts.filter((entry) => entry.table === schema.callParticipants);
     assert.ok(insertsIntoCalls.length >= 1, 'expected at least one calls table upsert');
     assert.ok(insertsIntoCallEvents.length >= 1, 'expected at least one call_events insert');
+    assert.deepEqual(
+      participants.map(({ values }) => values.userId).sort(),
+      ['user-call-persist-callee', 'user-call-persist-caller']
+    );
     assert.equal(insertsIntoCalls[0].values.callerId, 'user-call-persist-caller');
     assert.equal(insertsIntoCalls[0].values.calleeId, 'user-call-persist-callee');
   } finally {
     await teardown();
   }
+});
+
+test('call hydration loads each durable participant exactly once across multiple calls', async () => {
+  const firstCallId = '00000000-0000-0000-0000-000000000101';
+  const secondCallId = '00000000-0000-0000-0000-000000000102';
+  const now = new Date('2026-01-01T00:00:00.000Z');
+  const db = buildMockDb({
+    selectRowsByTable: new Map<any, any>([
+      [schema.calls, [
+        { callId: firstCallId, callerId: 'caller-1', calleeId: 'callee-1', status: 'ringing', createdAt: now, updatedAt: now },
+        { callId: secondCallId, callerId: 'caller-2', calleeId: 'callee-2', status: 'accepted', createdAt: now, updatedAt: now },
+      ]],
+      [schema.callParticipants, [
+        { callId: firstCallId, userId: 'caller-1', state: 'joined', joinedAt: now, deviceId: 'device-1' },
+        { callId: firstCallId, userId: 'callee-1', state: 'ringing', ringTimeoutAt: now },
+        { callId: firstCallId, userId: 'invitee-1', state: 'ringing', ringTimeoutAt: now },
+        { callId: secondCallId, userId: 'caller-2', state: 'joined', joinedAt: now },
+        { callId: secondCallId, userId: 'callee-2', state: 'joined', joinedAt: now },
+      ]],
+      [schema.callEvents, []],
+    ]),
+  });
+  const state = buildCallState(db);
+
+  await hydrateCallsAndEventsFromDb(db, state as any);
+
+  assert.deepEqual(
+    state.calls.get(firstCallId)?.participants?.map(({ userId }) => userId),
+    ['caller-1', 'callee-1', 'invitee-1']
+  );
+  assert.deepEqual(
+    state.calls.get(secondCallId)?.participants?.map(({ userId }) => userId),
+    ['caller-2', 'callee-2']
+  );
 });
 
 test('appendCallEvent persists absent actor and reason as null', async () => {
