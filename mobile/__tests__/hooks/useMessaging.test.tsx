@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { AppState } from 'react-native';
+import RNFS from 'react-native-fs';
 import useMessaging from '../../src/hooks/useMessaging';
 import { createSignalingClient } from '../../src/signalingClient';
 import {
@@ -211,7 +212,7 @@ describe('durable attachment outbox', () => {
     expect(socket.emit).not.toHaveBeenCalled();
   });
 
-  test('a late send acknowledgement cannot erase a discard cleanup tombstone', async () => {
+  test('a late send acknowledgement preserves discard until reconciliation deletes the server message before storage', async () => {
     const socket = makeSocket({ connected: false });
     let acknowledge!: (value: any) => void;
     socket.emit.mockImplementation((_event, _payload, ack) => { acknowledge = ack; });
@@ -239,6 +240,106 @@ describe('durable attachment outbox', () => {
     });
     expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ messageId: id, discarded: true });
     expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    const operations: string[] = [];
+    socket.emit.mockImplementation((event, payload, ack) => {
+      operations.push(event);
+      if (event === 'message.send') {
+        expect(payload.clientMessageId).toBe(id);
+        ack({ ok: true, message: { messageId: 'accepted-remotely', clientMessageId: id } });
+      } else {
+        expect(payload.messageId).toBe('accepted-remotely');
+        ack({ ok: true });
+      }
+    });
+    authedFetch.mockImplementation(async () => {
+      operations.push('abort');
+      return response({ cleanupComplete: true });
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(operations).toEqual(['message.send', 'message.delete', 'abort']);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('acknowledged source cleanup failure retains the completed row for a source-free retry', async () => {
+    const socket = makeSocket({ connected: false });
+    const authedFetch = jest.fn(async () => response({
+      key: 'chatblobs/alice_bob/photo.jpg', reference: 'chatblobs/alice_bob/photo.jpg', completed: true,
+    }));
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    await act(async () => {
+      const id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+    });
+    (RNFS.unlink as jest.Mock).mockRejectedValueOnce(new Error('disk busy'));
+    (RNFS.exists as jest.Mock).mockResolvedValueOnce(true);
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ upload: { completed: true } });
+    await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    expect(authedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('lost send/delete acknowledgements never allow storage cleanup before a confirmed server tombstone', async () => {
+    (chatDb as any).__snapshot.outbox = [{
+      messageId: 'discarded-client', clientMessageId: 'discarded-client', recipientId: 'bob',
+      body: '', type: 'image', discarded: true,
+      attachment: { ...attachment, url: 'file:///photo.jpg' },
+      upload: { uri: 'file:///photo.jpg', key: 'chatblobs/alice_bob/photo.jpg', completed: true, parts: [], progress: 1 },
+    }];
+    const request = jest.fn()
+      .mockResolvedValueOnce({ message: { messageId: 'server-id' } })
+      .mockRejectedValueOnce(new Error('delete ack lost'))
+      .mockResolvedValueOnce({ message: { messageId: 'server-id', deletedAt: '2026-10-04T00:00:00Z' } });
+    const authedFetch = jest.fn(async () => response({ cleanupComplete: true }));
+    const { resultRef } = setup({
+      signalingRef: { current: { request, on: jest.fn(() => jest.fn()) } },
+      authedFetchRef: { current: authedFetch },
+    });
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(authedFetch).not.toHaveBeenCalled();
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    expect(request.mock.calls[0][1].attachment.url).toBe('chatblobs/alice_bob/photo.jpg');
+    await drainAtNextDeadline(resultRef);
+    expect(request.mock.calls.map(([event]) => event)).toEqual(['message.send', 'message.delete', 'message.send']);
+    expect(authedFetch).toHaveBeenCalledTimes(1);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('discard cleanup failure retains the durable row until local unlink succeeds', async () => {
+    const socket = makeSocket({ connected: false });
+    const authedFetch = jest.fn(async () => response({ cleanupComplete: true }));
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    await act(async () => {
+      const id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      resultRef.current.discardMessage('bob', id);
+    });
+    (RNFS.unlink as jest.Mock).mockRejectedValueOnce(new Error('disk busy'));
+    (RNFS.exists as jest.Mock).mockResolvedValueOnce(true);
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true });
+    await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('upload throttling waits for the server delay without exhausting send attempts', async () => {
+    const socket = makeSocket({ connected: false });
+    const authedFetch = jest.fn(async () => ({
+      ok: false, status: 429, json: async () => ({ retryAfter: 60 }),
+    }));
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    await act(async () => {
+      const id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    for (let i = 0; i < 5; i++) await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ attempts: 0, state: 'pending' });
+    expect((chatDb as any).__snapshot.outbox[0].nextAttemptAt).toBeGreaterThan(Date.now() + 50_000);
   });
 
   test('server cleanup approval and relative delays protect against device clock skew', async () => {

@@ -226,6 +226,8 @@ test('upload endpoints authenticate, isolate uploader ids and permit cleanup aft
     String(input).startsWith(config.endpoint) ? r2.fetchImpl(input, options) : originalFetch(input, options));
   let blocked = false;
   let activeMember = true;
+  let uploadAllowed = true;
+  let sendChecks = 0;
   const state = {
     sessions: new Map([
       ['alice-session', { userId: 'alice' }], ['bob-session', { userId: 'bob' }],
@@ -233,7 +235,8 @@ test('upload endpoints authenticate, isolate uploader ids and permit cleanup aft
     blockState: { isBlocked: async () => blocked },
     conversationStore: { getMember: async (_groupId: string, actor: string) =>
       actor === 'alice' && activeMember ? { leftAt: null, removedAt: null, role: 'member' } : null },
-    messageSendRateLimiter: { check: async () => ({ allowed: true }) },
+    messageSendRateLimiter: { check: async () => { sendChecks++; return { allowed: true }; } },
+    attachmentUploadRateLimiter: { check: async () => ({ allowed: uploadAllowed, resetAt: Date.now() + 60_000 }) },
     auditLog: { record: () => {} },
   } as unknown as ServerState;
   const app = express();
@@ -277,4 +280,10 @@ test('upload endpoints authenticate, isolate uploader ids and permit cleanup aft
   assert.equal((await post(group)).status, 403);
   assert.equal((await post({ ...group, action: 'abort' })).status, 200);
   assert.equal(r2.ids.size, 0);
+  assert.equal(sendChecks, 0, 'upload controls must not consume the message-send budget');
+  uploadAllowed = false;
+  const throttled = await post({ ...group, action: 'abort' });
+  assert.equal(throttled.status, 429);
+  assert.equal(throttled.headers.get('Retry-After'), '60');
+  assert.equal((await throttled.json() as { retryAfter: number }).retryAfter, 60);
 });

@@ -8,6 +8,7 @@ jest.mock('react-native-fs', () => ({
   CachesDirectoryPath: '/cache', DocumentDirectoryPath: '/docs',
   read: jest.fn(async () => 'cGFydA=='), writeFile: jest.fn(async () => {}),
   unlink: jest.fn(async () => {}),
+  exists: jest.fn(async () => false),
   readDir: jest.fn(async () => []),
 }));
 jest.mock('../src/attachmentUpload', () => ({
@@ -195,4 +196,18 @@ test('final local cleanup removes only this upload source and interrupted slices
   (RNFS.unlink as jest.Mock).mockClear();
   await releaseQueuedAttachment('file:///docs/not-ours');
   expect(RNFS.unlink).not.toHaveBeenCalled();
+});
+
+test('local cleanup propagates unlink failure for an existing source but tolerates an already removed source', async () => {
+  (RNFS.unlink as jest.Mock).mockRejectedValueOnce(new Error('disk busy'));
+  (RNFS.exists as jest.Mock).mockResolvedValueOnce(true);
+  await expect(releaseQueuedAttachment('file:///docs/wetalk-upload-client-1')).rejects.toThrow('disk busy');
+  (RNFS.unlink as jest.Mock).mockRejectedValueOnce(new Error('ENOENT'));
+  await expect(releaseQueuedAttachment('file:///docs/wetalk-upload-client-1')).resolves.toBeUndefined();
+});
+
+test('429 exposes the server retry delay', async () => {
+  const fetch = jest.fn(async () => ({ ok: false, status: 429, json: async () => ({ retryAfter: 42 }) } as Response));
+  await expect(queuedUploadRequest(fetch, 'https://signal', row(), 'prepare'))
+    .rejects.toMatchObject({ status: 429, retryAfterMs: 42_000 });
 });

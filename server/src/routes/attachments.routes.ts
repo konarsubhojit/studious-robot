@@ -201,8 +201,13 @@ function createAttachmentsRouter({ state, env = process.env }: {
     // group departure. The identity includes the authenticated actor, never a
     // caller-supplied key, so this cannot delete another participant's bytes.
     if (action !== 'abort' && !await authorizeUploadTarget(groupId, peerId, session.userId, res)) return;
-    const rate = await state.messageSendRateLimiter.check(session.userId);
-    if (!rate.allowed) { res.status(429).json({ error: 'too many requests' }); return; }
+    const rate = await state.attachmentUploadRateLimiter.check(session.userId);
+    if (!rate.allowed) {
+      const retryAfter = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+      res.set('Retry-After', String(retryAfter));
+      res.status(429).json({ error: 'too many requests', retryAfter });
+      return;
+    }
     if (action === 'part' && (!Number.isInteger(partNumber) || partNumber < 1 ||
       partNumber > Math.ceil(validated.sizeBytes / ATTACHMENT_PART_BYTES))) {
       res.status(400).json({ error: 'invalid part number' }); return;

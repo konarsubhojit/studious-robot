@@ -67,8 +67,10 @@ export type OutboxItem = {
     progress: number;
     completed?: boolean;
   };
-  /** Durable cleanup tombstone; hidden from the timeline and never sent. */
+  /** Hidden from the timeline while server reconciliation and cleanup retry. */
   discarded?: boolean;
+  /** Server tombstone confirmed before storage cleanup; survives cleanup retries. */
+  serverMessageDeleted?: boolean;
   /** Final sweep after any pre-discard single-PUT grant and request can expire. */
   cleanupAfter?: number;
 };

@@ -37,7 +37,15 @@ export async function queuedUploadRequest(authedFetch: AuthedFetch, signalingUrl
     };
   });
   if (!response) throw new AttachmentError('Could not reach the server');
-  if (!response.ok) throw new AttachmentError('Could not process attachment upload', response.status);
+  if (!response.ok) {
+    const error = new AttachmentError('Could not process attachment upload', response.status);
+    if (response.status === 429) {
+      const body = await response.json().catch(() => ({}));
+      const seconds = Number(body.retryAfter);
+      Object.assign(error, { retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60_000 });
+    }
+    throw error;
+  }
   return response.json();
 }
 
@@ -150,13 +158,21 @@ export async function releaseQueuedAttachment(uri: string): Promise<void> {
   const prefix = `file://${RNFS.DocumentDirectoryPath}/wetalk-upload-`;
   const identity = uri.slice(prefix.length);
   if (uri.startsWith(prefix) && /^[a-zA-Z0-9_-]{1,128}$/.test(identity)) {
-    await RNFS.unlink(uri.slice('file://'.length)).catch(() => {});
+    const unlink = async (path: string) => {
+      try {
+        await RNFS.unlink(path);
+      } catch (error) {
+        // A prior cleanup can succeed before the outbox removal commits.
+        if (await RNFS.exists(path)) throw error;
+      }
+    };
+    await unlink(uri.slice('file://'.length));
     // A process death bypasses finally. Remove only this upload's app-owned
     // slices when it is acknowledged or its durable cleanup completes.
-    const entries = await RNFS.readDir(RNFS.CachesDirectoryPath).catch(() => []);
+    const entries = await RNFS.readDir(RNFS.CachesDirectoryPath);
     for (const entry of entries) {
       if (entry.isFile() && entry.name.startsWith(`wetalk-part-${identity}-`)) {
-        await RNFS.unlink(entry.path).catch(() => {});
+        await unlink(entry.path);
       }
     }
   }

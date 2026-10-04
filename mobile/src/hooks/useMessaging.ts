@@ -930,7 +930,9 @@ export default function useMessaging({
     if (!latest) return true;
     if (latest.discarded && !item.discarded) return 'waiting' as const;
     logWarn('[Messaging] sendMessage failed', { message: errorMessage(error) });
-    const attempts = (item.attempts ?? 0) + 1;
+    const failure = error as { status?: number; retryAfterMs?: number } | null;
+    const rateLimited = failure?.status === 429;
+    const attempts = (latest.attempts ?? 0) + (rateLimited ? 0 : 1);
     const failed = !item.discarded && (isPermanentSendError(error) || attempts >= OUTBOX_MAX_ATTEMPTS);
     if (failed) {
       patchMessage(item.recipientId, item.messageId, entry => item.upload && !item.upload.completed
@@ -942,7 +944,9 @@ export default function useMessaging({
       lastAttemptAt: new Date().toISOString(),
       lastError: errorMessage(error) ?? null,
       state: failed ? 'failed' : 'pending',
-      nextAttemptAt: failed ? null : Date.now() + Math.ceil(nextDrainDelayMs(attempts - 1)),
+      nextAttemptAt: failed ? null : Date.now() + (rateLimited
+        ? Math.max(1000, failure?.retryAfterMs ?? 60_000)
+        : Math.ceil(nextDrainDelayMs(attempts - 1))),
     }));
     await commitOutbox(isCurrent);
     return failed ? 'unavailable' as const : false;
@@ -1004,7 +1008,33 @@ export default function useMessaging({
     }
   }, [authedFetchRef, signalingUrl, patchMessage, persistOutbox, scope]);
 
+  const reconcileDiscardedUpload = useCallback(async (item: OutboxItem, isCurrent: () => boolean) => {
+    // Completion is durable before send. Replay the same client identity to
+    // resolve a lost/late ack, then tombstone before removing referenced bytes.
+    if (!item.upload?.completed || item.serverMessageDeleted) return true;
+    const signaling = signalingRef?.current;
+    if (!signaling || !socketRef.current?.connected) return false;
+    const ack = await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, outboxSendPayload({
+      ...item, attachment: { ...item.attachment!, url: item.upload.key ?? item.attachment!.url },
+    }));
+    if (!isCurrent()) return false;
+    const message = (ack as { message?: ChatMessage })?.message;
+    if (!message?.messageId) throw new Error('Could not reconcile discarded attachment');
+    if (!message.deletedAt) {
+      await signaling.request(CLIENT_EVENTS.MESSAGE_DELETE, {
+        version: SIGNALING_VERSION, messageId: message.messageId,
+        ...(item.targetKind === 'group' ? { conversationId: item.conversationId } : { peerId: item.recipientId }),
+      });
+      if (!isCurrent()) return false;
+    }
+    persistOutbox(outboxRef.current.map(row => row.messageId === item.messageId
+      ? { ...row, serverMessageDeleted: true } : row));
+    await flushChatDb(scope);
+    return isCurrent();
+  }, [signalingRef, socketRef, persistOutbox, scope]);
+
   const cleanupDiscardedUpload = useCallback(async (item: OutboxItem, isCurrent: () => boolean) => {
+    if (!await reconcileDiscardedUpload(item, isCurrent)) return false;
     const cleaned = await queuedUploadRequest(
       build => authedFetchRef.current?.(build) ?? Promise.resolve(null), signalingUrl, item, 'abort',
       { uploadId: item.upload?.uploadId }, isCurrent,
@@ -1020,13 +1050,14 @@ export default function useMessaging({
       await flushChatDb(scope);
       return 'waiting' as const;
     }
+    await releaseQueuedAttachment(item.upload!.uri);
+    if (!isCurrent()) return false;
     persistOutbox(withoutMessage(outboxRef.current, item.messageId));
     await flushChatDb(scope);
-    await releaseQueuedAttachment(item.upload!.uri);
     return true;
-  }, [authedFetchRef, signalingUrl, persistOutbox, scope]);
+  }, [authedFetchRef, signalingUrl, reconcileDiscardedUpload, persistOutbox, scope]);
 
-  const confirmOutboxSend = useCallback(async (item: OutboxItem, ack: unknown) => {
+  const confirmOutboxSend = useCallback(async (item: OutboxItem, ack: unknown, isCurrent: () => boolean) => {
     const queued = outboxRef.current.find(row => row.messageId === item.messageId);
     if (!queued) return true;
     if (queued.discarded) return 'waiting' as const;
@@ -1035,9 +1066,12 @@ export default function useMessaging({
     const nextConversations = withReconciledMessage(conversationsRef.current, item.recipientId, item.messageId, confirmed);
     conversationsRef.current = nextConversations;
     setConversations(nextConversations);
+    if (item.upload) await releaseQueuedAttachment(item.upload.uri);
+    if (!isCurrent()) return false;
+    // Discard can run while native cleanup is awaiting; preserve its tombstone.
+    if (outboxRef.current.find(row => row.messageId === item.messageId)?.discarded) return 'waiting' as const;
     persistOutbox(withoutMessage(withResolvedReplies(outboxRef.current, item.messageId, confirmed?.messageId), item.messageId));
     await flushChatDb(scope);
-    if (item.upload) await releaseQueuedAttachment(item.upload.uri);
     return true;
   }, [patchMessage, persistOutbox, scope]);
 
@@ -1070,7 +1104,7 @@ export default function useMessaging({
           ? { message: sendMockGroup(prepared.row, item, userId) }
           : await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, outboxSendPayload(item));
         if (!isCurrent()) return false;
-        return await confirmOutboxSend(item, ack);
+        return await confirmOutboxSend(item, ack, isCurrent);
       } catch (error) {
         return recordSendFailure(item, error, isCurrent);
       }
