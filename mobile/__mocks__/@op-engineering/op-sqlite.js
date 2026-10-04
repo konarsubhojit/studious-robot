@@ -30,7 +30,7 @@ module.exports = {
   __db: db,
   __reset: () => {
     for (const { name } of sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()) {
-      if (name === 'chat_records' || name === 'resource_cache') sqlite.exec(`DELETE FROM ${name}`);
+      if (name === 'chat_records' || name === 'resource_cache' || name === 'outbox') sqlite.exec(`DELETE FROM ${name}`);
     }
   },
 };

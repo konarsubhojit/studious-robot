@@ -26,7 +26,7 @@ import type { ChatRows, StoredChatRow } from './chatRecords';
  *   messages       peerId → message[] (newest-first, matching the server's
  *                  ordering), each with a `syncState` of synced|pending|failed
  *   outbox         { messageId, conversationId, recipientId, body, createdAt,
- *                    attempts, lastAttemptAt, lastError }
+ *                    attempts, lastAttemptAt, lastError, nextAttemptAt, state }
  *
  * Rows live in SQLite behind an asynchronous JSI connection. Each flush is
  * one atomic transaction containing only changed rows. Callers supply an
@@ -293,7 +293,9 @@ async function readLegacySnapshot(scope: string): Promise<ChatSnapshot> {
 async function readSnapshot(store: Store, scope: string): Promise<void> {
   const { snapshot: fromDisk, rows } = await withDatabase(async db => {
     const result = await db.execute(
-      'SELECT kind, id, peer, position, payload FROM chat_records WHERE scope = ? ORDER BY position', [scope]);
+      `SELECT kind, id, peer, position, payload FROM chat_records WHERE scope = ?
+       UNION ALL SELECT 'outbox' AS kind, id, peer, position, payload FROM outbox WHERE scope = ?
+       ORDER BY position`, [scope, scope]);
     const snapshot = emptySnapshot();
     const storedRows: ChatRows = new Map();
     for (const row of result.rows) {
@@ -447,6 +449,7 @@ export async function clearChatDb(scope = 'legacy'): Promise<void> {
   await withDatabase(async db => {
     await db.executeBatch([
       ['DELETE FROM chat_records WHERE scope = ?', [scope]],
+      ['DELETE FROM outbox WHERE scope = ?', [scope]],
       [`INSERT OR REPLACE INTO resource_cache(scope, key, payload, updated_at) VALUES (?, ?, ?, ?)`,
         [scope, 'chat:migrated', 'true', Date.now()]],
     ]);

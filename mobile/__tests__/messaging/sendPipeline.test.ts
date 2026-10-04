@@ -10,6 +10,10 @@ import {
   buildOutboxItem,
   buildUploadingMessage,
   drainOrder,
+  drainQueuedMessages,
+  nextOutboxDeadline,
+  isPermanentSendError,
+  restoreOutboxMessages,
   isRetryable,
   nextDrainDelayMs,
   withAttemptRecorded,
@@ -87,6 +91,8 @@ describe('optimistic send', () => {
       attempts: 0,
       lastAttemptAt: null,
       lastError: null,
+      state: 'pending',
+      nextAttemptAt: null,
     });
   });
 });
@@ -136,6 +142,63 @@ describe('outbox bookkeeping', () => {
     expect(nextDrainDelayMs(0, 1)).toBe(1000);
     expect(nextDrainDelayMs(1, 0)).toBe(1000);
     expect(nextDrainDelayMs(50, 1)).toBe(OUTBOX_MAX_RETRY_MS);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const ceiling = Math.min(1000 * 2 ** attempt, OUTBOX_MAX_RETRY_MS);
+      for (const jitter of [0, 0.25, 0.5, 0.75, 1]) {
+        expect(nextDrainDelayMs(attempt, jitter)).toBeGreaterThanOrEqual(ceiling / 2);
+        expect(nextDrainDelayMs(attempt, jitter)).toBeLessThanOrEqual(ceiling);
+      }
+    }
+  });
+
+  test('delayed heads gate later sends but independent conversations continue', async () => {
+    const head = queued({ messageId: 'head', nextAttemptAt: Date.now() + 5000 });
+    const later = queued({ messageId: 'later' });
+    const other = queued({ messageId: 'other', recipientId: 'carol' });
+    const send = jest.fn(async () => true);
+    expect(await drainQueuedMessages([head, later, other], send)).toBe(false);
+    expect(send.mock.calls.map(([item]: any[]) => item.messageId)).toEqual(['other']);
+    expect(nextOutboxDeadline([head, later])).toBe(head.nextAttemptAt);
+  });
+
+  test('a transient failure pauses only its conversation; a terminal failure releases later rows', async () => {
+    const queue = [queued(), queued({ messageId: 'later' }), queued({ messageId: 'other', recipientId: 'carol' })];
+    const transient = jest.fn(async (item: any) => item.messageId !== 'm1');
+    await drainQueuedMessages(queue, transient);
+    expect(transient.mock.calls.map(([item]) => item.messageId)).toEqual(['m1', 'other']);
+    const terminal = jest.fn(async (item: any) => item.messageId === 'm1' ? 'unavailable' as const : true);
+    await drainQueuedMessages(queue, terminal);
+    expect(terminal.mock.calls.map(([item]) => item.messageId)).toEqual(['m1', 'later', 'other']);
+  });
+
+  test.each(['bad_request', 'blocked', 'forbidden', 'not_found', 'unauthorized', 'unsupported_version'])(
+    'structured %s rejections are permanent', code => {
+      expect(isPermanentSendError(Object.assign(new Error('rejected'), { code }))).toBe(true);
+    },
+  );
+
+  test.each(['timeout', 'rate_limited', 'internal_error', undefined])(
+    '%s errors and unstructured messages are transient', code => {
+      expect(isPermanentSendError(Object.assign(new Error('forbidden'), { code }))).toBe(false);
+    },
+  );
+
+  test('explicit retry clears a terminal state and deadline without changing either identity', () => {
+    const item = queued({ clientMessageId: 'client-key', attempts: 1, state: 'failed',
+      nextAttemptAt: Date.now() + 60_000, lastError: 'blocked' });
+    expect(withAttemptsReset([item], item.messageId)[0]).toMatchObject({
+      messageId: 'm1', clientMessageId: 'client-key', attempts: 0, state: 'pending',
+      nextAttemptAt: null, lastAttemptAt: null, lastError: null,
+    });
+  });
+
+  test('durable terminal rows repair an interrupted pending mirror or recreate a missing bubble', () => {
+    const item = buildOutboxItem(draft());
+    const outbox = [{ ...item, attempts: 1, state: 'failed' as const }];
+    const pending = buildOptimisticMessage(draft());
+    expect(restoreOutboxMessages({ bob: [pending] }, outbox, 'alice').bob[0])
+      .toMatchObject({ messageId: item.messageId, pending: false, failed: true, syncState: 'failed' });
+    expect(restoreOutboxMessages({}, outbox, 'alice').bob[0].syncState).toBe('failed');
   });
 });
 

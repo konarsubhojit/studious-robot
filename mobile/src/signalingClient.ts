@@ -155,7 +155,7 @@ export function createSignalingClient(socket: Socket): SignalingClient {
   function request(event: string, payload: object): Promise<any> {
     const result = parseEventPayload(event, payload, 'client');
     if (!result.success) {
-      return Promise.reject(new Error(`${event}: ${result.error.message}`));
+      return Promise.reject(Object.assign(new Error(`${event}: ${result.error.message}`), { code: 'bad_request' }));
     }
     return emitWithAck(socket, event, payload);
   }

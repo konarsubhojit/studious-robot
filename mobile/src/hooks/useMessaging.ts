@@ -70,6 +70,8 @@ import {
   drainOrder,
   isRetryable,
   nextDrainDelayMs,
+  nextOutboxDeadline,
+  isPermanentSendError,
   outboxSendPayload,
   restoreOutboxMessages,
   withAttemptRecorded,
@@ -250,8 +252,8 @@ export default function useMessaging({
     (null as boolean | null),
   );
   const drainTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
-  const drainAttemptRef = useRef(0);
-  const drainingScopeRef = useRef<string | null>(null);
+  const workerGenerationRef = useRef(0);
+  const drainingScopeRef = useRef<number | null>(null);
   const drainOutboxRef = useRef(() => {});
   const attachmentUploadMetaRef = useRef(({} as Record<string, { conversationId?: string | null; createdAt: string; }>));
   const conversationsRef = useRef(([] as ConversationSummary[]));
@@ -266,6 +268,7 @@ export default function useMessaging({
   });
 
   useEffect(() => {
+    workerGenerationRef.current += 1;
     scopeRef.current = scope;
     setStateScope(scope);
     setConversations([]);
@@ -285,8 +288,12 @@ export default function useMessaging({
     activeChatPeerIdRef.current = null;
     attachmentUploadMetaRef.current = {};
     clearTimeout(drainTimerRef.current ?? undefined);
+    drainTimerRef.current = null;
     Object.values(typingTimeoutsRef.current).forEach(clearTimeout);
-    return () => { scopeRef.current = ''; };
+    return () => {
+      scopeRef.current = '';
+      workerGenerationRef.current += 1;
+    };
   }, [scope]);
 
   useEffect(() => {
@@ -742,7 +749,7 @@ export default function useMessaging({
         messagesByPeerRef.current = messages;
         setMessagesByPeer(messages);
         persistOutbox(outboxRef.current.map(item => item.recipientId === id
-          ? { ...item, attempts: OUTBOX_MAX_ATTEMPTS, lastError: 'Left group' } : item));
+          ? { ...item, state: 'failed', nextAttemptAt: null, attempts: OUTBOX_MAX_ATTEMPTS, lastError: 'Left group' } : item));
         // The departure has already happened; a failed cache write must not be
         // reported as a failed leave, or the screen stays on a group the user left.
         try { await flushChatDb(scope); }
@@ -808,16 +815,21 @@ export default function useMessaging({
     });
   }, [isSocketConnected, scope, signalingRef, userId]);
 
-  /** Schedule the next drain with bounded exponential backoff plus jitter. */
+  /** Wake at the persisted conversation-head deadline, never reset it on reconnect. */
   const scheduleDrain = useCallback(() => {
-    if (drainTimerRef.current) return;
-    const attempt = drainAttemptRef.current;
-    drainAttemptRef.current = attempt + 1;
+    clearTimeout(drainTimerRef.current ?? undefined);
+    drainTimerRef.current = null;
+    if (scopeRef.current !== scope || !socketRef.current?.connected) return;
+    const deadline = nextOutboxDeadline(outboxRef.current);
+    if (deadline === null) return;
+    const generation = workerGenerationRef.current;
     drainTimerRef.current = setTimeout(() => {
       drainTimerRef.current = null;
+      if (scopeRef.current !== scope || workerGenerationRef.current !== generation) return;
       drainOutboxRef.current();
-    }, nextDrainDelayMs(attempt));
-  }, []);
+      // A ready head waiting on an upload/storage dependency must not spin.
+    }, Math.max(250, deadline - Date.now()));
+  }, [scope, socketRef]);
 
   /**
    * Attempt one queued send.  Resolves to whether the message is now the
@@ -838,68 +850,94 @@ export default function useMessaging({
     return { status: 'unavailable' } as const;
   }, [patchMessage, persistOutbox, userId]);
 
+  const commitOutbox = useCallback(async (isCurrent: () => boolean) => {
+    try {
+      await flushChatDb(scope);
+      return isCurrent();
+    } catch {
+      if (isCurrent()) updateStatus('Cannot save message on this device. Free storage and retry.', 'error');
+      return false;
+    }
+  }, [scope, updateStatus]);
+
+  const recordSendFailure = useCallback(async (item: OutboxItem, error: unknown, isCurrent: () => boolean) => {
+    if (!isCurrent()) return false;
+    // A discarded/acknowledged row must not be resurrected by a stale failure.
+    if (!outboxRef.current.some(queued => queued.messageId === item.messageId)) return true;
+    logWarn('[Messaging] sendMessage failed', { message: errorMessage(error) });
+    const attempts = (item.attempts ?? 0) + 1;
+    const failed = isPermanentSendError(error) || attempts >= OUTBOX_MAX_ATTEMPTS;
+    if (failed) {
+      patchMessage(item.recipientId, item.messageId, asFailed);
+      updateStatus('Message failed to send', 'error');
+    }
+    persistOutbox(withAttemptRecorded(outboxRef.current, item.messageId, {
+      attempts,
+      lastAttemptAt: new Date().toISOString(),
+      lastError: errorMessage(error) ?? null,
+      state: failed ? 'failed' : 'pending',
+      nextAttemptAt: failed ? null : Date.now() + Math.ceil(nextDrainDelayMs(attempts - 1)),
+    }));
+    await commitOutbox(isCurrent);
+    return failed ? 'unavailable' as const : false;
+  }, [commitOutbox, patchMessage, persistOutbox, updateStatus]);
+
+  const prepareOutboxSend = useCallback(async (item: OutboxItem, isCurrent: () => boolean) => {
+    const row = conversationsRef.current.find(entry => entry.peerId === item.recipientId);
+    if (item.targetKind === 'group' && (!row?.group || row.left || !row.group.memberIds.includes(userId))) {
+      throw Object.assign(new Error('You are no longer a group member'), { code: 'forbidden' });
+    }
+    const reply = prepareOutboxReply(item);
+    if (reply.status !== 'ready') {
+      if (reply.status === 'unavailable') await flushChatDb(scope);
+      return reply;
+    }
+    // Save resolved references before emitting so retries submit the same send.
+    if (reply.item !== item) {
+      persistOutbox(outboxRef.current.map(queued => queued.messageId === item.messageId ? reply.item : queued));
+      await flushChatDb(scope);
+    }
+    return isCurrent() ? { ...reply, row } : { status: 'waiting' as const };
+  }, [persistOutbox, prepareOutboxReply, scope, userId]);
+
   const sendOutboxItem = useCallback(
     /** @param item */
-    async (item: OutboxItem) => {
+    async (item: OutboxItem, generation = workerGenerationRef.current) => {
+      const isCurrent = () => scopeRef.current === scope && workerGenerationRef.current === generation;
       const signaling = signalingRef?.current;
-      if (!signaling || !socketRef.current?.connected || scopeRef.current !== scope) return false;
+      if (!signaling || !socketRef.current?.connected || !isCurrent()) return false;
 
       // Failure to commit is not a send attempt: never emit an undurable row.
-      try {
-        await flushChatDb(scope);
-      } catch {
-        updateStatus('Cannot save message on this device. Free storage and retry.', 'error');
-        return false;
-      }
+      if (!await commitOutbox(isCurrent)) return false;
       const latest = outboxRef.current.find(row => row.messageId === item.messageId);
-      if (scopeRef.current !== scope || !latest) return false;
+      if (!isCurrent() || !latest) return false;
       item = latest;
+      if (!isRetryable(item)) return 'unavailable';
+      if ((item.nextAttemptAt ?? 0) > Date.now()) return 'waiting';
 
       try {
-        const row = conversationsRef.current.find(entry => entry.peerId === item.recipientId);
-        if (item.targetKind === 'group' && (!row?.group || row.left || !row.group.memberIds.includes(userId))) {
-          throw new Error('You are no longer a group member');
-        }
-        // Replies to optimistic rows must wait for their server identity. Save
-        // the resolved reference before emitting so retries submit the same send.
-        const reply = prepareOutboxReply(item);
-        if (reply.status !== 'ready') return reply.status;
-        if (reply.item !== item) {
-          item = reply.item;
-          persistOutbox(outboxRef.current.map(queued => queued.messageId === item.messageId ? item : queued));
-          await flushChatDb(scope);
-        }
-        if (scopeRef.current !== scope) return false;
+        const prepared = await prepareOutboxSend(item, isCurrent);
+        if (prepared.status !== 'ready') return prepared.status;
+        if (!isCurrent() || !socketRef.current?.connected) return false;
+        item = prepared.item;
         const ack = item.localMock
-          ? { message: sendMockGroup(row, item, userId) }
+          ? { message: sendMockGroup(prepared.row, item, userId) }
           : await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, outboxSendPayload(item));
-        if (scopeRef.current !== scope) return false;
+        if (!isCurrent()) return false;
+        if (!outboxRef.current.some(queued => queued.messageId === item.messageId)) return true;
         const confirmed = (ack as { message?: ChatMessage } | undefined)?.message;
         patchMessage(item.recipientId, item.messageId, entry => asSent(entry, confirmed));
         const nextConversations = withReconciledMessage(conversationsRef.current, item.recipientId, item.messageId, confirmed);
         conversationsRef.current = nextConversations;
         setConversations(nextConversations);
         persistOutbox(withoutMessage(withResolvedReplies(outboxRef.current, item.messageId, confirmed?.messageId), item.messageId));
+        await flushChatDb(scope);
         return true;
       } catch (error) {
-        if (scopeRef.current !== scope) return false;
-        logWarn('[Messaging] sendMessage failed', { message: errorMessage(error) });
-        const attempts = (item.attempts ?? 0) + 1;
-        if (attempts >= OUTBOX_MAX_ATTEMPTS) {
-          patchMessage(item.recipientId, item.messageId, asFailed);
-          updateStatus('Message failed to send', 'error');
-        }
-        persistOutbox(
-          withAttemptRecorded(outboxRef.current, item.messageId, {
-            attempts,
-            lastAttemptAt: new Date().toISOString(),
-            lastError: errorMessage(error) ?? null,
-          }),
-        );
-        return false;
+        return recordSendFailure(item, error, isCurrent);
       }
     },
-    [patchMessage, persistOutbox, signalingRef, socketRef, updateStatus, scope, userId, prepareOutboxReply],
+    [commitOutbox, patchMessage, persistOutbox, signalingRef, socketRef, scope, userId, prepareOutboxSend, recordSendFailure],
   );
 
   /**
@@ -908,7 +946,7 @@ export default function useMessaging({
    * send does not get through.
    */
   const drainOutbox = useCallback(async () => {
-    if (drainingScopeRef.current === scope) return;
+    if (scopeRef.current !== scope || drainingScopeRef.current !== null) return;
     const queue = drainOrder(outboxRef.current);
     if (!queue.length) return;
     if (!socketRef.current?.connected || !signalingRef?.current) {
@@ -916,16 +954,20 @@ export default function useMessaging({
       return;
     }
 
-    drainingScopeRef.current = scope;
+    const generation = workerGenerationRef.current;
+    drainingScopeRef.current = generation;
     let allSent = true;
     try {
-      allSent = await drainQueuedMessages(queue, sendOutboxItem);
+      allSent = await drainQueuedMessages(queue, item => sendOutboxItem(item, generation));
     } finally {
-      if (drainingScopeRef.current === scope) drainingScopeRef.current = null;
+      drainingScopeRef.current = null;
+    }
+    if (scopeRef.current !== scope || workerGenerationRef.current !== generation) {
+      drainOutboxRef.current();
+      return;
     }
 
     if (allSent) {
-      drainAttemptRef.current = 0;
       // The message the user just sent is now the server's problem, and they
       // are told without having to look at the screen. Only a single-item
       // drain buzzes: a reconnect that replays a backlog would otherwise
@@ -949,7 +991,6 @@ export default function useMessaging({
   useEffect(() => {
     const subscription = AppState.addEventListener?.('change', nextState => {
       if (nextState !== 'active') return;
-      drainAttemptRef.current = 0;
       drainOutboxRef.current();
       void fetchConversations();
       void backfillMessages();
@@ -974,6 +1015,7 @@ export default function useMessaging({
    * durable outbox *before* anything is emitted, so it is never lost to a dead
    * socket or a killed process: whatever is still queued is replayed on the
    * next connect, foreground, or launch.
+   * Resolves after the local commit; delivery continues in the background.
    *
    *   Rich-message fields. An attachment message (`image`/`file`/`voice`) may
    *   have an empty body: the caption is optional, the attachment is the
@@ -1051,7 +1093,7 @@ export default function useMessaging({
         return;
       }
 
-      await drainOutbox();
+      if (scopeRef.current === scope) void drainOutbox();
       return messageId;
     },
     [drainOutbox, persistOutbox, userId, scope, scheduleDrain, updateStatus],
@@ -1151,6 +1193,7 @@ export default function useMessaging({
    */
   const retryMessage = useCallback(
     async (peerId: string, messageId: string) => {
+      if (!scope || scopeRef.current !== scope) return;
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
       const group = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
@@ -1163,12 +1206,13 @@ export default function useMessaging({
 
       patchMessage(trimmedPeerId, messageId, asQueued);
       persistOutbox(withAttemptsReset(outboxRef.current, messageId));
-      drainAttemptRef.current = 0;
       clearTimeout(drainTimerRef.current ?? undefined);
       drainTimerRef.current = null;
+      const generation = workerGenerationRef.current;
+      if (!await commitOutbox(() => scopeRef.current === scope && workerGenerationRef.current === generation)) return;
       await drainOutbox();
     },
-    [drainOutbox, patchMessage, persistOutbox, userId],
+    [commitOutbox, drainOutbox, patchMessage, persistOutbox, scope, userId],
   );
 
   /**
@@ -1572,12 +1616,10 @@ export default function useMessaging({
   );
 
   /**
-   * The socket came up: connectivity is restored, so reset the backoff and
-   * flush anything the outbox still holds.
+   * Connectivity is restored: drain ready rows without resetting persisted deadlines.
    */
   const handleSocketConnected = useCallback(() => {
     setIsSocketConnected(true);
-    drainAttemptRef.current = 0;
     clearTimeout(drainTimerRef.current ?? undefined);
     drainTimerRef.current = null;
     drainOutboxRef.current();
