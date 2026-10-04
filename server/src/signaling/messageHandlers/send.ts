@@ -65,7 +65,7 @@ function differingAttachmentField(
 
 /**
  * Find the first field that differs between the message a client submitted
- * and the row already stored under the same `messageId`, or `null` if they
+ * and the row already stored under the same retry key, or `null` if they
  * describe the same accepted send (an idempotent retry).
  */
 function differingAcceptedSendField(
@@ -75,6 +75,13 @@ function differingAcceptedSendField(
   if (a.senderId !== b.senderId) return 'senderId';
   if (a.recipientId !== b.recipientId) return 'recipientId';
   if (a.conversationId !== b.conversationId) return 'conversationId';
+  // Deletion erased the accepted content. An explicit-key replay must return
+  // the tombstone, not resurrect it or fail a lost ack; retained routing/type/
+  // reply fields still detect mismatched reuse. Legacy collision rules stay intact.
+  if (a.deletedAt && a.clientMessageId && a.clientMessageId === b.clientMessageId) {
+    if (a.type !== b.type) return 'type';
+    return a.replyTo !== b.replyTo ? 'replyTo' : null;
+  }
   if (a.body !== b.body) return 'body';
   if (a.type !== b.type) return 'type';
   if (a.replyTo !== b.replyTo) return 'replyTo';
@@ -110,10 +117,10 @@ async function persistAcceptedMessage(
   const mismatchedField = differingAcceptedSendField(saved, message);
   if (mismatchedField) {
     console.error(
-      `[messages] rejected messageId collision messageId=${message.messageId}` +
+      `[messages] rejected message key collision messageId=${message.messageId}` +
         ` conversationId=${message.conversationId} field=${mismatchedField}`
     );
-    throw new Error('messageId already belongs to a different message');
+    throw new MessageKeyConflictError('message key already belongs to a different message');
   }
   // The sender's own conversation-list entry is evicted off the ack path
   // (fire-and-forget): the sender's copy of this exact message is already
@@ -172,6 +179,7 @@ type SendValidationResult =
       attachment: import('../../../../shared/signaling/schemas.ts').AttachmentRecord | null;
       replyTo: string | null;
       clientMessageId: string | undefined;
+      legacyMessageId: string | undefined;
     }
   | { ok: false; code: string; message: string; };
 
@@ -231,9 +239,16 @@ function validateReplyTo(
 
 function validateOptionalMessageId(
   parsed: Record<string, any>
-): { ok: true; clientMessageId: string | undefined; } | { ok: false; code: string; message: string; } {
+): { ok: true; clientMessageId: string | undefined; legacyMessageId: string | undefined; } | { ok: false; code: string; message: string; } {
+  if (parsed.clientMessageId !== undefined) {
+    if (typeof parsed.clientMessageId !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.clientMessageId)) {
+      return { ok: false, code: ERROR_CODES.BAD_REQUEST, message: 'clientMessageId must be a UUID' };
+    }
+    return { ok: true, clientMessageId: parsed.clientMessageId.toLowerCase(), legacyMessageId: undefined };
+  }
   if (parsed.messageId === undefined) {
-    return { ok: true, clientMessageId: undefined };
+    return { ok: true, clientMessageId: undefined, legacyMessageId: undefined };
   }
 
   const clientMessageId = parseClientMessageId(parsed.messageId);
@@ -241,7 +256,7 @@ function validateOptionalMessageId(
     return { ok: false, code: ERROR_CODES.BAD_REQUEST, message: 'messageId must be url-safe' };
   }
 
-  return { ok: true, clientMessageId };
+  return { ok: true, clientMessageId: undefined, legacyMessageId: clientMessageId };
 }
 
 function validateMessagePayload(
@@ -284,6 +299,7 @@ function validateMessagePayload(
     attachment: attachment.attachment,
     replyTo: reply.replyTo,
     clientMessageId: messageId.clientMessageId,
+    legacyMessageId: messageId.legacyMessageId,
   };
 }
 
@@ -323,7 +339,8 @@ async function handleGroupMessageSend(
     type: validated.messageType,
     attachment: validated.attachment,
     replyTo: validated.replyTo,
-    messageId: validated.clientMessageId,
+    messageId: validated.legacyMessageId,
+    clientMessageId: validated.clientMessageId,
   });
   try {
     const saved = await state.conversationStore.saveMessage(message);
@@ -424,7 +441,8 @@ async function handleMessageSend(
     type: validated.messageType,
     attachment: validated.attachment,
     replyTo: validated.replyTo,
-    messageId: validated.clientMessageId,
+    messageId: validated.legacyMessageId,
+    clientMessageId: validated.clientMessageId,
   });
 
   console.log(
@@ -443,8 +461,8 @@ async function handleMessageSend(
       socket,
       ack,
       CLIENT_EVENTS.MESSAGE_SEND,
-      ERROR_CODES.INTERNAL_ERROR,
-      'message could not be saved',
+      error instanceof MessageKeyConflictError && message.clientMessageId ? ERROR_CODES.BAD_REQUEST : ERROR_CODES.INTERNAL_ERROR,
+      error instanceof MessageKeyConflictError && message.clientMessageId ? error.message : 'message could not be saved',
       state
     );
     return;
@@ -469,3 +487,5 @@ async function handleMessageSend(
 }
 
 export { handleMessageSend };
+
+class MessageKeyConflictError extends Error {}

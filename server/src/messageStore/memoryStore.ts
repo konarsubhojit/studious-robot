@@ -45,13 +45,13 @@ export function createMemoryMessageStore(): MessageStore {
   };
   const saveMessageWithStatus: MessageStore['saveMessageWithStatus'] = async (message) => {
     const record = createMessageRecord(message);
-    // Idempotent on the client-supplied `{ conversationId, messageId }` pair,
-    // mirroring the Postgres store's insert: a client replaying a send from its
-    // durable outbox must not create a second copy of the same message.
+    // Mirror sender/key uniqueness and the legacy primary-key retry path.
     const existing = messages.find(
       (candidate) =>
-        candidate.conversationId === record.conversationId &&
-        candidate.messageId === record.messageId
+        (record.clientMessageId && candidate.senderId === record.senderId &&
+          candidate.clientMessageId === record.clientMessageId) ||
+        (candidate.conversationId === record.conversationId &&
+          candidate.messageId === record.messageId)
     );
     if (existing) return { message: { ...existing }, inserted: false };
     messages.push(record);

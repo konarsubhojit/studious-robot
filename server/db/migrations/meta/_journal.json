@@ -141,6 +141,13 @@
       "when": 1790999487311,
       "tag": "0019_group_conversations_and_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791071562728,
+      "tag": "0020_client_message_id",
+      "breakpoints": true
     }
   ]
 }

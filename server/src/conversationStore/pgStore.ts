@@ -76,6 +76,7 @@ function toMember(row: MemberRow): ConversationMember {
 function toMessage(row: MessageRow): StoredMessage {
   return {
     messageId: row.messageId,
+    ...(row.clientMessageId ? { clientMessageId: row.clientMessageId } : {}),
     conversationId: row.conversationId,
     senderId: row.senderId,
     recipientId: row.conversationId,
@@ -601,6 +602,7 @@ function createPgConversationStore(db: Database): ConversationStore {
           .values({
             conversationId: message.conversationId,
             messageId: message.messageId,
+            clientMessageId: message.clientMessageId ?? null,
             senderId: message.senderId,
             body: message.body,
             type: message.type ?? 'text',
@@ -618,8 +620,9 @@ function createPgConversationStore(db: Database): ConversationStore {
         const [existing] = await tx
           .select()
           .from(messagesTable)
-          .where(
-            and(
+          .where(message.clientMessageId
+            ? and(eq(messagesTable.senderId, message.senderId), eq(messagesTable.clientMessageId, message.clientMessageId))
+            : and(
               eq(messagesTable.conversationId, message.conversationId),
               eq(messagesTable.messageId, message.messageId)
             )

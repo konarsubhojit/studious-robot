@@ -5,6 +5,7 @@ import {
   withConversationRead,
   withIncomingMessage,
   withOutgoingMessage,
+  withReconciledMessage,
 } from '../../src/messaging/conversations';
 import { withDraft, withoutDraft } from '../../src/messaging/drafts';
 
@@ -18,6 +19,41 @@ const conversation = (overrides: any = {}): any => ({
   peerId: 'bob',
   unreadCount: 0,
   ...overrides,
+});
+
+test('a delayed message acknowledgement reconciles lastMessage without replacing a newer call activity', () => {
+  const pending = {
+    messageId: 'local-uuid', clientMessageId: 'local-uuid', senderId: 'alice', recipientId: 'bob',
+    conversationId: 'conv-1', body: 'older send', createdAt: '2026-10-03T06:00:00.000Z',
+  };
+  const call = {
+    type: 'call' as const, callId: 'newer-call', conversationId: 'conv-1',
+    direction: 'outgoing' as const, status: 'completed', createdAt: '2026-10-03T06:00:05.000Z',
+  };
+  const initial = withOutgoingMessage([conversation({ unreadCount: 2 })], pending);
+  const withCall = withCallActivity(initial, 'bob', call);
+  const confirmed = { ...pending, messageId: 'server-id', createdAt: '2026-10-03T06:00:01.000Z' };
+  const reconciled = withReconciledMessage(withCall, 'bob', pending.messageId, confirmed);
+  expect(reconciled[0].lastMessage).toBe(confirmed);
+  expect(reconciled[0].lastActivity).toBe(call);
+  expect(reconciled[0].unreadCount).toBe(2);
+  expect(withReconciledMessage(initial, 'bob', pending.messageId, confirmed)[0].lastActivity).toBe(confirmed);
+});
+
+test('an acknowledgement cannot replace a peer preview whose legacy server id equals the local UUID', () => {
+  const peer = {
+    messageId: 'local-uuid', senderId: 'bob', recipientId: 'alice', conversationId: 'conv-1',
+    body: 'newer peer message', createdAt: '2026-10-03T06:00:05.000Z',
+  };
+  const held = withIncomingMessage([], peer);
+  const confirmed = {
+    ...peer, messageId: 'server-owned', clientMessageId: 'local-uuid',
+    senderId: 'alice', recipientId: 'bob', body: 'older outgoing message',
+  };
+  const reconciled = withReconciledMessage(held, 'bob', 'local-uuid', confirmed);
+  expect(reconciled[0]).toBe(held[0]);
+  expect(reconciled[0].lastMessage).toBe(peer);
+  expect(reconciled[0].lastActivity).toBe(held[0].lastActivity);
 });
 
 describe('unread accounting', () => {

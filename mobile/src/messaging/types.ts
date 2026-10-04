@@ -37,6 +37,7 @@ export type ChatMessage = Omit<MessageRecord, 'conversationId'> & {
  */
 export type OutboxItem = {
   messageId: string;
+  clientMessageId?: string;
   recipientId: string;
   conversationId?: string | null;
   /** recipientId remains the local timeline key; it is never emitted for groups. */
@@ -46,6 +47,8 @@ export type OutboxItem = {
   type?: string;
   attachment?: AttachmentRecord | null;
   replyTo?: string | null;
+  /** Local-only dependency marker, cleared once replyTo is a persisted id. */
+  replyToLocalMessageId?: string;
   createdAt?: string;
   attempts?: number;
   lastAttemptAt?: string | null;

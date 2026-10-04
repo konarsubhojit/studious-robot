@@ -14,6 +14,7 @@ import RNFS from 'react-native-fs';
 import { withDatabase } from '../../src/storage/localDatabase';
 import { rowChanges, snapshotRows } from '../../src/storage/chatRecords';
 import { timelineEntryId } from '../../src/messaging/messageIdentity';
+import { outboxSendPayload, restoreOutboxMessages } from '../../src/messaging/sendPipeline';
 import type { DB } from '@op-engineering/op-sqlite';
 import {
   CHAT_DB_FILE_PATH,
@@ -52,6 +53,39 @@ function makeMessages(count: number, overrides: Partial<import('../../src/hooks/
 }
 
 describe('chatDb', () => {
+  test('explicit keys and server identities survive SQLite cold reload without duplicating a retained outbox', async () => {
+    const scope = 'https://example.test:explicit-message-key';
+    const clientMessageId = 'c936b4b1-f230-4d28-8e32-e28d1e76dff7';
+    const createdAt = new Date().toISOString();
+    const message = {
+      messageId: 'server-owned', clientMessageId, conversationId: 'alice:bob',
+      senderId: 'alice', recipientId: 'bob', body: 'ack lost', createdAt,
+    };
+    const other = { ...message, messageId: 'server-other', senderId: 'bob', recipientId: 'alice' };
+    const queued = {
+      messageId: clientMessageId, clientMessageId, conversationId: 'alice:bob',
+      recipientId: 'bob', body: message.body, createdAt, attempts: 1,
+      replyTo: 'pending-parent', replyToLocalMessageId: 'pending-parent',
+    };
+    await loadChatSnapshot(scope);
+    saveChatSnapshot({ messagesByPeer: { bob: [message, other] }, outbox: [queued] }, scope);
+    await flushChatDb(scope);
+    const records = await withDatabase(db => db.execute(
+      "SELECT id, payload FROM chat_records WHERE scope = ? AND kind = 'messagesByPeer'", [scope],
+    ));
+    expect(records.rows).toHaveLength(2);
+    expect(new Set(records.rows.map(row => row.id)).size).toBe(2);
+    expect(records.rows.map(row => JSON.parse(String(row.payload)).clientMessageId)).toEqual([clientMessageId, clientMessageId]);
+    resetChatDbCache();
+    const restored = await loadChatSnapshot(scope);
+    expect(restored.outbox[0]).toEqual(queued);
+    expect(restored.messagesByPeer.bob.map(entry => entry.messageId).sort()).toEqual(['server-other', 'server-owned']);
+    expect(restored.messagesByPeer.bob.every(entry => entry.clientMessageId === clientMessageId)).toBe(true);
+    expect(restoreOutboxMessages(restored.messagesByPeer, restored.outbox, 'alice').bob).toHaveLength(2);
+    expect(outboxSendPayload(restored.outbox[0])).toMatchObject({ clientMessageId });
+    expect(outboxSendPayload(restored.outbox[0])).not.toHaveProperty('messageId');
+  });
+
   test('group snapshots, receipts and explicit outbox targets survive a SQLite cold reload in their account scope', async () => {
     const scope = 'https://example.test:group-alice';
     await loadChatSnapshot(scope);

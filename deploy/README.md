@@ -913,6 +913,39 @@ Two index-build notes for `0012` on an already-large `messages` table:
 - Neon scales compute to zero when idle; pin the compute size while the two
   new GIN indexes build so the migration doesn't stall mid-build.
 
+`0020_client_message_id.sql` adds nullable UUID retry keys and unique
+`(sender_id, client_message_id)` indexes to `messages` and `group_messages`.
+Apply it using the same owner/direct connection **before** starting the new
+server code. Legacy rows remain NULL (no backfill or rewriting server IDs).
+The migration was generated with `npm run db:generate:named -- client_message_id`
+and includes its Drizzle snapshot/journal. Its plain `CREATE UNIQUE INDEX`
+statements are transactional; do not substitute `CONCURRENTLY` inside the
+migration. Schedule the DDL lock window for large existing tables and pin Neon
+compute while the indexes build.
+
+The runtime insert uses `ON CONFLICT DO NOTHING`, then reads the persisted
+winner by sender/key in the same transaction. Only an actual insert advances
+the conversation projection, unread counters and message change log; duplicate
+requests do not fan out again. A replay never overwrites receipts, reactions or
+tombstones. Direct and group retry namespaces live in their respective tables.
+
+Real contention coverage runs against an owner connection with permission to
+create/drop **test-owned scratch databases** (never runtime application data):
+
+The test automatically uses the existing CI `DATABASE_URL` when the dedicated
+override is unset. `MESSAGE_IDEMPOTENCY_TEST_DATABASE_URL` takes precedence when
+a separate owner/direct connection is needed.
+
+```bash
+cd server
+MESSAGE_IDEMPOTENCY_TEST_DATABASE_URL="$DATABASE_URL_DIRECT" \
+  node --experimental-test-module-mocks --test test/message-idempotency-postgres.test.ts
+```
+
+This migrates a fresh scratch database, races independent stores/pools and two
+signaling servers, checks one row/change/unread increment, bypasses the store to
+verify PostgreSQL error `23505`, and checks different senders and group retries.
+
 Chat history is **not** pruned by default: the retention sweep skips
 `messages` unless `MESSAGE_RETENTION_MS` is set to a non-zero window. That is
 deliberate — chat is the user's own content, not something the server recorded

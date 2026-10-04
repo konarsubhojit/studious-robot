@@ -99,7 +99,7 @@ frozen here; group handler/client support remains follow-up work.
 
 | Event          | Payload                              | Ack success                            | Notes |
 | -------------- | ------------------------------------ | -------------------------------------- | ----- |
-| `message.send` | `{ version, recipientId XOR conversationId, body, type?, attachment?, replyTo?, messageId? }` | `{ ok, version, event, message }` | `recipientId` targets a direct chat; `conversationId` targets a group. `body` must be a string of at most **4000** characters, and non-empty unless the message carries an attachment. `type` defaults to `text` and may be `text`, `image`, `file` or `voice` (`system` is server-owned). The current direct-chat handler rejects missing/self `recipientId`, malformed content/attachments, and blocked peers. |
+| `message.send` | `{ version, recipientId XOR conversationId, body, type?, attachment?, replyTo?, clientMessageId?, messageId? }` | `{ ok, version, event, message }` | New sends use a stable UUID `clientMessageId`; `messageId` is only the legacy retry path. `recipientId` targets a direct chat; `conversationId` targets a group. `body` must be a string of at most **4000** characters, and non-empty unless the message carries an attachment. `type` defaults to `text` and may be `text`, `image`, `file` or `voice` (`system` is server-owned). The current direct-chat handler rejects missing/self `recipientId`, malformed content/attachments, and blocked peers. |
 | `message.delete` | `{ version, peerId XOR conversationId, messageId }` | `{ ok, version, event, messageId, conversationId }` | "Delete for everyone" for one of your **own** messages. The row is tombstoned rather than removed, so a reply that quotes it still resolves. `not_found` for an unknown (or already deleted) message and for someone else's. |
 | `message.react` | `{ version, peerId XOR conversationId, messageId, emoji, action }` | `{ ok, version, event, messageId, conversationId, reactions }` | `action` is `add` or `remove`; `emoji` must be an emoji of at most 16 code units. Idempotent, so a replayed add cannot toggle the reaction off. `not_found` for an unknown or tombstoned message, `forbidden` when either direct-chat party has blocked the other. |
 | `message.typing` | `{ version, recipientId XOR conversationId, isTyping }` | _(fire-and-forget)_ | Announces typing in a direct chat or group. |
@@ -128,7 +128,28 @@ provided IDs never establish authorization. Group calls remain out of scope.
 | `message.reaction`  | `{ version, conversationId, messageId, reactions, actorId, emoji, action }` emitted to both participants' `user:<userId>` rooms, so every device of both users converges on the same reaction set. |
 
 The persisted message shape is
-`{ messageId, conversationId, senderId, recipientId, body, type, attachment, replyTo, reactions, deletedAt, createdAt, deliveredTo, readAt }`.
+`{ messageId, clientMessageId?, conversationId, senderId, recipientId, body, type, attachment, replyTo, reactions, deletedAt, createdAt, deliveredTo, readAt }`.
+
+Explicit-key sends receive a server-generated `messageId`, distinct from
+`clientMessageId`, and authoritative
+`createdAt` in the ack's `message`. Retries return the persisted winner, preserving
+those fields and any accumulated receipts/reactions. Unique sender/key indexes
+in both message tables guarantee cross-instance deduplication; the same UUID
+from two senders in one conversation does not collide. Mismatched key reuse is
+`bad_request`, with no update or duplicate fanout. Membership/block validation
+still runs on retries. Legacy sends without `clientMessageId` retain the
+`(conversationId, messageId)` retry behavior.
+
+An explicit-key retry after deletion returns the existing tombstone with its
+original server ID/timestamp, without restoring content or creating another
+change/unread increment. Sender, recipient, conversation, type and reply
+reference still must match; erased body/attachment content cannot be compared.
+Legacy `messageId` collision checks are unchanged. Mutable receipt or deletion
+fields may legitimately differ between acks; their server identity stays stable.
+
+Retry keys live with their message rows: explicitly configured retention that
+removes a row also removes its deduplication guarantee. There is no separate
+retention ledger, matching the legacy primary-key retry lifecycle.
 Rows written before rich messaging carry none of `type`, `attachment`,
 `replyTo`, `reactions` or `deletedAt`: readers default the type to `text` and
 treat the rest as absent. A `type` a client does not know about must render as

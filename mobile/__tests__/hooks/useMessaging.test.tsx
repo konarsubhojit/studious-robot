@@ -122,6 +122,255 @@ afterEach(() => {
 });
 
 describe('useMessaging', () => {
+  test('a delayed send ack preserves a newer call preview while reconciling the message', async () => {
+    const socket = makeSocket();
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    let acknowledge!: (payload: any) => void;
+    let payload!: any;
+    socket.emit.mockImplementation((_event, sent, ack) => { payload = sent; acknowledge = ack; });
+    let sending!: Promise<unknown>;
+    await act(async () => { sending = resultRef.current.sendMessage('bob', 'older send'); });
+    expect(acknowledge).toEqual(expect.any(Function));
+    const local = resultRef.current.messagesByPeer.bob[0];
+    const call = {
+      type: 'call' as const, callId: 'newer-call', conversationId: 'alice:bob',
+      direction: 'outgoing' as const, status: 'completed',
+      createdAt: new Date(Date.parse(local.createdAt) + 5000).toISOString(),
+    };
+    await act(async () => { resultRef.current.recordCallActivity('bob', call); });
+    await act(async () => {
+      acknowledge({ ok: true, message: {
+        ...payload, messageId: 'server-delayed', senderId: 'alice', recipientId: 'bob',
+        conversationId: 'alice:bob', createdAt: new Date(Date.parse(local.createdAt) + 1000).toISOString(),
+      } });
+      await sending;
+    });
+    const row = resultRef.current.conversations.find((entry: any) => entry.peerId === 'bob');
+    expect(row.lastMessage).toMatchObject({ messageId: 'server-delayed', clientMessageId: payload.clientMessageId });
+    expect(row.lastActivity).toEqual(call);
+    expect(row.lastActivity.createdAt).toBe(call.createdAt);
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
+  });
+
+  test.each(['exhausted', 'missing'])('a reply to an %s parent fails locally without blocking independent sends', async kind => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    let parentKey!: string;
+    let replyKey!: string;
+    await act(async () => {
+      parentKey = await resultRef.current.sendMessage('bob', 'parent');
+      replyKey = await resultRef.current.sendMessage('bob', 'reply', { replyTo: parentKey });
+      await resultRef.current.sendMessage('bob', 'bob-1');
+      await resultRef.current.sendMessage('carol', 'carol-1');
+      await resultRef.current.sendMessage('bob', 'bob-2');
+    });
+    expect((chatDb as any).__snapshot.outbox.find((item: any) => item.messageId === replyKey).replyToLocalMessageId).toBe(parentKey);
+    if (kind === 'missing') act(() => resultRef.current.discardMessage('bob', parentKey));
+    const sent: any[] = [];
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      sent.push(payload);
+      ack(payload.body === 'parent' ? { ok: false, error: { message: 'cannot send parent' } } : {
+        ok: true, message: {
+          ...payload, messageId: `server-${payload.body}`, senderId: 'alice',
+          conversationId: `alice:${payload.recipientId}`, createdAt: '2026-10-03T06:00:00.000Z',
+        },
+      });
+    });
+    socket.connected = true;
+    if (kind === 'exhausted') {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await act(async () => { await resultRef.current.drainOutbox(); });
+      }
+    }
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(sent.filter(payload => payload.body !== 'parent').map(payload => payload.body)).toEqual(['bob-1', 'carol-1', 'bob-2']);
+    expect(sent.some(payload => payload.body === 'reply')).toBe(false);
+    const failedReply = (chatDb as any).__snapshot.outbox.find((item: any) => item.messageId === replyKey);
+    expect(failedReply).toMatchObject({ clientMessageId: replyKey, attempts: 5 });
+    expect(failedReply.lastError).toContain(kind === 'exhausted' ? 'failed' : 'no longer available');
+    expect(resultRef.current.messagesByPeer.bob.find((entry: any) => entry.clientMessageId === replyKey).syncState).toBe('failed');
+    expect((chatDb as any).__snapshot.outbox.every((item: any) => item.attempts === 5)).toBe(true);
+  });
+
+  test('a reply awaiting an upload preserves its conversation order but does not block another conversation', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    let parentKey!: string;
+    await act(async () => {
+      parentKey = resultRef.current.beginAttachmentUpload('bob', 'image', { url: 'file://preview.jpg' });
+      await resultRef.current.sendMessage('bob', 'reply', { replyTo: parentKey });
+      await resultRef.current.sendMessage('bob', 'following');
+      await resultRef.current.sendMessage('carol', 'independent');
+    });
+    const sent: string[] = [];
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      sent.push(payload.body || 'attachment');
+      ack({ ok: true, message: {
+        ...payload, messageId: `server-${payload.body || 'attachment'}`, senderId: 'alice',
+        conversationId: `alice:${payload.recipientId}`, createdAt: '2026-10-03T06:00:00.000Z',
+      } });
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(sent).toEqual(['independent']);
+    expect((chatDb as any).__snapshot.outbox.map((item: any) => item.body)).toEqual(['reply', 'following']);
+    await act(async () => {
+      await resultRef.current.finishAttachmentUpload('bob', parentKey, 'image',
+        { url: 'https://media.test/parent.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
+    });
+    expect(sent).toEqual(['independent', 'attachment', 'reply', 'following']);
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
+  });
+
+  test('live group reconciliation scopes duplicate keys to sender and does not double-count unread', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    const group = createMockGroup('alice', 'Echo', ['bob', 'carol'], 'echo-group');
+    await act(async () => { await resultRef.current.handleSocketConnected(); });
+    await act(async () => { socket.receive('conversation.updated', { conversation: group.group, updatedBy: 'alice' }); });
+    let key!: string;
+    await act(async () => { key = await resultRef.current.sendMessage('echo-group', 'local'); });
+    const echo = {
+      messageId: 'group-server-local', clientMessageId: key, conversationId: 'echo-group',
+      senderId: 'alice', recipientId: 'echo-group', body: 'local', createdAt: '2026-10-03T06:00:00.000Z',
+    };
+    const other = { ...echo, messageId: 'group-server-other', senderId: 'bob', body: 'other' };
+    await act(async () => {
+      resultRef.current.handleMessageReceived(echo);
+      resultRef.current.handleMessageReceived(other);
+      resultRef.current.handleMessageReceived(other);
+    });
+    expect(resultRef.current.messagesByPeer['echo-group']).toHaveLength(2);
+    expect(resultRef.current.messagesByPeer['echo-group'].find((entry: any) => entry.senderId === 'alice'))
+      .toMatchObject({ messageId: echo.messageId, clientMessageId: key, syncState: 'synced', pending: false });
+    expect(resultRef.current.conversations.find((entry: any) => entry.peerId === 'echo-group').unreadCount).toBe(1);
+  });
+
+  test('lost ack then history before retry coalesces sender-scoped identities and resolves pending replies', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef, params } = setup({ socketRef: { current: socket } });
+    let key!: string;
+    await act(async () => {
+      key = await resultRef.current.sendMessage('bob', 'parent');
+      await resultRef.current.sendMessage('bob', 'reply', { replyTo: key });
+    });
+    const parent = {
+      messageId: 'history-parent', clientMessageId: key, conversationId: 'alice:bob',
+      senderId: 'alice', recipientId: 'bob', body: 'parent', createdAt: '2026-10-03T06:00:00.000Z',
+    };
+    const other = { ...parent, messageId: 'history-other', senderId: 'bob', recipientId: 'alice', body: 'other sender' };
+    let attempts = 0;
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      attempts += 1;
+      if (attempts === 1) ack({ ok: false, error: { message: 'ack lost' } });
+      else if (payload.body === 'parent') ack({ ok: true, message: parent });
+      else {
+        expect(payload.replyTo).toBe(parent.messageId);
+        expect((chatDb as any).__snapshot.outbox[0].replyTo).toBe(parent.messageId);
+        ack({ ok: true, message: {
+          ...parent, ...payload, messageId: 'history-reply', createdAt: '2026-10-03T06:00:01.000Z',
+        } });
+      }
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(2);
+    params.authedFetchRef.current.mockResolvedValueOnce({ ok: true, json: async () => ({ messages: [other, parent] }) });
+    await act(async () => { await resultRef.current.fetchMessagesForPeer('bob'); });
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(3);
+    expect(resultRef.current.messagesByPeer.bob.filter((entry: any) =>
+      entry.senderId === 'alice' && entry.clientMessageId === key)).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob.find((entry: any) => entry.body === 'reply').replyTo).toBe(parent.messageId);
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(attempts).toBe(3);
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(3);
+    expect(resultRef.current.messagesByPeer.bob.find((entry: any) => entry.senderId === 'bob').messageId).toBe(other.messageId);
+  });
+
+  test('lost ack replays the same explicit key after a receipt already reconciled the bubble', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    await act(async () => { await resultRef.current.sendMessage('bob', 'ack can be lost'); });
+    const key = (chatDb as any).__snapshot.outbox[0].clientMessageId;
+    const persisted = {
+      messageId: 'persisted-lost-ack', clientMessageId: key, conversationId: 'alice:bob',
+      senderId: 'alice', recipientId: 'bob', body: 'ack can be lost',
+      createdAt: '2026-10-03T06:00:00.000Z', deliveredTo: ['bob'],
+    };
+    let attempts = 0;
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      expect(payload.clientMessageId).toBe(key);
+      expect(payload.messageId).toBeUndefined();
+      attempts += 1;
+      if (attempts === 1) {
+        resultRef.current.handleMessageDelivered(persisted);
+        ack({ ok: false, error: { code: 'timeout', message: 'ack lost' } });
+      } else ack({ ok: true, message: persisted });
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ clientMessageId: key, attempts: 1 });
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0].messageId).toBe(persisted.messageId);
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(attempts).toBe(2);
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ messageId: persisted.messageId, clientMessageId: key });
+  });
+
+  test('offline optimistic replies emit their parent server id, persisted before the reply send', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    let parentKey!: string;
+    await act(async () => {
+      parentKey = await resultRef.current.sendMessage('bob', 'parent');
+      await resultRef.current.sendMessage('bob', 'reply', { replyTo: parentKey });
+    });
+    const payloads: any[] = [];
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      payloads.push(payload);
+      if (payload.body === 'reply') {
+        expect(payload.replyTo).toBe('server-parent');
+        expect((chatDb as any).__snapshot.outbox[0].replyTo).toBe('server-parent');
+      }
+      ack({ ok: true, message: {
+        ...payload, messageId: `server-${payload.body}`, conversationId: 'alice:bob',
+        senderId: 'alice', recipientId: 'bob', createdAt: '2026-10-03T06:00:00.000Z',
+      } });
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(payloads).toHaveLength(2);
+    expect(payloads[0].clientMessageId).toBe(parentKey);
+    expect(payloads[1].clientMessageId).not.toBe(parentKey);
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(2);
+    expect(resultRef.current.messagesByPeer.bob.find((message: any) => message.body === 'reply').replyTo).toBe('server-parent');
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
+  });
+
+  test('uploaded group sends retain explicit keys and the group target', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    const group = createMockGroup('alice', 'Upload', ['bob', 'carol'], 'upload-group');
+    await act(async () => { await resultRef.current.handleSocketConnected(); });
+    await act(async () => { socket.receive('conversation.updated', { conversation: group.group, updatedBy: 'alice' }); });
+    let key!: string;
+    await act(async () => {
+      key = resultRef.current.beginAttachmentUpload('upload-group', 'image', { url: 'file://preview.jpg' });
+      await resultRef.current.finishAttachmentUpload('upload-group', key, 'image',
+        { url: 'https://media.test/group.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
+    });
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ clientMessageId: key, targetKind: 'group', conversationId: 'upload-group' });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(socket.emit).toHaveBeenCalledWith('message.send', expect.objectContaining({
+      conversationId: 'upload-group', clientMessageId: key, type: 'image',
+    }), expect.any(Function));
+    expect(socket.emit.mock.calls[0][1]).not.toHaveProperty('recipientId');
+  });
+
   test('mock group calls use frozen participant snapshots and never emit peer or group wire events', async () => {
     const { resultRef, params } = setup({ socketRef: { current: makeSocket({ connected: false }) } });
     let id!: string;
@@ -213,7 +462,8 @@ describe('useMessaging', () => {
       };
       if (event === 'message.send') {
         ack({ ok: true, version: 2, message: {
-          messageId: payload.messageId, conversationId: group.conversationId, senderId: 'alice',
+          messageId: 'server-group-send', clientMessageId: payload.clientMessageId,
+          conversationId: group.conversationId, senderId: 'alice',
           recipientId: group.conversationId, body: payload.body, createdAt: '2026-10-03T06:01:00Z',
         } });
       } else ack({ ok: true, version: 2, conversation: group });
@@ -267,7 +517,7 @@ describe('useMessaging', () => {
       .toMatchObject({ group: { membershipVersion: 5, memberIds: ['bob', 'carol'] }, left: true });
     expect(params.socketRef.current.emit.mock.calls.map(([event, payload]: any[]) => [event, payload])).toEqual([
       ['conversation.create', { version: 2, name: 'Team', inviteeIds: ['bob', 'carol'] }],
-      ['message.send', { version: 2, conversationId: id, body: 'durable live send', messageId: queuedId }],
+      ['message.send', { version: 2, conversationId: id, body: 'durable live send', clientMessageId: queuedId }],
       ['conversation.update', { version: 2, conversationId: id, name: 'Renamed' }],
       ['conversation.member.add', { version: 2, conversationId: id, userIds: ['dave'] }],
       ['conversation.member.remove', { version: 2, conversationId: id, userId: 'dave' }],
@@ -656,7 +906,7 @@ describe('useMessaging', () => {
     ]);
   });
 
-  test('fetchMessagesForPeer reconciles by messageId, replacing an optimistic entry', async () => {
+  test('fetchMessagesForPeer reconciles by clientMessageId, replacing an optimistic entry', async () => {
     const socket = makeSocket({ connected: false });
     const { resultRef, params } = setup({ socketRef: { current: socket } });
 
@@ -676,7 +926,7 @@ describe('useMessaging', () => {
       json: async () => ({
         messages: [
           {
-            messageId,
+            messageId: 'server-persisted', clientMessageId: messageId,
             body: 'sent while offline',
             senderId: 'alice',
             createdAt: '2024-01-02T00:00:00.000Z',
@@ -795,7 +1045,7 @@ describe('useMessaging', () => {
     expect(socket.emit).toHaveBeenCalledTimes(1);
     expect(socket.emit).toHaveBeenCalledWith(
       'message.send',
-      expect.objectContaining({ messageId: queuedId, body: 'from the train' }),
+      expect.objectContaining({ clientMessageId: queuedId, body: 'from the train' }),
       expect.any(Function),
     );
     expect((chatDb as any).__snapshot.outbox).toEqual([]);
@@ -1005,7 +1255,7 @@ describe('useMessaging', () => {
     // The retry re-sends the *same* id, so the server upsert cannot duplicate it.
     expect(socket.emit).toHaveBeenLastCalledWith(
       'message.send',
-      expect.objectContaining({ messageId }),
+      expect.objectContaining({ clientMessageId: messageId }),
       expect.any(Function),
     );
 
@@ -1166,7 +1416,7 @@ describe('useMessaging', () => {
         version: 2,
         recipientId: 'bob',
         body: 'hi',
-        messageId: expect.any(String),
+        clientMessageId: expect.any(String),
       },
       expect.any(Function),
     );
@@ -1756,7 +2006,7 @@ describe('useMessaging searchMessages', () => {
     });
     expect(socket.emit).toHaveBeenLastCalledWith(
       'message.send',
-      expect.objectContaining({ messageId, type: 'image', attachment: uploaded }),
+      expect.objectContaining({ clientMessageId: messageId, type: 'image', attachment: uploaded }),
       expect.any(Function),
     );
   });

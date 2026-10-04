@@ -218,10 +218,9 @@ const blocks = pgTable(
  *
  * Column notes:
  *
- *   - `messageId` is client-supplied (an outbox replay resends the same id), so
- *     it is `text`, not `uuid`: the server must not reject or rewrite an id it
- *     did not mint.  `(conversationId, messageId)` is the primary key, which is
- *     exactly the upsert conflict target `saveMessage` needs to stay idempotent.
+ *   - `messageId` is server-generated for explicit-key sends; it remains text
+ *     for legacy clients supplying their own id. `clientMessageId` is a nullable
+ *     compose-time UUID, unique per sender. NULL leaves legacy rows unchanged.
  *   - `deliveredTo` is a `text[]` rather than a join table.  It is only ever
  *     read whole, written by appending, and bounded at two entries by the 1:1
  *     conversation model; a second table would add a join to every read to
@@ -246,9 +245,11 @@ const messages = pgTable(
     readAt: timestamp('read_at', { withTimezone: true, mode: 'string' }),
     deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    clientMessageId: uuid('client_message_id'),
   },
   (t) => [
     primaryKey({ columns: [t.conversationId, t.messageId] }),
+    uniqueIndex('idx_messages_sender_client_message').on(t.senderId, t.clientMessageId),
     // `listMessages` reads one conversation newest-first, tie-broken by
     // `messageId`, and pages with a `created_at <` cursor. The index carries
     // the sort columns in the query's own direction so a page is an index scan
@@ -381,9 +382,11 @@ const groupMessages = pgTable(
     reactions: jsonb('reactions').notNull().default({}),
     deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+    clientMessageId: uuid('client_message_id'),
   },
   (t) => [
     primaryKey({ columns: [t.conversationId, t.messageId] }),
+    uniqueIndex('idx_group_messages_sender_client_message').on(t.senderId, t.clientMessageId),
     index('idx_group_messages_created').on(t.conversationId, desc(t.createdAt), desc(t.messageId)),
   ],
 );

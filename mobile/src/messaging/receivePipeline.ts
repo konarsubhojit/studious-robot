@@ -1,5 +1,6 @@
 import { patchMessageEverywhere, upsertTimelineEntry } from './messageHistory';
 import type { ChatMessage, MessagesByPeer } from './types';
+import { timelineEntryId } from './messageIdentity';
 
 /**
  * The receive pipeline's pure half: how each inbound `message.*` event is
@@ -40,7 +41,8 @@ export function applyIncomingMessage(
   message: ChatMessage,
 ): MessagesByPeer {
   const senderId = message.senderId;
-  if ((state[senderId] ?? []).some(m => m.messageId === message.messageId)) return state;
+  if ((state[senderId] ?? []).some(m =>
+    timelineEntryId(m) === timelineEntryId(message) && m.messageId === message.messageId)) return state;
   return upsertTimelineEntry(state, senderId, { ...message, syncState: 'synced' });
 }
 
@@ -56,12 +58,15 @@ export function applyDeliveryReceipt(
 ): MessagesByPeer {
   const peerId = message.recipientId;
   const existing = state[peerId] ?? [];
-  const index = existing.findIndex(m => m.messageId === message.messageId);
-  if (index === -1) return upsertTimelineEntry(state, peerId, message);
+  const index = existing.findIndex(m => timelineEntryId(m) === timelineEntryId(message));
+  if (index === -1) return upsertTimelineEntry(state, peerId, { ...message, syncState: 'synced', pending: false, failed: false });
   const next = [...existing];
   next[index] = {
     ...next[index],
     ...message,
+    syncState: 'synced',
+    pending: false,
+    failed: false,
     deliveredTo: [...new Set([...(next[index].deliveredTo ?? []), ...(message.deliveredTo ?? [])])],
     readAt: message.readAt ?? next[index].readAt ?? null,
   };

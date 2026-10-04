@@ -150,7 +150,7 @@ Every SQL value is bound, not interpolated.
 | Data | Local copy | Synchronization / authority |
 | --- | --- | --- |
 | Conversations, messages, call timeline | SQLite; up to 100 recent histories and 200 entries per peer, plus pinned unsent messages/draft peers | Hydrate before rendering; refresh on registration, reconnect, foreground, opening a chat and manual refresh. Revalidate up to two 100-row pages for a cached chat; older pages remain on demand. |
-| Outgoing text and uploaded attachments | SQLite outbox and optimistic message | Commit before any socket send. Retry with the original message ID and existing capped backoff; server acknowledgements reconcile by ID. Disk failure blocks sending and surfaces an error. |
+| Outgoing text and uploaded attachments | SQLite outbox and optimistic message | Commit before any socket send. Retry with the original compose-time UUID `clientMessageId` and existing capped backoff; server acknowledgements reconcile the provisional UUID to the persisted server ID/timestamp. Disk failure blocks sending and surfaces an error. |
 | Drafts | SQLite, local only | Debounced edits; flush on background/unmount. No automatic cross-device draft overwrite. |
 | Recent calls / missed-call acknowledgement / media type | SQLite recent-call cache; existing local media-type preferences | Cached calls render offline. Refresh on reconnect, foreground and existing call events. Preserve local read acknowledgement when fetching server rows. |
 | Block list | SQLite snapshot | Refresh on connect/foreground and update after successful mutations. Server still enforces blocks; block/unblock is not replayed offline. Directory caches are invalidated after block updates. |
@@ -167,6 +167,29 @@ timestamp/type/ID cursors, and refreshes cannot resurrect a known tombstone.
 Only sends have durable offline replay: deletions, reactions and read-all requests
 remain online operations. In particular, replaying an old read-all request would
 incorrectly mark messages received later as read.
+
+New text and attachment sends mint `clientMessageId` once, before the durable
+queue write (before uploading for attachment placeholders). History, live events,
+receipts and acks match `(senderId, clientMessageId)` so a receipt arriving before
+the ack or a restart with a retained outbox cannot create a second bubble.
+Legacy queued rows without an explicit key still emit their original `messageId`.
+The persisted server ID/timestamp replaces the provisional row, but the local
+compose timestamp and already-known receipts survive. Sender scoping also applies
+to local search and key aliases, so two participants reusing a UUID stay distinct.
+
+Replies to optimistic messages wait for the parent server ID. The resolved
+`replyTo` is committed to the outbox before emit, ensuring a lost-ack replay sends
+identical content; loaded optimistic replies and draft quote lookups also reconcile
+the provisional alias. Uploaded group sends retain their group conversation
+target rather than falling through to direct-message targeting.
+
+Replies awaiting an optimistic parent retain a local-only dependency marker in
+SQLite. Waiting replies pause later sends in that conversation, not independent
+conversations. A failed/exhausted or discarded parent marks the dependent reply
+failed with a clear reason and retains its original key for manual retry; it
+does not indefinitely block other sendable rows. A parent ack rewrites queued
+reply references, and each drain reloads the latest queued row before emitting.
+Previously persisted legacy outbox entries still replay without an explicit key.
 
 ### Account isolation, upgrades and limits
 
@@ -784,7 +807,7 @@ group opens its own restorable navigation route. Direct chats/calls are unchange
 New groups default to **local mocks**, scoped to the signed-in account and
 signaling server. Creation, renaming, admin-only add/remove, leaving, messages,
 drafts, and per-member read summaries use the existing SQLite chat store.
-Offline group sends reuse the existing durable outbox, original message IDs,
+Offline group sends reuse the existing durable outbox, original `clientMessageId` values,
 retry policy, and flush-before-send gate. Reconnecting completes mock sends
 locally; it does **not** deliver them to another device. Leaving disables sends
 and automatic replay while retaining failed queued bubbles.

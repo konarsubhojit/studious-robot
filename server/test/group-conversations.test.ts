@@ -51,6 +51,46 @@ function waitFor(socket: import('socket.io-client').Socket, event: string): Prom
   });
 }
 
+test('group explicit keys retry once, reject mismatches and allow different senders', async () => {
+  const { url, teardown } = await startServer();
+  const sessions = await Promise.all(['alice', 'bob'].map(id => createSession(url, id)));
+  const [alice, bob] = await Promise.all(sessions.map(session => connect(url, session)));
+  try {
+    const created = await emitWithAck(alice, CLIENT_EVENTS.CONVERSATION_CREATE, {
+      version: SIGNALING_VERSION, name: 'Keys', inviteeIds: ['bob'],
+    });
+    const conversationId = created.conversation.conversationId;
+    const clientMessageId = '27b4f6df-7ae8-44f8-8e3d-51f6d549d552';
+    const payload = { version: SIGNALING_VERSION, conversationId, body: 'once', clientMessageId };
+    let deliveries = 0;
+    bob.on(SERVER_EVENTS.MESSAGE_RECEIVED, () => { deliveries += 1; });
+    const first = await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_SEND, payload);
+    assert.equal(first.ok, true);
+    assert.notEqual(first.message.messageId, clientMessageId);
+    assert.deepEqual(await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_SEND, payload), first);
+    const rejected = await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_SEND, { ...payload, body: 'changed' });
+    assert.equal(rejected.error.code, 'bad_request');
+    const other = await emitWithAck(bob, CLIENT_EVENTS.MESSAGE_SEND, payload);
+    assert.equal(other.ok, true);
+    assert.notEqual(other.message.messageId, first.message.messageId);
+    const deleted = await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_DELETE, {
+      version: SIGNALING_VERSION, conversationId, messageId: first.message.messageId,
+    });
+    assert.equal(deleted.ok, true);
+    const tombstoneReplay = await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_SEND, payload);
+    assert.equal(tombstoneReplay.ok, true);
+    assert.equal(tombstoneReplay.message.messageId, first.message.messageId);
+    assert.equal(tombstoneReplay.message.createdAt, first.message.createdAt);
+    assert.equal(tombstoneReplay.message.body, '');
+    assert.ok(tombstoneReplay.message.deletedAt);
+    const history = await getJson(url, `${API_ROUTES.CONVERSATIONS}/${conversationId}/messages`, sessions[0]);
+    assert.equal(history.body.messages.length, 2);
+    assert.equal(deliveries, 1);
+  } finally {
+    await teardown(alice, bob);
+  }
+});
+
 test('group messages require active membership and fan out to every current member', async () => {
   const { url, teardown } = await startServer();
   const sessions = await Promise.all(['alice', 'bob', 'carol', 'mallory'].map((id) => createSession(url, id)));

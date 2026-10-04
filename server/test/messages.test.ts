@@ -78,6 +78,64 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 
 const VERSION = 2;
 
+test('explicit-key lost-ack retry returns a tombstone without resurrecting content or changing legacy collision checks', async (t) => {
+  withR2Env(t);
+  const messageStore = createMemoryMessageStore();
+  const { url, teardown } = await startServer({ messageStore });
+  t.after(teardown);
+  const session = await createSession(url, 'retry-alice');
+  const bobSession = await createSession(url, 'retry-bob');
+  const alice = await connectSocket(url, session);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => { alice.disconnect(); bob.disconnect(); });
+  let deliveries = 0;
+  bob.on('message.received', () => { deliveries += 1; });
+  const payload = {
+    version: VERSION, recipientId: 'retry-bob', body: 'original caption', type: 'image',
+    attachment: imageAttachment(), clientMessageId: '6c556ddd-fc15-4260-999a-90e1da681473',
+  };
+  const first = await emitWithAck(alice, 'message.send', payload);
+  assert.equal(first.ok, true, JSON.stringify(first));
+  await waitForCondition(() => deliveries === 1, 'the initial delivery');
+  await messageStore.reactToMessage({
+    conversationId: first.message.conversationId, messageId: first.message.messageId,
+    userId: 'retry-bob', emoji: '👍', action: 'add',
+  });
+  const deleted = await emitWithAck(alice, 'message.delete', {
+    version: VERSION, peerId: 'retry-bob', messageId: first.message.messageId,
+  });
+  assert.equal(deleted.ok, true);
+  const changeOptions = { userId: 'retry-alice', since: '1970-01-01T00:00:00.000Z' };
+  const changesBeforeRetry = await messageStore.listMessageChanges!(changeOptions);
+  const replay = await emitWithAck(alice, 'message.send', payload);
+  assert.equal(replay.ok, true);
+  assert.equal(replay.message.messageId, first.message.messageId);
+  assert.equal(replay.message.createdAt, first.message.createdAt);
+  assert.equal(replay.message.clientMessageId, payload.clientMessageId);
+  assert.ok(replay.message.deletedAt);
+  assert.equal(replay.message.body, '');
+  assert.equal(replay.message.attachment, null);
+  assert.deepEqual(replay.message.reactions, {});
+  assert.equal(deliveries, 1);
+  assert.deepEqual(await messageStore.listMessageChanges!(changeOptions), changesBeforeRetry);
+  assert.equal((await messageStore.listMessages({ conversationId: first.message.conversationId })).length, 1);
+  for (const changed of [
+    { recipientId: 'retry-carol' }, { replyTo: 'different-reply' }, { type: 'text', attachment: undefined },
+  ]) {
+    const rejected = await emitWithAck(alice, 'message.send', { ...payload, ...changed });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, 'bad_request');
+  }
+  const legacy = { version: VERSION, recipientId: 'retry-bob', body: 'legacy original', messageId: 'legacy-deleted' };
+  assert.equal((await emitWithAck(alice, 'message.send', legacy)).ok, true);
+  assert.equal((await emitWithAck(alice, 'message.delete', {
+    version: VERSION, peerId: 'retry-bob', messageId: legacy.messageId,
+  })).ok, true);
+  const legacyReplay = await emitWithAck(alice, 'message.send', legacy);
+  assert.equal(legacyReplay.ok, false);
+  assert.equal(legacyReplay.error.code, 'internal_error');
+});
+
 const R2_ENV = {
   R2_ACCOUNT_ID: 'test-account',
   R2_BUCKET: 'wetalk-media',
@@ -446,6 +504,73 @@ test('message.send retry with the same id returns the stored message without dup
   t.after(() => {
     alice.disconnect();
     bob.disconnect();
+  });
+
+  await t.test('explicit clientMessageId returns identical persisted acks and rejects mismatched reuse', async (t) => {
+    const { url, teardown } = await startServer();
+    t.after(teardown);
+    const session = await createSession(url, 'key-alice');
+    await createSession(url, 'key-bob');
+    const alice = await connectSocket(url, session);
+    t.after(() => alice.disconnect());
+    const clientMessageId = 'd37d6a60-167a-4cc3-b2d8-6277e702f451';
+    const payload = { version: VERSION, recipientId: 'key-bob', body: 'once', clientMessageId };
+    const first = await emitWithAck(alice, 'message.send', payload);
+    const retry = await emitWithAck(alice, 'message.send', payload);
+    assert.equal(first.ok, true);
+    assert.deepEqual(retry, first);
+    assert.equal(first.message.clientMessageId, clientMessageId);
+    assert.notEqual(first.message.messageId, clientMessageId);
+    assert.ok(first.message.createdAt);
+
+    for (const changed of [
+      { body: 'not the original' }, { recipientId: 'key-carol' }, { replyTo: 'other-message' },
+    ]) {
+      const rejected = await emitWithAck(alice, 'message.send', { ...payload, ...changed });
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.error.code, 'bad_request');
+    }
+    const history = await getJson(url, '/messages?peerId=key-bob', session);
+    assert.equal(history.body.messages.length, 1);
+    assert.equal(history.body.messages[0].body, 'once');
+    assert.equal(history.body.messages[0].clientMessageId, clientMessageId);
+    assert.deepEqual(await emitWithAck(alice, 'message.send', payload), first);
+  });
+
+  await t.test('different senders reuse an explicit key in the same direct conversation', async (t) => {
+    const { url, teardown } = await startServer();
+    t.after(teardown);
+    const aSession = await createSession(url, 'same-key-alice');
+    const bSession = await createSession(url, 'same-key-bob');
+    const alice = await connectSocket(url, aSession);
+    const bob = await connectSocket(url, bSession);
+    t.after(() => { alice.disconnect(); bob.disconnect(); });
+    const clientMessageId = 'a51de6e4-dd4b-46d2-bcf7-648830a971b7';
+    const [a, b] = await Promise.all([
+      emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'same-key-bob', body: 'a', clientMessageId }),
+      emitWithAck(bob, 'message.send', { version: VERSION, recipientId: 'same-key-alice', body: 'b', clientMessageId }),
+    ]);
+    assert.equal(a.ok, true);
+    assert.equal(b.ok, true);
+    assert.notEqual(a.message.messageId, b.message.messageId);
+    const history = await getJson(url, '/messages?peerId=same-key-bob', aSession);
+    assert.equal(history.body.messages.length, 2);
+  });
+
+  await t.test('message.send rejects non-UUID explicit keys before persistence', async (t) => {
+    const { url, teardown } = await startServer();
+    t.after(teardown);
+    const session = await createSession(url, 'uuid-alice');
+    await createSession(url, 'uuid-bob');
+    const alice = await connectSocket(url, session);
+    t.after(() => alice.disconnect());
+    const ack = await emitWithAck(alice, 'message.send', {
+      version: VERSION, recipientId: 'uuid-bob', body: 'invalid', clientMessageId: 'legacy-id',
+    });
+    assert.equal(ack.ok, false);
+    assert.equal(ack.error.code, 'bad_request');
+    const history = await getJson(url, '/messages?peerId=uuid-bob', session);
+    assert.equal(history.body.messages.length, 0);
   });
 
   let deliveries = 0;

@@ -45,6 +45,25 @@ Providing both or neither is invalid. Group lifecycle requests are
 (`conversationId`). The server broadcasts `conversation.updated` with a
 server-authoritative conversation snapshot and `updatedBy`.
 
+New `message.send` requests include a compose-time UUID `clientMessageId`.
+It is stable across outbox retries and scoped to the authenticated sender, not
+the conversation. The server assigns a separate `messageId`; acknowledgements,
+history and message events carry both identities plus `createdAt`. Mobile
+reconciles by `(senderId, clientMessageId)` and uses the server `messageId` for
+receipts, deletes, reactions and persisted reply references. The additive
+optional field stays in v2: legacy sends without it may still supply `messageId`
+as their retry identity. When both are supplied, the explicit key wins and the
+server generates its own identity.
+
+Reusing a key for different content, attachment, recipient/conversation or reply
+is rejected without changing the stored row. The key is not an authorization
+credential: sender identity still comes from the session, and normal block and
+group membership checks still apply.
+
+After deletion, explicit-key retries return the tombstone under the same server
+ID/timestamp. Erased body/attachment fields are no longer comparable, but the
+retained sender, destination, type and reply reference still must match.
+
 Call and RTC events remain peer-to-peer; group calls are not part of this
 contract. These schemas freeze the wire shapes only; group event handlers and
 client support are separate follow-up work.
