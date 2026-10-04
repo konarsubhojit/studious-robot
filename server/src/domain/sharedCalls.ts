@@ -5,12 +5,21 @@ import {
   findCallerBlockingCall,
   getCallExpiry,
   supersedeRedialledCalls,
+  isCallParticipant,
+  updateCallParticipant,
 } from './calls.ts';
 import { DEFAULT_CALL_STATE_FRESHNESS_MS, TERMINAL_CALL_STATES } from '../config.ts';
 import { describeError } from '../lib/errors.ts';
 
 type ServerState = import('../stores/contracts.ts').ServerState;
 type CallRecord = import('../stores/contracts.ts').CallRecord;
+
+function isActiveParticipant(call: CallRecord, userId: string): boolean {
+  const participant = call.participants?.find(({ userId: id }) => id === userId);
+  return participant
+    ? participant.state === 'joined' || participant.state === 'ringing' || participant.state === 'invited'
+    : call.callerId === userId || call.calleeId === userId;
+}
 
 /**
  * Record that `callId` was just read from — or written to — the shared store,
@@ -133,7 +142,8 @@ async function refreshActiveCallsForUser(state: ServerState, userId: string): Pr
   const orphans = [];
   for (const call of state.calls.values()) {
     if (TERMINAL_CALL_STATES.has(call.status)) continue;
-    if (call.callerId !== userId && call.calleeId !== userId) continue;
+    if (!isCallParticipant(call, userId)) continue;
+    if (!isActiveParticipant(call, userId)) continue;
     if (active.has(call.callId)) continue;
     orphans.push(call.callId);
   }
@@ -154,6 +164,7 @@ async function createCallRecordWithShared(
     callerId: string;
     mediaType?: 'audio' | 'video';
     calleeId: string;
+    calleeIds?: string[];
     ringingTimeoutMs: number;
     callerDeviceId?: string | null;
   }
@@ -236,6 +247,7 @@ async function placeCallWithShared(
   {
     callerId,
     calleeId,
+    calleeIds,
     ringingTimeoutMs,
     callerDeviceId = null,
     mediaType = 'video',
@@ -243,6 +255,7 @@ async function placeCallWithShared(
   }: {
     callerId: string;
     calleeId: string;
+    calleeIds?: string[];
     ringingTimeoutMs: number;
     callerDeviceId?: string | null;
     mediaType?: 'audio' | 'video';
@@ -254,12 +267,10 @@ async function placeCallWithShared(
   // calls this instance handled. Pull the shared view of both participants in
   // first, so a call running on another instance is seen and a fossil this
   // instance never saw ended is dropped.
-  await Promise.all([
-    refreshActiveCallsForUser(state, callerId),
-    refreshActiveCallsForUser(state, calleeId),
-  ]);
+  const invitees = Array.from(new Set(calleeIds?.length ? calleeIds : [calleeId]));
+  await Promise.all([callerId, ...invitees].map((userId) => refreshActiveCallsForUser(state, userId)));
 
-  const blocking = findCallerBlockingCall(state, callerId, calleeId, {
+  const blocking = findCallerBlockingCall(state, callerId, invitees[0], {
     staleAfterMs: ringingTimeoutMs,
   });
   if (blocking) {
@@ -271,7 +282,7 @@ async function placeCallWithShared(
     };
   }
 
-  const superseded = supersedeRedialledCalls(state, callerId, calleeId, {
+  const superseded = supersedeRedialledCalls(state, callerId, invitees[0], {
     onTransition: onSuperseded,
   });
   for (const call of superseded) {
@@ -282,10 +293,138 @@ async function placeCallWithShared(
     callerId,
     mediaType,
     calleeId,
+    calleeIds: invitees,
     ringingTimeoutMs,
     callerDeviceId,
   });
   return { ok: true, call, superseded };
+}
+
+function isIdempotentParticipantAction(
+  call: CallRecord,
+  userId: string,
+  action: 'join' | 'leave' | 'decline'
+): boolean {
+  const state = call.participants?.find(({ userId: id }) => id === userId)?.state;
+  if (action === 'join' && state === 'joined') return true;
+  if (action === 'decline' && state === 'declined') return true;
+  return action === 'leave' && call.status === 'ended' && state === 'left';
+}
+
+function canParticipantJoinOrDecline(
+  call: CallRecord,
+  userId: string,
+  action: 'join' | 'leave' | 'decline'
+): boolean {
+  if (action === 'leave') return true;
+  const participant = call.participants?.find(({ userId: id }) => id === userId);
+  return userId !== call.callerId &&
+    (participant?.state === 'ringing' || participant?.state === 'invited');
+}
+
+function hasOtherActiveInvitee(call: CallRecord): boolean {
+  return call.participants?.some((participant) =>
+    participant.userId !== call.callerId && isActiveParticipant(call, participant.userId)
+  ) ?? false;
+}
+
+/** A leave is terminal only after every joined, ringing, or invited participant has departed. */
+function hasActiveParticipant(call: CallRecord): boolean {
+  return call.participants?.some(({ userId }) => isActiveParticipant(call, userId)) ?? false;
+}
+
+function validateParticipantAction(
+  call: CallRecord,
+  userId: string,
+  action: 'join' | 'leave' | 'decline'
+): { ok: true; call: CallRecord; stale: true } | { ok: false; status: number; error: string; message?: string } | null {
+  if (!isCallParticipant(call, userId)) {
+    return { ok: false, status: 403, error: 'not_participant' };
+  }
+  if (TERMINAL_CALL_STATES.has(call.status)) {
+    if (isIdempotentParticipantAction(call, userId, action)) {
+      return { ok: true, call, stale: true };
+    }
+    return { ok: false, status: 409, error: 'terminal_state', message: 'call is already over' };
+  }
+  if (isIdempotentParticipantAction(call, userId, action)) {
+    return { ok: true, call, stale: true };
+  }
+  if (!canParticipantJoinOrDecline(call, userId, action)) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'not_invited',
+      message: 'only an invited participant can join or decline',
+    };
+  }
+  return null;
+}
+
+async function participantActionWithShared(
+  state: ServerState,
+  callId: string,
+  userId: string,
+  action: 'join' | 'leave' | 'decline',
+  deviceId: string | null = null
+): Promise<{ ok: true; call: CallRecord; stale: boolean } | { ok: false; status: number; error: string; message?: string }> {
+  const call = await hydrateCallFromShared(state, callId, { maxAgeMs: 0 });
+  if (!call) return { ok: false, status: 404, error: 'not_found' };
+  const validation = validateParticipantAction(call, userId, action);
+  if (validation) return validation;
+  const previousStatus = call.status;
+  updateCallParticipant(
+    state,
+    call,
+    userId,
+    action === 'join' ? 'joined' : action === 'decline' ? 'declined' : 'left',
+    deviceId,
+    false
+  );
+
+  if (action === 'join') return joinParticipantOnCall(state, call, callId, userId, deviceId);
+  const hasRemainingParticipant = action === 'leave'
+    ? hasActiveParticipant(call)
+    : hasOtherActiveInvitee(call);
+  if (!hasRemainingParticipant) {
+    return finishCallAfterParticipantAction(state, call, callId, userId, action, previousStatus, deviceId);
+  }
+  await persistCallToShared(state, call);
+  return { ok: true, call, stale: false };
+}
+
+async function joinParticipantOnCall(
+  state: ServerState,
+  call: CallRecord,
+  callId: string,
+  userId: string,
+  deviceId: string | null
+): Promise<{ ok: true; call: CallRecord; stale: boolean } | { ok: false; status: number; error: string; message?: string }> {
+  if (call.status !== 'ringing') {
+    await persistCallToShared(state, call);
+    return { ok: true, call, stale: false };
+  }
+  return transitionCallWithShared(state, callId, 'accepted', {
+    actor: userId,
+    actorDeviceId: deviceId,
+  });
+}
+
+async function finishCallAfterParticipantAction(
+  state: ServerState,
+  call: CallRecord,
+  callId: string,
+  userId: string,
+  action: 'decline' | 'leave',
+  previousStatus: string,
+  deviceId: string | null
+): Promise<{ ok: true; call: CallRecord; stale: boolean } | { ok: false; status: number; error: string; message?: string }> {
+  const destination = action === 'decline' && previousStatus === 'ringing' ? 'declined' : 'ended';
+  return transitionCallWithShared(state, callId, destination, {
+    actor: userId,
+    reason: action === 'decline' ? 'declined' : 'user_hangup',
+    actorDeviceId: deviceId,
+  });
 }
 
 async function transitionCallWithShared(
@@ -393,5 +532,6 @@ export {
   createCallRecordWithShared,
   placeCallWithShared,
   transitionCallWithShared,
+  participantActionWithShared,
 };
 export type { PlaceCallResult };

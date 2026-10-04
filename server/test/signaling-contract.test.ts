@@ -44,6 +44,26 @@ function waitFor(socket: import('socket.io-client').Socket, event: string, timeo
   });
 }
 
+function waitForParticipantLeft(
+  socket: import('socket.io-client').Socket,
+  participantId: string,
+  timeoutMs: number = 1000
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off('call.participant.left', onLeave);
+      reject(new Error(`Timeout waiting for participant "${participantId}" to leave`));
+    }, timeoutMs);
+    const onLeave = (payload: any) => {
+      if (payload.participantId !== participantId) return;
+      clearTimeout(timer);
+      socket.off('call.participant.left', onLeave);
+      resolve(payload);
+    };
+    socket.on('call.participant.left', onLeave);
+  });
+}
+
 /**
  * @returns the server's acknowledgement
  */
@@ -295,12 +315,12 @@ test('v3 RTC offers addressed outside the participant set are rejected', async (
       version: SIGNALING_VERSION,
       calleeId: 'peer-bob',
     });
-    assert.deepEqual(initiated.call.participants, [
+    assert.deepEqual(initiated.call.participants.map(({ userId, state }: { userId: string; state: string }) => ({ userId, state })), [
       { userId: 'peer-alice', state: 'joined' },
       { userId: 'peer-bob', state: 'ringing' },
     ]);
     const incoming = await incomingPromise;
-    assert.deepEqual(incoming.call.participants, [
+    assert.deepEqual(incoming.call.participants.map(({ userId, state }: { userId: string; state: string }) => ({ userId, state })), [
       { userId: 'peer-alice', state: 'joined' },
       { userId: 'peer-bob', state: 'ringing' },
     ]);
@@ -311,7 +331,7 @@ test('v3 RTC offers addressed outside the participant set are rejected', async (
       callId: initiated.call.callId,
     });
     assert.equal(accepted.ok, true);
-    assert.deepEqual(accepted.call.participants, [
+    assert.deepEqual(accepted.call.participants.map(({ userId, state }: { userId: string; state: string }) => ({ userId, state })), [
       { userId: 'peer-alice', state: 'joined' },
       { userId: 'peer-bob', state: 'joined' },
     ]);
@@ -329,14 +349,27 @@ test('v3 RTC offers addressed outside the participant set are rejected', async (
     assert.equal(rejected.error.code, 'forbidden');
 
     const callerLeftPromise = waitFor(caller, 'call.participant.left');
-    const calleeLeftPromise = waitFor(callee, 'call.participant.left');
-    await emitWithAck(caller, 'call.end', {
+    const calleeSeesCallerLeavePromise = waitFor(callee, 'call.participant.left');
+    const callerLeave = await emitWithAck(caller, 'call.end', {
       version: SIGNALING_VERSION,
       callId: initiated.call.callId,
     });
-    const [callerLeft, calleeLeft] = await Promise.all([callerLeftPromise, calleeLeftPromise]);
+    assert.equal(callerLeave.call.status, 'accepted');
+    const [callerLeft, calleeSeesCallerLeave] = await Promise.all([
+      callerLeftPromise,
+      calleeSeesCallerLeavePromise,
+    ]);
     assert.equal(callerLeft.state, 'left');
-    assert.equal(calleeLeft.state, 'left');
+    assert.equal(calleeSeesCallerLeave.participantId, 'peer-alice');
+    assert.equal(calleeSeesCallerLeave.state, 'left');
+
+    const calleeLeftPromise = waitForParticipantLeft(caller, 'peer-bob');
+    const calleeLeave = await emitWithAck(callee, 'call.end', {
+      version: SIGNALING_VERSION,
+      callId: initiated.call.callId,
+    });
+    assert.equal(calleeLeave.call.status, 'ended');
+    assert.equal((await calleeLeftPromise).participantId, 'peer-bob');
   } finally {
     await teardown(caller, callee);
   }
@@ -594,14 +627,19 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
     });
     await Promise.all([acceptEventPromise, acceptCallerStatePromise, acceptCalleeStatePromise]);
 
-    const endEventPromise = waitFor(caller, 'call.end');
     const endCallerStatePromise = waitFor(caller, 'call.state_changed');
     const endCalleeStatePromise = waitFor(callee, 'call.state_changed');
-    await emitWithAck(caller, 'call.end', {
+    const callerLeave = await emitWithAck(caller, 'call.end', {
       version: 2,
       callId,
     });
-    await Promise.all([endEventPromise, endCallerStatePromise, endCalleeStatePromise]);
+    assert.equal(callerLeave.ok, true);
+    assert.equal(callerLeave.call.status, 'accepted');
+    await Promise.all([endCallerStatePromise, endCalleeStatePromise]);
+
+    const endEventPromise = waitFor(caller, 'call.end');
+    await emitWithAck(callee, 'call.end', { version: 2, callId });
+    await endEventPromise;
 
     const endedCandidate = await emitWithAck(callee, 'rtc.candidate', {
       version: 2,

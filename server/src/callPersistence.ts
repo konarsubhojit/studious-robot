@@ -2,6 +2,7 @@ import { desc, inArray } from 'drizzle-orm';
 import { invalidateCache, callHistoryCachePrefix } from './cache.ts';
 import { calls as callsTable } from '../db/schema.ts';
 import { callEvents as callEventsTable } from '../db/schema.ts';
+import { callParticipants as callParticipantsTable } from '../db/schema.ts';
 import { describeError } from './lib/errors.ts';
 import { runDetached } from './lib/queryTiming.ts';
 import { callRecordFromRow } from './domain/callHistory.ts';
@@ -49,9 +50,8 @@ function toDateOrNull(value: unknown): Date | null {
  */
 function persistCallRecord(db: Database | null, call: import('./stores/contracts.ts').CallRecord) {
   if (!db || !call?.callId) return;
-  return runDetached(() => db
-    .insert(callsTable)
-    .values({
+  return runDetached(async () => {
+    await db.insert(callsTable).values({
       callId: call.callId,
       callerId: call.callerId,
       calleeId: call.calleeId,
@@ -77,8 +77,25 @@ function persistCallRecord(db: Database | null, call: import('./stores/contracts
         updatedAt: toDateOrNull(call.updatedAt) ?? new Date(),
         ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
       },
-    })
-    .catch((error: unknown) => {
+    });
+    if (call.participants?.length) {
+      for (const participant of call.participants) {
+        const row = {
+          callId: call.callId,
+          userId: participant.userId,
+          state: participant.state,
+          ringTimeoutAt: toDateOrNull(participant.ringTimeoutAt),
+          joinedAt: toDateOrNull(participant.joinedAt),
+          leftAt: toDateOrNull(participant.leftAt),
+          deviceId: participant.deviceId ?? null,
+        };
+        await db.insert(callParticipantsTable).values(row).onConflictDoUpdate({
+          target: [callParticipantsTable.callId, callParticipantsTable.userId],
+          set: row,
+        });
+      }
+    }
+  }).catch((error: unknown) => {
       // Non-fatal: the in-memory call record already reflects reality and the
       // caller doesn't await this promise. `code` is the Postgres error code
       // (e.g. `23503` foreign_key_violation, `23505` unique_violation) — logging
@@ -88,7 +105,7 @@ function persistCallRecord(db: Database | null, call: import('./stores/contracts
         `[calls] failed to persist call to DB: callId=${call.callId}` +
           ` code=${errorCode(error)} ${describeError(error)}`
       );
-    }));
+    });
 }
 
 /**
@@ -150,6 +167,23 @@ async function hydrateCallRecords(db: Database, state: import('./stores/contract
       callIds.push(row.callId);
       if (!state.callEvents.has(row.callId)) {
         state.callEvents.set(row.callId, []);
+      }
+    }
+    if (callIds.length) {
+      const participants = await db.select().from(callParticipantsTable)
+        .where(inArray(callParticipantsTable.callId, callIds));
+      for (const participant of participants) {
+        const call = state.calls.get(participant.callId);
+        if (!call) continue;
+        call.participants ??= [];
+        call.participants.push({
+          userId: participant.userId,
+          state: participant.state as NonNullable<import('./stores/contracts.ts').CallRecord['participants']>[number]['state'],
+          ringTimeoutAt: toDateOrNull(participant.ringTimeoutAt)?.toISOString() ?? null,
+          joinedAt: toDateOrNull(participant.joinedAt)?.toISOString() ?? null,
+          leftAt: toDateOrNull(participant.leftAt)?.toISOString() ?? null,
+          deviceId: participant.deviceId ?? null,
+        });
       }
     }
     console.log(`[signaling] hydrated ${rows.length} call record(s) from DB`);

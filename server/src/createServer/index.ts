@@ -266,6 +266,7 @@ function createServer(opts: CreateServerOptions = {}) {
     devices: stores.devices,
     userDevices: stores.userDevices,
     userConnections: stores.userConnections,
+    attachAdapter: stores.attachAdapter,
     userPresence: stores.userPresence,
     /** callId → call record */
     calls: stores.calls,
@@ -492,7 +493,14 @@ function createServer(opts: CreateServerOptions = {}) {
             reason,
           });
         },
-        callTimeouts
+        {
+          ...callTimeouts,
+          onParticipantTimeout: (call, userId) => notifyCallTransition(io, state, call, {
+            previousStatus: call.status,
+            actor: userId,
+            reason: 'participant_timeout',
+          }),
+        }
       );
       // Bound the in-memory history the sweep above just added to, so neither it
       // nor `GET /calls` iterates a map that only ever grows.

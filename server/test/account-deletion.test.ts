@@ -157,6 +157,18 @@ test('the sweep erases the account across every store that named it', async (t) 
     status: 'ended',
     createdAt: new Date().toISOString(),
   });
+  stores.calls.set('call-3', {
+    callId: 'call-3',
+    callerId: 'delete-dave',
+    calleeId: 'delete-peer',
+    status: 'ended',
+    createdAt: new Date().toISOString(),
+    participants: [
+      { userId: 'delete-dave', state: 'left' },
+      { userId: 'delete-peer', state: 'joined' },
+      { userId: 'delete-third', state: 'left' },
+    ],
+  });
 
   assert.equal((await postJson(url, API_ROUTES.ACCOUNT_DELETE, {}, sessionId)).status, 202);
   assert.equal(await runAccountDeletionSweep(), 1);
@@ -176,6 +188,13 @@ test('the sweep erases the account across every store that named it', async (t) 
   assert.equal(stores.calls.has('call-1'), false);
   assert.equal(stores.callEvents.has('call-1'), false);
   assert.equal(stores.calls.has('call-2'), true);
+  assert.equal(stores.calls.has('call-3'), true, 'a surviving participant retains the group call record');
+  assert.deepEqual(
+    stores.calls.get('call-3')?.participants?.map(({ userId }) => userId),
+    ['delete-peer', 'delete-third'],
+    'erasure removes only the erased participant from group call history'
+  );
+  assert.equal(stores.calls.get('call-3')?.callerId, 'delete-peer');
 
   // Own message tombstoned; the message the peer sent is left intact, because
   // it is also the peer's history.

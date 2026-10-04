@@ -1,6 +1,6 @@
 {
-  "id": "36260252-d1b4-42d3-850b-cace11d4771b",
-  "prevId": "f94f247e-18bb-48a9-9ab8-bfac2dcbb57a",
+  "id": "45d91e9c-9bdb-4108-b4a4-af7e9b27e133",
+  "prevId": "3c545b52-4b30-4543-bd70-65d9d7f3e43e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1660,6 +1660,94 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.group_message_changes": {
+      "name": "group_message_changes",
+      "schema": "",
+      "columns": {
+        "change_id": {
+          "name": "change_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "nextval('message_changes_change_id_seq')"
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "change_type": {
+          "name": "change_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "idx_group_message_changes_cursor": {
+          "name": "idx_group_message_changes_cursor",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "changed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "change_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "group_message_changes_conversation_id_message_id_group_messages_conversation_id_message_id_fk": {
+          "name": "group_message_changes_conversation_id_message_id_group_messages_conversation_id_message_id_fk",
+          "tableFrom": "group_message_changes",
+          "tableTo": "group_messages",
+          "columnsFrom": [
+            "conversation_id",
+            "message_id"
+          ],
+          "columnsTo": [
+            "conversation_id",
+            "message_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.group_messages": {
       "name": "group_messages",
       "schema": "",
@@ -1730,6 +1818,20 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "delivered_to": {
+          "name": "delivered_to",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "read_by": {
+          "name": "read_by",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         }
       },
       "indexes": {
@@ -1779,6 +1881,22 @@
           "isUnique": false,
           "concurrently": false,
           "method": "btree",
+          "with": {}
+        },
+        "idx_group_messages_body_fts": {
+          "name": "idx_group_messages_body_fts",
+          "columns": [
+            {
+              "expression": "to_tsvector('simple', \"body\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"group_messages\".\"deleted_at\" is null",
+          "concurrently": false,
+          "method": "gin",
           "with": {}
         }
       },
@@ -1897,6 +2015,33 @@
           "columns": [
             {
               "expression": "recipient_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "changed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "change_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_message_changes_conversation_cursor": {
+          "name": "idx_message_changes_conversation_cursor",
+          "columns": [
+            {
+              "expression": "conversation_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

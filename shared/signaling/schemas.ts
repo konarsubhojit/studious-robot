@@ -53,11 +53,19 @@ export type CallRecord = {
 };
 export type CallParticipant = {
   userId: string;
-  state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined';
+  state: 'invited' | 'ringing' | 'joined' | 'left' | 'declined' | 'missed' | 'busy' | 'unreachable';
+  ringTimeoutAt?: string | null;
+  joinedAt?: string | null;
+  leftAt?: string | null;
+  deviceId?: string | null;
 };
 const callParticipant = s.object({
   userId: idField,
-  state: s.enum(['invited', 'ringing', 'joined', 'left', 'declined']),
+  state: s.enum(['invited', 'ringing', 'joined', 'left', 'declined', 'missed', 'busy', 'unreachable']),
+  ringTimeoutAt: s.string().optional().nullable(),
+  joinedAt: s.string().optional().nullable(),
+  leftAt: s.string().optional().nullable(),
+  deviceId: s.id().optional().nullable(),
 });
 const callRecord = s.object(
   {
@@ -149,6 +157,8 @@ export type MessageRecord = {
   reactions?: Record<string, string[]> | null;
   deletedAt?: string | null;
   createdAt?: string;
+  /** Group read receipts: unique member IDs, not a conversation-wide read flag. */
+  readBy?: string[];
 };
 const messageRecord = s.object(
   {
@@ -163,6 +173,7 @@ const messageRecord = s.object(
     replyTo: s.string({ max: 128 }).optional().nullable(),
     reactions: s.record(s.array(s.id())).optional().nullable(),
     deletedAt: s.string().optional().nullable(),
+    readBy: s.array(s.id()).optional(),
   },
   { passthrough: true }
 );
@@ -379,7 +390,7 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     version: currentVersionField,
     callId: idField,
     participantId: idField,
-    state: s.enum(['left', 'declined']),
+    state: s.enum(['left', 'declined', 'missed']),
   }),
   [SERVER_EVENTS.RTC_OFFER]: s.union([
     s.object({ version: legacyVersionField.optional(), callId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),

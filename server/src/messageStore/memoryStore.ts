@@ -22,11 +22,11 @@ import {
   normaliseSearchTerm,
 } from './queries.ts';
 import type { MessageChange, MessageStore, StoredMessage } from './types.ts';
+import { nextMessageChangeId } from './changeCursor.ts';
 
 export function createMemoryMessageStore(): MessageStore {
   const messages: StoredMessage[] = [];
   const changes: MessageChange[] = [];
-  let nextChangeId = 1;
   const cloneMessage = (message: StoredMessage) => ({
     ...message,
     attachment: message.attachment ? { ...message.attachment } : null,
@@ -37,7 +37,7 @@ export function createMemoryMessageStore(): MessageStore {
   });
   const recordChange = (message: StoredMessage, type: MessageChange['type'], changedAt: string) => {
     changes.push({
-      changeId: String(nextChangeId++),
+      changeId: nextMessageChangeId(),
       type,
       changedAt,
       message: cloneMessage(message),

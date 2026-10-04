@@ -69,6 +69,7 @@ export type MessagePushData = {
   conversationId: string;
   senderId: string;
   senderDisplayName?: string | null;
+  groupName?: string;
   preview?: string | null;
 };
 

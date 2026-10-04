@@ -34,7 +34,7 @@ Besides the call/session/contact routes, the chat surface adds:
 | ------------- | ----- | -------- | ----- |
 | `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive), `include` (`calls` to merge in call records) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (`Authorization: Bearer <id>` header, or the request body for POSTs — **never the query string**, which would leak the token into access logs, proxies and `Referer`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
 | `GET /messages/search` | `q` (required), `conversationId` (optional), `limit` (1–100, default `50`), `cursor` (exclusive ISO `createdAt`), `cursorMessageId` (tie-breaker) | `200 { query, results, limit, nextCursor, hasMore }` | PostgreSQL full-text search across caller-participating conversations, newest-first; memory search requires every query token to occur. Tombstones and conversations blocked in either direction are excluded. Search terms are audit-logged; per-user rate limiting returns `429`. |
-| `GET /messages/sync` | `since` (required exclusive ISO timestamp), `cursor` (opaque `nextCursor`), `limit` (1–100, default `50`) | `200 { changes, limit, nextCursor, hasMore }` | Ordered message changes (`new`, `edited`, `deleted`, `reactions`, `read`) for the caller's conversations, after `since`; pass `nextCursor` to continue. Participants and current block rules are enforced. Change-log rows cascade with message retention. |
+| `GET /messages/sync` | `since` (required exclusive ISO timestamp), `cursor` (opaque `nextCursor`), `limit` (1–100, default `50`) | `200 { changes, limit, nextCursor, hasMore }` | Ordered direct and group message changes (`new`, `edited`, `deleted`, `reactions`, and `read` for direct read receipts), after `since`; pass `nextCursor` to continue. Direct participants/block rules and active group membership/join watermarks are enforced. Both logs share the same change-ID sequence and cursor semantics. Change-log rows cascade with message retention. |
 | `GET /messages/delta` | `peerId` (required), `cursor` (opaque, from a previous response; omit to start from the beginning of the retained change log), `limit` (1–100, default `50`) | `200 { conversationId, changes, limit, nextCursor, hasMore, cursor }` | Everything in the conversation with `peerId` that changed after `cursor`, oldest change first: new messages, edits, reactions, deletions and read receipts (`new`, `edited`, `reactions`, `deleted`, `read`). Each change carries the message's **current** state (a tombstone never re-exposes deleted content) and a message changed several times within a page appears once, at its latest change. `nextCursor`/`hasMore` page exactly like the history routes; `cursor` is the position after this page (the request cursor when nothing changed) and is what a client persists. A blocked conversation returns an empty page. `400` for a missing/self `peerId` or an invalid cursor, `401` without a session. |
 | `GET /calls` | `limit` (1–100, default `20`), `offset` (default `0`), `status` (optional filter) | `200 { calls, total, limit, offset, hasMore }` | Call history for the authenticated user, **most recently active first** (`updatedAt` descending). Read from the durable `calls` table, so it survives a restart and is not bounded by the in-memory retention window (`CALL_RETENTION_MS` / `MAX_RETAINED_CALLS`); when no `DATABASE_URL` is configured — or the query fails — it degrades to the calls still resident in memory. `401` without a valid session. |
 | `GET /account/export` | `limit` (internal message page size, 1–100, default `50`), `callLimit` (internal call page size, 1–100, default `50`) | `200 { schemaVersion, exportedAt, userId, profile, messages, calls, callEvents, devices, blocks, auditLog, pagination }` | Complete streaming JSON export scoped only to the bearer session. Bounded internal reads include every message tombstone, attachment URL, participant call/event, outbound block, and audit entry involving the account. Excludes `authUid`, peer live-device ids, push tokens, session ids, and attachment bytes/metadata; attachment objects contain only `url`. Limited to one complete export per account per day by default. |
@@ -140,8 +140,40 @@ provided IDs never establish authorization. Group calls remain out of scope.
 
 ##### Group admission and authorization (#536)
 
-This implements server membership/admission, not the broader mobile,
-unread/mute/push, encryption, or group-call redesign MVP.
+This implements server membership/admission and message fan-out, sync, and
+receipts, not the broader mobile, unread/mute, encryption, or group-call
+redesign MVP.
+
+**Delivery and receipts (#538).** Direct and group sends share a
+conversation-target delivery flow; legacy direct `recipientId` remains supported,
+and a direct `conversationId` must identify the authenticated participant.
+Group events cross instances through the Socket.IO Redis adapter's
+server-to-server channel, with active membership and join-watermark checks on
+each receiving instance. Without an adapter, the shared message bus remains the
+event fallback, but presence lookup is local: this configuration is for
+single-instance development, not multi-instance push delivery. The two-VM
+deployment requires the Redis adapter (`deploy/README.md` §5a). Every member's
+conversation-list cache is invalidated on the shared message bus.
+
+One accepted group message makes at most **15** push attempts: one per offline
+member, selecting their newest registered push device, with the group name as
+the notification title. Adapter-wide presence includes members on another VM.
+Idempotent retries do not resend notifications; push failure does not undo
+message acceptance. Push delivery is best-effort.
+
+Group messages expose `deliveredTo` and `readBy` member-ID lists, rather than a
+single read flag. `POST /messages/read` accepts `{ conversationId }` for groups;
+the direct `{ peerId }` contract is unchanged. Group reads are idempotent,
+emit `message.read` with `readerId` and `readAt`, and produce `edited` sync
+deltas. Clients can show a read count using `readBy.length` or a reader list.
+Search and sync exclude departed members and pre-join history. Group search
+reuses the current PostgreSQL full-text GIN approach (which superseded the
+older trigram indexes in migration 0018).
+
+Apply `0024_group_message_fanout.sql` before deploying this server. It adds
+durable group receipts, the group change log and search index, and backfills
+existing group messages into sync. Its matching Drizzle snapshot is included;
+the migration uses transactional DDL, so plan for locks on populated tables.
 
 **Storage compatibility.** The existing physical `group_conversations` and
 `group_conversation_members` tables serve as semantic `groups` and
