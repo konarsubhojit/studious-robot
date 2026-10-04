@@ -104,6 +104,169 @@ function setup(overrides = {}) {
  * an unsent message arms cannot outlive the test that queued it. */
 const mountedTrees: any = [];
 
+describe('durable attachment outbox', () => {
+  const attachment = { url: 'file:///photo.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
+  const response = (body: object) => ({ ok: true, json: async () => body });
+
+  test('compose offline queues an app-owned file and progress; only the drain calls prepare', async () => {
+    const socket = makeSocket({ connected: false });
+    const authedFetch = jest.fn(async build => {
+      const body = JSON.parse(build('session').options.body);
+      expect(body).toMatchObject({ action: 'prepare', peerId: 'bob', sizeBytes: 123 });
+      return response({ key: 'chatblobs/alice_bob/photo.jpg', reference: 'chatblobs/alice_bob/photo.jpg', completed: true });
+    });
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      resultRef.current.updateAttachmentUploadProgress('bob', id, 0.25);
+    });
+    const stored = (chatDb as any).__snapshot.outbox[0];
+    expect(stored).toMatchObject({ messageId: id, body: '', upload: { progress: 0.25, parts: [] } });
+    expect(stored.upload.uri).toContain(`/wetalk-upload-${id}`);
+    expect(JSON.stringify(stored)).not.toMatch(/X-Amz-|https:\/\//);
+    expect(authedFetch).not.toHaveBeenCalled();
+    expect(socket.emit).not.toHaveBeenCalled();
+    expect(chatDb.flushChatDb).toHaveBeenCalled();
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(authedFetch).toHaveBeenCalledTimes(1);
+    expect(socket.emit).toHaveBeenCalledWith('message.send',
+      expect.objectContaining({ clientMessageId: id, attachment: { ...attachment, url: 'chatblobs/alice_bob/photo.jpg' } }),
+      expect.any(Function));
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
+  });
+
+  test('offline discard survives restart and retries cleanup before a durable delayed final sweep', async () => {
+    const socket = makeSocket({ connected: false });
+    const cleanupAfter = Date.now() + 60_000;
+    const actions: string[] = [];
+    const authedFetch = jest.fn(async build => {
+      actions.push(JSON.parse(build('session').options.body).action);
+      return response({ aborted: true, cleanupAfter });
+    });
+    const first = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = first.resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await first.resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      first.resultRef.current.discardMessage('bob', id);
+    });
+    expect(first.resultRef.current.messagesByPeer.bob).toEqual([]);
+    expect(first.resultRef.current.pendingSendCount).toBe(0);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true, upload: { parts: [] } });
+    expect(authedFetch).not.toHaveBeenCalled();
+    act(() => first.tree.unmount());
+    const restarted = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    await act(async () => { await Promise.resolve(); });
+    expect(restarted.resultRef.current.messagesByPeer.bob).toEqual([]);
+    socket.connected = true;
+    await act(async () => { await restarted.resultRef.current.drainOutbox(); });
+    expect(actions).toEqual(['abort']);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true, cleanupAfter, nextAttemptAt: cleanupAfter });
+    act(() => restarted.resultRef.current.discardMessage('bob', id));
+    await act(async () => { await restarted.resultRef.current.drainOutbox(); });
+    expect(actions).toEqual(['abort']);
+    expect((chatDb as any).__snapshot.outbox[0].nextAttemptAt).toBe(cleanupAfter);
+    expect(socket.emit).not.toHaveBeenCalled();
+    await drainAtNextDeadline(restarted.resultRef);
+    expect(actions).toEqual(['abort', 'abort']);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  test('discard during a delayed prepare cannot resurrect an attachment or emit its message', async () => {
+    const socket = makeSocket({ connected: true });
+    let release!: (value: any) => void;
+    let started!: () => void;
+    const startedPromise = new Promise<void>(resolve => { started = resolve; });
+    const actions: string[] = [];
+    const authedFetch = jest.fn(build => {
+      const action = JSON.parse(build('session').options.body).action;
+      actions.push(action);
+      if (action === 'prepare') {
+        started();
+        return new Promise(resolve => { release = resolve; });
+      }
+      return Promise.resolve(response({ aborted: true, cleanupAfter: Date.now() + 60_000 }));
+    });
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      await startedPromise;
+      socket.connected = false;
+      resultRef.current.discardMessage('bob', id);
+      release(response({ key: 'chatblobs/alice_bob/photo.jpg', reference: 'chatblobs/alice_bob/photo.jpg', completed: true }));
+      await Promise.resolve();
+    });
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ discarded: true });
+    expect(socket.emit).not.toHaveBeenCalled();
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect(actions).toEqual(['prepare', 'abort']);
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  test('a late send acknowledgement cannot erase a discard cleanup tombstone', async () => {
+    const socket = makeSocket({ connected: false });
+    let acknowledge!: (value: any) => void;
+    socket.emit.mockImplementation((_event, _payload, ack) => { acknowledge = ack; });
+    const authedFetch = jest.fn(async () => response({
+      key: 'chatblobs/alice_bob/photo.jpg', reference: 'chatblobs/alice_bob/photo.jpg', completed: true,
+    }));
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+    });
+    socket.connected = true;
+    let drain!: Promise<void>;
+    await act(async () => {
+      drain = resultRef.current.drainOutbox();
+      for (let i = 0; i < 30 && !acknowledge; i++) await Promise.resolve();
+    });
+    expect(acknowledge).toBeDefined();
+    await act(async () => {
+      socket.connected = false;
+      resultRef.current.discardMessage('bob', id);
+      acknowledge({ ok: true, message: { messageId: 'accepted-remotely', clientMessageId: id } });
+      await drain;
+    });
+    expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ messageId: id, discarded: true });
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+  });
+
+  test('server cleanup approval and relative delays protect against device clock skew', async () => {
+    const socket = makeSocket({ connected: false });
+    let cleanupCalls = 0;
+    const authedFetch = jest.fn(async () => {
+      cleanupCalls++;
+      return response({ aborted: true, cleanupAfter: 1, retryAfterMs: cleanupCalls < 3 ? 5000 : 0,
+        cleanupComplete: cleanupCalls >= 3 });
+    });
+    const { resultRef } = setup({ socketRef: { current: socket }, authedFetchRef: { current: authedFetch } });
+    let id!: string;
+    await act(async () => {
+      id = resultRef.current.beginAttachmentUpload('bob', 'image', attachment);
+      await resultRef.current.finishAttachmentUpload('bob', id, 'image', attachment);
+      resultRef.current.discardMessage('bob', id);
+    });
+    socket.connected = true;
+    await act(async () => { await resultRef.current.drainOutbox(); });
+    expect((chatDb as any).__snapshot.outbox[0].cleanupAfter).toBeGreaterThan(Date.now());
+    await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    await drainAtNextDeadline(resultRef);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    expect(cleanupCalls).toBe(3);
+  });
+});
+
 /** Retry tests advance the wall clock to the persisted deadline instead of bypassing backoff. */
 async function drainAtNextDeadline(resultRef: { current: any }) {
   const deadlines = (chatDb as any).__snapshot.outbox
@@ -259,7 +422,7 @@ describe('useMessaging', () => {
     expect((chatDb as any).__snapshot.outbox.map((item: any) => item.body)).toEqual(['reply', 'following']);
     await act(async () => {
       await resultRef.current.finishAttachmentUpload('bob', parentKey, 'image',
-        { url: 'https://media.test/parent.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
+        { url: 'chatblobs/alice_bob/parent.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
     });
     expect(sent).toEqual(['independent', 'attachment', 'reply', 'following']);
     expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
@@ -403,7 +566,7 @@ describe('useMessaging', () => {
     await act(async () => {
       key = resultRef.current.beginAttachmentUpload('upload-group', 'image', { url: 'file://preview.jpg' });
       await resultRef.current.finishAttachmentUpload('upload-group', key, 'image',
-        { url: 'https://media.test/group.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
+        { url: 'chatblobs/group_upload-group/group.jpg', mimeType: 'image/jpeg', sizeBytes: 123 });
     });
     expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ clientMessageId: key, targetKind: 'group', conversationId: 'upload-group' });
     socket.connected = true;
@@ -2076,7 +2239,7 @@ describe('useMessaging searchMessages', () => {
     });
     expect(resultRef.current.messagesByPeer.bob[0].uploadProgress).toBe(0.5);
 
-    const uploaded = { url: 'https://media.test/photo.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
+    const uploaded = { url: 'chatblobs/alice_bob/photo.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
     await act(async () => {
       await resultRef.current.finishAttachmentUpload('bob', messageId, 'image', uploaded);
     });

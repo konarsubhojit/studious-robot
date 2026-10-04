@@ -2888,6 +2888,7 @@ describe('ChatConversationScreen upload cancellation', () => {
       cancel.props.onPress();
     });
     expect(onCancelAttachmentUpload).toHaveBeenCalledTimes(1);
+    expect(onCancelAttachmentUpload).toHaveBeenCalledWith(expect.objectContaining({ uploadState: 'uploading' }));
   });
 
   test('omits the cancel control when cancelling is not wired up', () => {
