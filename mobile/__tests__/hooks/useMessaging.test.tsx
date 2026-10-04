@@ -104,6 +104,19 @@ function setup(overrides = {}) {
  * an unsent message arms cannot outlive the test that queued it. */
 const mountedTrees: any = [];
 
+/** Retry tests advance the wall clock to the persisted deadline instead of bypassing backoff. */
+async function drainAtNextDeadline(resultRef: { current: any }) {
+  const deadlines = (chatDb as any).__snapshot.outbox
+    .filter((item: any) => item.state !== 'failed' && (item.attempts ?? 0) < 5)
+    .map((item: any) => item.nextAttemptAt ?? Date.now());
+  const now = jest.spyOn(Date, 'now').mockReturnValue(Math.max(Date.now(), ...deadlines));
+  try {
+    await act(async () => { await resultRef.current.drainOutbox(); });
+  } finally {
+    now.mockRestore();
+  }
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
@@ -208,11 +221,12 @@ describe('useMessaging', () => {
     socket.connected = true;
     if (kind === 'exhausted') {
       for (let attempt = 0; attempt < 5; attempt += 1) {
-        await act(async () => { await resultRef.current.drainOutbox(); });
+        await drainAtNextDeadline(resultRef);
       }
     }
     await act(async () => { await resultRef.current.drainOutbox(); });
-    expect(sent.filter(payload => payload.body !== 'parent').map(payload => payload.body)).toEqual(['bob-1', 'carol-1', 'bob-2']);
+    expect(sent.filter(payload => payload.body !== 'parent').map(payload => payload.body))
+      .toEqual(kind === 'exhausted' ? ['carol-1', 'bob-1', 'bob-2'] : ['bob-1', 'carol-1', 'bob-2']);
     expect(sent.some(payload => payload.body === 'reply')).toBe(false);
     const failedReply = (chatDb as any).__snapshot.outbox.find((item: any) => item.messageId === replyKey);
     expect(failedReply).toMatchObject({ clientMessageId: replyKey, attempts: 5 });
@@ -310,7 +324,7 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob.filter((entry: any) =>
       entry.senderId === 'alice' && entry.clientMessageId === key)).toHaveLength(1);
     expect(resultRef.current.messagesByPeer.bob.find((entry: any) => entry.body === 'reply').replyTo).toBe(parent.messageId);
-    await act(async () => { await resultRef.current.drainOutbox(); });
+    await drainAtNextDeadline(resultRef);
     expect(attempts).toBe(3);
     expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
     expect(resultRef.current.messagesByPeer.bob).toHaveLength(3);
@@ -342,7 +356,7 @@ describe('useMessaging', () => {
     expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({ clientMessageId: key, attempts: 1 });
     expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
     expect(resultRef.current.messagesByPeer.bob[0].messageId).toBe(persisted.messageId);
-    await act(async () => { await resultRef.current.drainOutbox(); });
+    await drainAtNextDeadline(resultRef);
     expect(attempts).toBe(2);
     expect((chatDb as any).__snapshot.outbox).toHaveLength(0);
     expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
@@ -1266,9 +1280,7 @@ describe('useMessaging', () => {
     });
     // Exhaust the automatic retries.
     for (let attempt = 1; attempt < 5; attempt += 1) {
-      await act(async () => {
-        await resultRef.current.drainOutbox();
-      });
+      await drainAtNextDeadline(resultRef);
     }
 
     const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
@@ -1466,9 +1478,7 @@ describe('useMessaging', () => {
     expect(params.updateStatus).not.toHaveBeenCalled();
 
     for (let attempt = 1; attempt < 5; attempt += 1) {
-      await act(async () => {
-        await resultRef.current.drainOutbox();
-      });
+      await drainAtNextDeadline(resultRef);
     }
 
     expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ pending: false, failed: true });
@@ -2234,6 +2244,162 @@ describe('useMessaging snapshot persistence', () => {
 });
 
 describe('transactional outbox and account lifecycle', () => {
+  test('composition returns after the local commit while the acknowledgement remains held', async () => {
+    let acknowledge!: (value: unknown) => void;
+    let commit!: () => void;
+    let committed = false;
+    const request = jest.fn(() => {
+      expect(committed).toBe(true);
+      expect((chatDb as any).__snapshot.outbox[0].body).toBe('held ack');
+      expect((chatDb as any).__snapshot.messagesByPeer.bob[0].body).toBe('held ack');
+      return new Promise(resolve => { acknowledge = resolve; });
+    });
+    const { resultRef } = setup({ signalingRef: { current: { request } } });
+    (chatDb.flushChatDb as jest.Mock).mockReturnValueOnce(new Promise<void>(resolve => {
+      commit = () => { committed = true; resolve(); };
+    }));
+    let returned = false;
+    let sending!: Promise<string>;
+    await act(async () => {
+      sending = resultRef.current.sendMessage('bob', 'held ack').then((id: string) => {
+        returned = true;
+        return id;
+      });
+    });
+    expect(returned).toBe(false);
+    expect(request).not.toHaveBeenCalled();
+    let key!: string;
+    await act(async () => { commit(); key = await sending; });
+    expect(returned).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect((chatDb as any).__snapshot.outbox[0].clientMessageId).toBe(key);
+    expect(resultRef.current.messagesByPeer.bob[0].syncState).toBe('pending');
+    await act(async () => { acknowledge({ message: null }); });
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('a persisted backoff survives restart, connect, foreground and new composition without gating other peers', async () => {
+    jest.useFakeTimers();
+    try {
+      const request = jest.fn().mockRejectedValueOnce(Object.assign(new Error('slow down'), { code: 'rate_limited' }))
+        .mockResolvedValue({ message: null });
+      const signaling = { request, on: jest.fn(() => jest.fn()) };
+      const first = setup({ signalingRef: { current: signaling } });
+      const now = Date.now();
+      await act(async () => { await first.resultRef.current.sendMessage('bob', 'head'); });
+      const delayed = { ...(chatDb as any).__snapshot.outbox[0] };
+      expect(delayed).toMatchObject({ attempts: 1, state: 'pending', lastError: 'slow down' });
+      expect(delayed.nextAttemptAt).toBeGreaterThanOrEqual(now + 500);
+      expect(delayed.nextAttemptAt).toBeLessThanOrEqual(now + 1000);
+      await act(async () => { first.tree.unmount(); });
+      const { resultRef } = setup({ signalingRef: { current: signaling } });
+      await act(async () => {});
+      expect(request).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        resultRef.current.handleSocketConnected();
+        (AppState.addEventListener as jest.Mock).mock.calls
+          .filter(([event]) => event === 'change').forEach(([, listener]) => listener('active'));
+        await resultRef.current.sendMessage('bob', 'later');
+        await resultRef.current.sendMessage('carol', 'independent');
+      });
+      expect(request.mock.calls.map(([, payload]) => payload.body)).toEqual(['head', 'independent']);
+      expect((chatDb as any).__snapshot.outbox[0].nextAttemptAt).toBe(delayed.nextAttemptAt);
+      await act(async () => { jest.advanceTimersByTime(delayed.nextAttemptAt - Date.now() - 1); });
+      expect(request).toHaveBeenCalledTimes(2);
+      await act(async () => { jest.advanceTimersByTime(1); });
+      expect(request.mock.calls.map(([, payload]) => payload.body)).toEqual(['head', 'independent', 'head', 'later']);
+      expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test.each(['blocked', 'forbidden', 'bad_request', 'not_found', 'unauthorized', 'unsupported_version'])(
+    'a %s rejection fails once, releases its conversation, and explicit retry preserves identity', async code => {
+      jest.useFakeTimers();
+      try {
+        const socket = makeSocket({ ackResponse: { ok: false, error: { code, message: 'rejected' } } });
+        const { resultRef } = setup({ socketRef: { current: socket } });
+        let key!: string;
+        await act(async () => { key = await resultRef.current.sendMessage('bob', 'terminal'); });
+        expect((chatDb as any).__snapshot.outbox[0]).toMatchObject({
+          messageId: key, clientMessageId: key, attempts: 1, state: 'failed',
+          lastError: 'rejected', nextAttemptAt: null,
+        });
+        expect(resultRef.current.messagesByPeer.bob[0].syncState).toBe('failed');
+        await act(async () => {
+          resultRef.current.handleSocketConnected();
+          jest.advanceTimersByTime(120_000);
+          await resultRef.current.drainOutbox();
+        });
+        expect(socket.emit).toHaveBeenCalledTimes(1);
+        socket.emit.mockImplementation((_event, _payload, ack) => { ack({ ok: true, message: null }); });
+        await act(async () => { await resultRef.current.sendMessage('bob', 'after failure'); });
+        expect(socket.emit).toHaveBeenCalledTimes(2);
+        expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+        await act(async () => { await resultRef.current.retryMessage('bob', key); });
+        expect(socket.emit).toHaveBeenLastCalledWith('message.send',
+          expect.objectContaining({ clientMessageId: key, body: 'terminal' }), expect.any(Function));
+        expect((chatDb as any).__snapshot.outbox).toEqual([]);
+        expect(resultRef.current.messagesByPeer.bob.find((entry: any) => entry.clientMessageId === key))
+          .toMatchObject({ syncState: 'synced', failed: false });
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  test('a stale worker cannot mutate a later session even when the account scope returns to its original value', async () => {
+    let rejectOld!: (error: unknown) => void;
+    const request = jest.fn().mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject; }))
+      .mockResolvedValue({ message: null });
+    const { resultRef, params, tree } = setup({ signalingRef: { current: { request } } });
+    await act(async () => { await resultRef.current.sendMessage('bob', 'old session'); });
+    expect(request).toHaveBeenCalledTimes(1);
+    const resetSnapshot = () => Object.assign((chatDb as any).__snapshot,
+      { conversations: [], messagesByPeer: {}, outbox: [], socketCursors: {}, drafts: {} });
+    await act(async () => {
+      resetSnapshot();
+      tree.update(<TestHook resultRef={resultRef} params={{ ...params, userId: 'other' }} />);
+    });
+    await act(async () => {
+      resetSnapshot();
+      tree.update(<TestHook resultRef={resultRef} params={params} />);
+    });
+    await act(async () => { await resultRef.current.sendMessage('carol', 'new session'); });
+    expect(request).toHaveBeenCalledTimes(1);
+    await act(async () => { rejectOld(Object.assign(new Error('old rejection'), { code: 'blocked' })); });
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.map(([, payload]) => payload.body)).toEqual(['old session', 'new session']);
+    expect(resultRef.current.messagesByPeer.bob[0].syncState).toBe('pending');
+    expect(resultRef.current.messagesByPeer.carol[0].syncState).toBe('synced');
+    expect(params.updateStatus).not.toHaveBeenCalled();
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+  });
+
+  test('scope changes cancel an armed deadline timer', async () => {
+    jest.useFakeTimers();
+    try {
+      (chatDb as any).__snapshot.outbox = [{
+        messageId: 'old-delayed', recipientId: 'bob', body: 'old scope', attempts: 1,
+        state: 'pending', nextAttemptAt: Date.now() + 5000,
+      }];
+      const request = jest.fn().mockResolvedValue({ message: null });
+      const { resultRef, params, tree } = setup({ signalingRef: { current: { request } } });
+      await act(async () => {});
+      expect(request).not.toHaveBeenCalled();
+      await act(async () => {
+        Object.assign((chatDb as any).__snapshot,
+          { conversations: [], messagesByPeer: {}, outbox: [], socketCursors: {}, drafts: {} });
+        tree.update(<TestHook resultRef={resultRef} params={{ ...params, userId: 'other' }} />);
+      });
+      await act(async () => { jest.advanceTimersByTime(10_000); });
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('does not emit until both the optimistic message and outbox are committed', async () => {
     const { resultRef, params } = setup();
     let commit!: () => void;

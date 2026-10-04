@@ -1,6 +1,8 @@
 import type { SQLBatchTuple } from '@op-engineering/op-sqlite';
 import type { ChatSnapshot } from './chatDb';
 import { timelineEntryId } from '../messaging/messageIdentity';
+import type { OutboxItem } from '../messaging/types';
+import { isRetryable } from '../messaging/sendPipeline';
 
 export type StoredChatRow = {
   kind: keyof ChatSnapshot;
@@ -55,14 +57,29 @@ export function snapshotRows(snapshot: ChatSnapshot, previous?: ChatSnapshot, he
 export function rowChanges(scope: string, previous: ChatRows, next: ChatRows): SQLBatchTuple[] {
   const commands: SQLBatchTuple[] = [];
   for (const [key, row] of previous) {
-    if (!next.has(key)) commands.push([
-      'DELETE FROM chat_records WHERE scope = ? AND kind = ? AND id = ?',
-      [scope, row.kind, row.id],
+    if (!next.has(key)) commands.push(row.kind === 'outbox' ? [
+      'DELETE FROM outbox WHERE scope = ? AND id = ?', [scope, row.id],
+    ] : [
+      'DELETE FROM chat_records WHERE scope = ? AND kind = ? AND id = ?', [scope, row.kind, row.id],
     ]);
   }
   for (const [key, row] of next) {
     const old = previous.get(key);
     if (old?.payload === row.payload && old.position === row.position) continue;
+    if (row.kind === 'outbox') {
+      const item = JSON.parse(row.payload) as OutboxItem;
+      commands.push([
+        `INSERT INTO outbox(scope, id, peer, position, client_key, attempts, last_error, next_attempt_at, state, payload)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope, id) DO UPDATE SET peer = excluded.peer, position = excluded.position,
+           client_key = excluded.client_key, attempts = excluded.attempts, last_error = excluded.last_error,
+           next_attempt_at = excluded.next_attempt_at, state = excluded.state, payload = excluded.payload`,
+        [scope, row.id, row.peer, row.position, item.clientMessageId ?? row.id,
+          item.attempts ?? 0, item.lastError ?? null, item.nextAttemptAt ?? null,
+          isRetryable(item) ? 'pending' : 'failed', row.payload],
+      ]);
+      continue;
+    }
     commands.push([
       `INSERT INTO chat_records(scope, kind, id, peer, position, payload) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(scope, kind, id) DO UPDATE SET position = excluded.position, payload = excluded.payload`,
