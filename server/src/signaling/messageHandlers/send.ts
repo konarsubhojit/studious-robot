@@ -374,7 +374,7 @@ async function handleGroupMessageSend(
     }
     acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, { message: saved.message });
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'not_member') {
+    if (error instanceof Error && 'code' in error && (error.code === 'not_member' || error.code === 'forbidden')) {
       acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
       return;
     }

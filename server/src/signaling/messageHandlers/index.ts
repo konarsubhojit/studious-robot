@@ -12,6 +12,7 @@ import { describeError } from '../../lib/errors.ts';
 import { parseClientMessageId, validateBody, validateReactionEmoji } from './validation.ts';
 import { deliverMessage } from './delivery.ts';
 import { fanoutConversationEvent } from '../../domain/conversationFanout.ts';
+import { requireGroupMember } from '../../conversationStore/authorization.ts';
 
 async function ensureCanDeleteMessage(
   state: import('../../stores/contracts.ts').ServerState,
@@ -48,11 +49,8 @@ async function handleGroupMessageDelete(
     return true;
   }
   try {
-    if (!(await state.conversationStore.getMember(conversationId, requesterId))) {
-      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
-      return true;
-    }
-    const existing = await state.conversationStore.getMessage(conversationId, messageId);
+    await requireGroupMember(state.conversationStore, conversationId, requesterId);
+    const existing = await state.conversationStore.getMessage(conversationId, messageId, requesterId);
     if (!existing || existing.deletedAt) {
       acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, ERROR_CODES.NOT_FOUND, 'message not found', state);
       return true;
@@ -126,10 +124,7 @@ async function handleGroupMessageReaction(
     return true;
   }
   try {
-    if (!(await state.conversationStore.getMember(conversationId, requesterId))) {
-      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, ERROR_CODES.FORBIDDEN, 'not an active group member', state);
-      return true;
-    }
+    await requireGroupMember(state.conversationStore, conversationId, requesterId);
     const result = await state.conversationStore.reactToMessage({
       conversationId,
       messageId,
@@ -488,7 +483,7 @@ function registerMessageHandlers(
     const conversationId = normaliseId(parsed.data.conversationId);
     if (conversationId) {
       try {
-        if (!(await state.conversationStore.getMember(conversationId, senderId))) return;
+        await requireGroupMember(state.conversationStore, conversationId, senderId);
         const members = await state.conversationStore.listMembers(conversationId);
         await fanoutConversationEvent(io, state, {
           conversationId,

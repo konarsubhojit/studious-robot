@@ -13,13 +13,40 @@ export type GroupConversation = {
 };
 
 export type ConversationMember = {
+  memberId: string;
   conversationId: string;
   userId: string;
   role: ConversationRole;
   joinedAt: string;
   leftAt: string | null;
+  removedAt: string | null;
+  departureActorId: string | null;
+  departureReason: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type GroupInvitation = {
+  invitationId: string;
+  conversationId: string;
+  inviteeId: string;
+  issuerId: string;
+  membershipVersion: number;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  cancelledAt: string | null;
+};
+
+export type GroupMembershipEvent = {
+  eventId: string;
+  conversationId: string;
+  membershipVersion: number;
+  event: string;
+  actorId: string;
+  userId: string | null;
+  reason: string | null;
+  createdAt: string;
 };
 
 export type ConversationSnapshot = {
@@ -39,6 +66,7 @@ export type ConversationChange = {
   changedMember?: ConversationMember;
   previousOwnerId?: string;
   callChanges?: GroupCallChange[];
+  invitations?: GroupInvitation[];
 };
 
 export type GroupCallParticipant = {
@@ -71,12 +99,21 @@ export type GroupCallChange = {
 };
 
 export type ConversationStore = {
+  listInvitations: (userId: string) => Promise<GroupInvitation[]>;
+  acceptInvitation: (args: { conversationId: string; invitationId: string; userId: string }) => Promise<ConversationChange>;
+  cancelInvitation: (args: { conversationId: string; invitationId: string; actorId: string }) => Promise<void>;
+  listMembershipEvents: (conversationId: string, userId: string) => Promise<GroupMembershipEvent[]>;
+  exportMemberships: (userId: string) => Promise<ConversationMember[]>;
+  exportMessages: (args: { userId: string; conversationId: string; limit: number; before?: string; beforeMessageId?: string }) => Promise<StoredMessage[]>;
+  setRole: (args: { conversationId: string; actorId: string; userId: string; role: 'admin' | 'member' }) => Promise<ConversationChange>;
+  transferOwnership: (args: { conversationId: string; actorId: string; userId: string }) => Promise<ConversationChange>;
+  deleteGroup: (conversationId: string, actorId: string) => Promise<void>;
   create: (args: {
     name: string;
     creatorId: string;
     inviteeIds: string[];
   }) => Promise<ConversationChange>;
-  get: (conversationId: string) => Promise<ConversationSnapshot | null>;
+  get: (conversationId: string, userId?: string) => Promise<ConversationSnapshot | null>;
   getMember: (conversationId: string, userId: string) => Promise<ConversationMember | null>;
   listMembers: (conversationId: string) => Promise<ConversationMember[]>;
   listForUser: (userId: string) => Promise<ConversationSnapshot[]>;
@@ -87,6 +124,7 @@ export type ConversationStore = {
     before?: string;
     beforeMessageId?: string;
   }) => Promise<StoredMessage[]>;
+  searchMessages: (args: { conversationId: string; userId: string; query: string; limit: number; before?: string; beforeMessageId?: string }) => Promise<StoredMessage[]>;
   updateName: (args: {
     conversationId: string;
     actorId: string;
@@ -101,6 +139,7 @@ export type ConversationStore = {
     conversationId: string;
     actorId: string;
     userId: string;
+    reason?: string;
   }) => Promise<ConversationChange | null>;
   leave: (args: {
     conversationId: string;
@@ -111,7 +150,7 @@ export type ConversationStore = {
     recipients: string[];
     inserted: boolean;
   } | null>;
-  getMessage: (conversationId: string, messageId: string) => Promise<StoredMessage | null>;
+  getMessage: (conversationId: string, messageId: string, userId: string) => Promise<StoredMessage | null>;
   deleteMessage: (args: {
     conversationId: string;
     messageId: string;
@@ -141,6 +180,8 @@ export type ConversationStore = {
   eraseUserData: (userId: string, pseudonym: string) => Promise<{
     conversationIds: string[];
   }>;
+  listAttachmentCleanup: (limit: number, after?: string) => Promise<string[]>;
+  acknowledgeAttachmentCleanup: (url: string) => Promise<void>;
   eraseUserMessages: (userId: string, pseudonym: string, limit: number) => Promise<{
     attachmentUrls: string[];
     conversationIds: string[];
@@ -150,7 +191,7 @@ export type ConversationStore = {
 };
 
 export class ConversationStoreError extends Error {
-  code: 'not_member' | 'forbidden' | 'group_full' | 'invalid_members';
+  code: 'not_member' | 'forbidden' | 'group_full' | 'invalid_members' | 'invalid_invitation';
 
   constructor(code: ConversationStoreError['code'], message: string) {
     super(message);

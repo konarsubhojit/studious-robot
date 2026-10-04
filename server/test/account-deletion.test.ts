@@ -190,10 +190,13 @@ test('the sweep erases the account across every store that named it', async (t) 
 
 test('group history is exported and account erasure pseudonymises group state', async (t) => {
   const conversationStore = createConversationStore();
-  const { conversation } = await conversationStore.create({
+  const { conversation, invitations } = await conversationStore.create({
     name: 'Erasure group',
     creatorId: 'delete-group-user',
     inviteeIds: ['group-peer'],
+  });
+  await conversationStore.acceptInvitation({
+    conversationId: conversation.conversationId, invitationId: invitations![0].invitationId, userId: 'group-peer',
   });
   const message = await conversationStore.saveMessage({
     messageId: 'group-owned-message',
@@ -235,7 +238,8 @@ test('group history is exported and account erasure pseudonymises group state', 
   assert.equal(await runAccountDeletionSweep(), 1);
   const erasedMessage = await conversationStore.getMessage(
     conversation.conversationId,
-    message.message.messageId
+    message.message.messageId,
+    'group-peer'
   );
   assert.equal(erasedMessage?.body, '');
   assert.ok(erasedMessage?.deletedAt);

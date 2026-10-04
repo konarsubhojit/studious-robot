@@ -22,6 +22,9 @@ export type CreateServerOptions = {
   turnRateLimit?: number;
   turnRateWindowMs?: number;
   messageRateLimit?: number;
+  groupCreateRateLimit?: number;
+  groupInviteRateLimit?: number;
+  groupRateWindowMs?: number;
   messageRateWindowMs?: number;
   messageSearchRateLimit?: number;
   messageSearchRateWindowMs?: number;

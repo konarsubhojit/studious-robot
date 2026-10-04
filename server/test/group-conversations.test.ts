@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
-import { API_ROUTES, CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
+import { API_ROUTES, CLIENT_EVENTS, LEGACY_SIGNALING_VERSION, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
 import { fanoutConversationEvent } from '../src/domain/conversationFanout.ts';
+import { userProtocolRoom, userRoom } from '../src/lib/state.ts';
 import { createConversationStore, createMemoryMessageBus, createServer } from '../src/index.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
@@ -51,6 +52,13 @@ function waitFor(socket: import('socket.io-client').Socket, event: string): Prom
   });
 }
 
+async function acceptInvitations(url: string, invitations: any[], sessions: string[]): Promise<void> {
+  for (const [index, invitation] of invitations.entries()) {
+    const result = await postJson(url, `/groups/${invitation.conversationId}/invitations/${invitation.invitationId}/accept`, {}, sessions[index]);
+    assert.equal(result.status, 200);
+  }
+}
+
 test('group explicit keys retry once, reject mismatches and allow different senders', async () => {
   const { url, teardown } = await startServer();
   const sessions = await Promise.all(['alice', 'bob'].map(id => createSession(url, id)));
@@ -60,6 +68,7 @@ test('group explicit keys retry once, reject mismatches and allow different send
       version: SIGNALING_VERSION, name: 'Keys', inviteeIds: ['bob'],
     });
     const conversationId = created.conversation.conversationId;
+    await acceptInvitations(url, created.invitations, [sessions[1]]);
     const clientMessageId = '27b4f6df-7ae8-44f8-8e3d-51f6d549d552';
     const payload = { version: SIGNALING_VERSION, conversationId, body: 'once', clientMessageId };
     let deliveries = 0;
@@ -103,7 +112,8 @@ test('group messages require active membership and fan out to every current memb
     });
     assert.equal(created.ok, true);
     const conversationId = created.conversation.conversationId;
-    assert.deepEqual(created.conversation.memberIds, ['alice', 'bob', 'carol']);
+    assert.deepEqual(created.conversation.memberIds, ['alice']);
+    await acceptInvitations(url, created.invitations, sessions.slice(1, 3));
 
     const bobMessage = waitFor(bob, SERVER_EVENTS.MESSAGE_RECEIVED);
     const carolMessage = waitFor(carol, SERVER_EVENTS.MESSAGE_RECEIVED);
@@ -200,8 +210,9 @@ test('group messages require active membership and fan out to every current memb
       userIds: ['mallory'],
     });
     assert.equal(added.ok, true);
-    assert.deepEqual(added.conversation.memberIds, ['alice', 'bob', 'carol', 'mallory']);
-    assert.equal((await addedUpdate).conversation.membershipVersion, added.conversation.membershipVersion);
+    assert.deepEqual(added.conversation.memberIds, ['alice', 'bob', 'carol']);
+    await acceptInvitations(url, added.invitations, [sessions[3]]);
+    assert.equal((await addedUpdate).conversation.membershipVersion, added.conversation.membershipVersion + 1);
     const newMemberHistory = await getJson(url, historyPath, sessions[3]);
     assert.equal(newMemberHistory.body.messages.length, 0);
 
@@ -224,6 +235,16 @@ test('group messages require active membership and fan out to every current memb
     assert.equal((await removedUpdate).conversation.memberIds.includes('mallory'), false);
     assert.equal((await getJson(url, historyPath, sessions[3])).status, 403);
 
+    const protectedOwner = await emitWithAck(alice, CLIENT_EVENTS.CONVERSATION_LEAVE, {
+      version: SIGNALING_VERSION, conversationId,
+    });
+    assert.equal(protectedOwner.error.code, 'forbidden');
+    const promote = await fetch(`${url}/groups/${conversationId}/members/bob`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json', authorization: ['Bearer', sessions[0]].join(' ') },
+      body: JSON.stringify({ role: 'admin' }),
+    });
+    assert.equal(promote.status, 200);
+    assert.equal((await postJson(url, `/groups/${conversationId}/ownership`, { userId: 'bob' }, sessions[0])).status, 200);
     const departed = await emitWithAck(alice, CLIENT_EVENTS.CONVERSATION_LEAVE, {
       version: SIGNALING_VERSION,
       conversationId,
@@ -264,6 +285,7 @@ test('group message fan-out crosses instances through the message bus', async ()
       name: 'Cross instance',
       inviteeIds: ['multi-bob'],
     });
+    await acceptInvitations(second.url, created.invitations, [bobSession]);
     const received = waitFor(bob, SERVER_EVENTS.MESSAGE_RECEIVED);
     const sent = await emitWithAck(alice, CLIENT_EVENTS.MESSAGE_SEND, {
       version: SIGNALING_VERSION,
@@ -291,6 +313,7 @@ test('group calls ring participants, record individual decisions, and end after 
       inviteeIds: ['accepting', 'declining'],
     });
     const conversationId = created.conversation.conversationId;
+    await acceptInvitations(url, created.invitations, sessions.slice(1));
 
     const acceptingRinging = waitFor(accepting, SERVER_EVENTS.CONVERSATION_CALL_UPDATED);
     const decliningRinging = waitFor(declining, SERVER_EVENTS.CONVERSATION_CALL_UPDATED);
@@ -345,11 +368,12 @@ test('group calls ring participants, record individual decisions, and end after 
 
 test('group call ring deadlines survive process timers and reject late accepts', async () => {
   const store = createConversationStore();
-  const { conversation } = await store.create({
+  const { conversation, invitations } = await store.create({
     name: 'Expiry group',
     creatorId: 'expiry-caller',
     inviteeIds: ['expiry-invitee'],
   });
+  await store.acceptInvitation({ conversationId: conversation.conversationId, invitationId: invitations![0].invitationId, userId: 'expiry-invitee' });
   const sweptCall = await store.startCall({
     conversationId: conversation.conversationId,
     initiatorId: 'expiry-caller',
@@ -382,10 +406,13 @@ test('group call ring deadlines survive process timers and reject late accepts',
 
 test('ring expiry declines pending invitees without ending an active group call', async () => {
   const store = createConversationStore();
-  const { conversation } = await store.create({
+  const { conversation, invitations } = await store.create({
     name: 'Active expiry group',
     creatorId: 'active-caller',
     inviteeIds: ['active-member', 'still-ringing'],
+  });
+  for (const invitation of invitations!) await store.acceptInvitation({
+    conversationId: conversation.conversationId, invitationId: invitation.invitationId, userId: invitation.inviteeId,
   });
   const started = await store.startCall({
     conversationId: conversation.conversationId,
@@ -416,10 +443,17 @@ test('ring expiry declines pending invitees without ending an active group call'
 });
 
 test('call fan-out drops snapshots older than the newest committed state version', async () => {
-  const emitted: number[] = [];
+  const emitted: { room: string; excludedRoom?: string; version: number; stateVersion: number }[] = [];
   const io = {
-    to: () => ({
-      emit: (_eventName: string, payload: any) => emitted.push(payload.call.stateVersion),
+    to: (room: string) => ({
+      emit: (_eventName: string, payload: any) => emitted.push({
+        room, version: payload.version, stateVersion: payload.call.stateVersion,
+      }),
+      except: (excludedRoom: string) => ({
+        emit: (_eventName: string, payload: any) => emitted.push({
+          room, excludedRoom, version: payload.version, stateVersion: payload.call.stateVersion,
+        }),
+      }),
     }),
   };
   const event = (stateVersion: number) => ({
@@ -436,5 +470,9 @@ test('call fan-out drops snapshots older than the newest committed state version
 
   await fanoutConversationEvent(io, {} as any, event(2));
   await fanoutConversationEvent(io, {} as any, event(1));
-  assert.deepEqual(emitted, [2]);
+  const currentRoom = userProtocolRoom('version-member', SIGNALING_VERSION);
+  assert.deepEqual(emitted, [
+    { room: currentRoom, version: SIGNALING_VERSION, stateVersion: 2 },
+    { room: userRoom('version-member'), excludedRoom: currentRoom, version: LEGACY_SIGNALING_VERSION, stateVersion: 2 },
+  ]);
 });

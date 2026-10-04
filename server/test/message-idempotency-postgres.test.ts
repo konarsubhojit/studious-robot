@@ -122,6 +122,9 @@ test('Postgres constraint converges independent instances, including lost-ack re
     const groups = databases.map(createPgConversationStore);
     const created = await groups[0].create({ creatorId: 'alice', inviteeIds: ['bob'], name: 'Concurrent' });
     const conversationId = created.conversation.conversationId;
+    await groups[1].acceptInvitation({
+      conversationId, invitationId: created.invitations![0].invitationId, userId: 'bob',
+    });
     const clientMessageId = randomUUID();
     const input = { conversationId, senderId: 'alice', recipientId: conversationId, body: 'group once', clientMessageId };
     const results = await Promise.all(groups.map(group => group.saveMessage(createMessageRecord(input))));

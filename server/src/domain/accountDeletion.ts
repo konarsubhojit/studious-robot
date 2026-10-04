@@ -278,6 +278,31 @@ async function eraseAttachments(
   return deleted;
 }
 
+async function eraseQueuedGroupAttachments(
+  state: ServerState,
+  { r2Config = loadR2Config(), fetchImpl }: EraseOptions
+): Promise<number> {
+  if (!r2Config) return 0;
+  let deleted = 0;
+  let after: string | undefined;
+  while (true) {
+    const page = await state.conversationStore.listAttachmentCleanup(ACCOUNT_DELETION_MESSAGE_BATCH, after);
+    for (const url of page) {
+      try {
+        if (await deleteAttachmentObject({ config: r2Config, url, fetchImpl })) {
+          await state.conversationStore.acknowledgeAttachmentCleanup(url);
+          deleted += 1;
+        }
+      } catch (error) {
+        console.error(`[account-deletion] queued attachment delete failed: ${describeError(error)}`);
+      }
+    }
+    if (page.length < ACCOUNT_DELETION_MESSAGE_BATCH) return deleted;
+    // Failed objects remain queued, but must not stall this sweep's cursor.
+    after = page.at(-1);
+  }
+}
+
 /**
  * Remove the account's avatar object.
  *
@@ -469,7 +494,6 @@ async function eraseAccount(
   const { tombstoned, attachmentUrls, conversationIds } = await eraseSentMessages(state, userId);
   const groupDataErasure = await state.conversationStore.eraseUserData(userId, pseudonym);
   const groupConversationIds = new Set(groupDataErasure.conversationIds);
-  const groupAttachmentUrls: string[] = [];
   let groupMessagesTombstoned = 0;
   while (true) {
     const page = await state.conversationStore.eraseUserMessages(
@@ -478,7 +502,6 @@ async function eraseAccount(
       ACCOUNT_DELETION_MESSAGE_BATCH
     );
     groupMessagesTombstoned += page.messagesTombstoned;
-    groupAttachmentUrls.push(...page.attachmentUrls);
     for (const conversationId of page.conversationIds) groupConversationIds.add(conversationId);
     if (page.messagesProcessed < ACCOUNT_DELETION_MESSAGE_BATCH) break;
   }
@@ -486,9 +509,9 @@ async function eraseAccount(
     conversationIds.add(conversationId);
   }
   const attachmentsDeleted = await eraseAttachments(
-    [...attachmentUrls, ...groupAttachmentUrls],
+    attachmentUrls,
     { r2Config, fetchImpl }
-  );
+  ) + await eraseQueuedGroupAttachments(state, { r2Config, fetchImpl });
   const avatarsDeleted = await eraseAvatar(avatarKey, { r2Config, fetchImpl });
   if (state.db) {
     // A projection row names both participants even after message bodies are
@@ -585,6 +608,8 @@ async function runAccountDeletionSweep(
       console.error(`[account-deletion] erasure failed, will retry: ${describeError(error)}`);
     }
   }
+  // Completed account jobs no longer run, but their failed objects still do.
+  await eraseQueuedGroupAttachments(state, options);
   return erased;
 }
 

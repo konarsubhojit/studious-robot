@@ -4,12 +4,14 @@ import { createPgConversationStore } from './conversationStore/pgStore.ts';
 function createConversationStore({
   conversationStore,
   db = null,
+  canInvite,
 }: {
   conversationStore?: import('./conversationStore/types.ts').ConversationStore;
   db?: import('../db/client.ts').Database | null;
+  canInvite?: (actorId: string, userId: string) => Promise<boolean>;
 } = {}): import('./conversationStore/types.ts').ConversationStore {
   if (conversationStore) return conversationStore;
-  return db ? createPgConversationStore(db) : createMemoryConversationStore();
+  return db ? createPgConversationStore(db) : createMemoryConversationStore(canInvite);
 }
 
 export {
@@ -27,5 +29,7 @@ export type {
   GroupCallChange,
   GroupCallParticipant,
   GroupConversation,
+  GroupInvitation,
+  GroupMembershipEvent,
 } from './conversationStore/types.ts';
 export { ConversationStoreError } from './conversationStore/types.ts';

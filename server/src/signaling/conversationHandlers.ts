@@ -3,6 +3,7 @@ import { fanoutConversationEvent } from '../domain/conversationFanout.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { isDirectoryVisibleAsync, filterVisible } from '../security.ts';
 import { ConversationStoreError } from '../conversationStore.ts';
+import { checkGroupAdmissionRate } from '../domain/groupAdmission.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
 import { acknowledgeError, acknowledgeSuccess, parseInboundPayload, requireSocketSession, validateSignalingVersion } from './ack.ts';
 
@@ -49,6 +50,10 @@ function registerConversationHandlers(
       acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'invalid group members', state);
       return;
     }
+    if (await checkGroupAdmissionRate(state, creatorId, true, inviteeIds.length)) {
+      acknowledgeError(socket, ack, eventName, ERROR_CODES.RATE_LIMITED, 'too many group admissions', state);
+      return;
+    }
     if ((await filterVisible(inviteeIds, userId => isDirectoryVisibleAsync(state, creatorId, userId))).length !== inviteeIds.length) {
       acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'you cannot add a blocked user', state);
       return;
@@ -78,7 +83,7 @@ function registerConversationHandlers(
           updatedBy: creatorId,
         },
       });
-      acknowledgeSuccess(socket, ack, eventName, { conversation: result.conversation });
+      acknowledgeSuccess(socket, ack, eventName, { conversation: result.conversation, invitations: result.invitations });
     } catch (error) {
       if (rejectStoreError(socket, ack, eventName, error, state)) return;
       console.error(`[conversations] create failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -147,6 +152,10 @@ function registerConversationHandlers(
       acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'invalid group members', state);
       return;
     }
+    if (await checkGroupAdmissionRate(state, actorId, false, userIds.length)) {
+      acknowledgeError(socket, ack, eventName, ERROR_CODES.RATE_LIMITED, 'too many group admissions', state);
+      return;
+    }
     if ((await filterVisible(userIds, userId => isDirectoryVisibleAsync(state, actorId, userId))).length !== userIds.length) {
       acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'you cannot add a blocked user', state);
       return;
@@ -172,7 +181,7 @@ function registerConversationHandlers(
         recipientIds: result.conversation.memberIds,
         payload: { version: SIGNALING_VERSION, conversation: result.conversation, updatedBy: actorId },
       });
-      acknowledgeSuccess(socket, ack, eventName, { conversation: result.conversation });
+      acknowledgeSuccess(socket, ack, eventName, { conversation: result.conversation, invitations: result.invitations });
     } catch (error) {
       if (rejectStoreError(socket, ack, eventName, error, state)) return;
       console.error(`[conversations] add members failed: ${error instanceof Error ? error.message : String(error)}`);
