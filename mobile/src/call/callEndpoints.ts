@@ -13,8 +13,12 @@
 import { API_ROUTES } from '../../../shared';
 
 /** The base URL of a single call resource, with the id escaped. */
+function normalizedSignalingUrl(signalingUrl: string): string {
+  return signalingUrl.trim().replace(/\/+$/, '');
+}
+
 function callResourceUrl(signalingUrl: string, callId: string): string {
-  return `${signalingUrl.trim()}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}`;
+  return `${normalizedSignalingUrl(signalingUrl)}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}`;
 }
 
 /**
@@ -32,6 +36,17 @@ export function buildCallLookupUrl({
   callId: string;
 }): string {
   return callResourceUrl(signalingUrl, callId);
+}
+
+/** Where to look up an existing group call named by a push notification. */
+export function buildGroupCallLookupUrl({
+  signalingUrl,
+  callId,
+}: {
+  signalingUrl: string;
+  callId: string;
+}): string {
+  return `${normalizedSignalingUrl(signalingUrl)}${API_ROUTES.GROUP_CALLS}/${encodeURIComponent(callId)}`;
 }
 
 /**

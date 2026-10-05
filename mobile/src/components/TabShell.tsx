@@ -148,6 +148,12 @@ function TabShell() {
     groupActions,
     groupPreviewActions,
     groupCallActions,
+    groupCallPeers,
+    activeGroupSpeakerId,
+    groupLocalStream,
+    groupIsMuted,
+    groupIsVideoEnabled,
+    groupIsScreenSharing,
     markConversationRead,
     setPeerMuted,
     startRecordingVoiceNote,
@@ -216,6 +222,9 @@ function TabShell() {
         typing={chat.groupTyping[peerId] ?? {}} actions={groupActions} preview={groupPreviewActions}
         onSearchUsers={chat.searchUsers}
         callSnapshot={chat.groupCalls[peerId]} callActions={groupCallActions}
+        callPeers={groupCallPeers} activeSpeakerId={activeGroupSpeakerId}
+        localStream={groupLocalStream} isMuted={groupIsMuted}
+        isVideoEnabled={groupIsVideoEnabled} isScreenSharing={groupIsScreenSharing}
         onRefresh={chat.handleRefreshMessages} onLoadOlder={chat.handleLoadOlderMessages}
         isRefreshing={chat.isRefreshingMessages}
         onSend={body => sendMessage(peerId, body)} onRetry={id => retryMessage(peerId, id)}
@@ -350,6 +359,12 @@ function TabShell() {
     groupPreviewActions,
     groupCallActions,
     chat.groupCalls,
+    groupCallPeers,
+    activeGroupSpeakerId,
+    groupLocalStream,
+    groupIsMuted,
+    groupIsVideoEnabled,
+    groupIsScreenSharing,
     clearDraft,
     deleteMessage,
     discardMessage,

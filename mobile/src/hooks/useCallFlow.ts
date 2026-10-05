@@ -5,6 +5,7 @@ import {
   CALL_STATES,
   INITIAL_CALL_STATE,
   callStateReducer,
+  isCallActiveState,
 } from '../call/callStateMachine';
 import * as Telemetry from '../telemetry';
 import { emitEvent } from '../observability';
@@ -18,6 +19,8 @@ import useCallPresentation from './useCallPresentation';
 import useConnectionQuality from './useConnectionQuality';
 import useLocalMedia from './useLocalMedia';
 import usePeerConnection from './usePeerConnection';
+import useGroupCallMedia from './useGroupCallMedia';
+import type { GroupPeerConnection } from './useGroupCallMedia';
 import useSignalingSocket from './useSignalingSocket';
 import useAnswerPath from './useAnswerPath';
 import useBlocks from './useBlocks';
@@ -85,7 +88,7 @@ import {
   shouldDeferRehydration,
 } from '../call/pushRehydration';
 import type { RehydrationOutcome } from '../call/pushRehydration';
-import { buildCallActionUrl, buildCallLookupUrl } from '../call/callEndpoints';
+import { buildCallActionUrl, buildCallLookupUrl, buildGroupCallLookupUrl } from '../call/callEndpoints';
 import type { CallAction } from '../call/callEndpoints';
 import { bearerAuthHeaders } from '../authHeaders';
 import useScreenShare from './useScreenShare';
@@ -96,6 +99,8 @@ import type { CallMediaType } from '../settingsStorage';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
 import type { CallActivity } from '../messaging/types';
+import { parseGroupCallSnapshot } from '../chat/groupCallAdapter';
+import { openGroupConversation } from '../navigation/navigationRef';
 import type { Socket } from 'socket.io-client';
 import type { IceTransportPolicy } from '../webrtcConfig';
 import type { ReplaceOutgoingVideoTrack, WebrtcMediaStream } from './usePeerConnection';
@@ -120,6 +125,63 @@ export type {
 export type AnswerError = Error & { answerFailureReason?: string; code?: string | null };
 export type { CallStatus };
 export type { CallRecoveryStatus } from '../call/recoveryEpisode';
+
+async function rehydrateGroupCallFromPush({
+  callId,
+  sessionId,
+  signalingUrl,
+  userId,
+  conversations,
+  fetchConversations,
+  receiveGroupCallSnapshot,
+  joinGroupCall,
+  updateStatus,
+}: {
+  callId: string;
+  sessionId: string;
+  signalingUrl: string;
+  userId: string;
+  conversations: Array<{ conversationId?: string; group?: unknown }>;
+  fetchConversations: () => Promise<unknown>;
+  receiveGroupCallSnapshot: (snapshot: ReturnType<typeof parseGroupCallSnapshot>) => void;
+  joinGroupCall: (conversationId: string) => void;
+  updateStatus: (message: string, severity?: CallStatus['severity']) => void;
+}): Promise<RehydrationOutcome> {
+  const response = await fetch(buildGroupCallLookupUrl({ signalingUrl, callId }), {
+    headers: bearerAuthHeaders(sessionId),
+  });
+  if (!response.ok) {
+    const failure = classifyLookupFailure(response.status);
+    if (failure.outcome === 'not_found') {
+      updateStatus(failure.message, 'info');
+      return 'not_found';
+    }
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const snapshot = parseGroupCallSnapshot(await response.json());
+  if (!conversations.some(row => row.conversationId === snapshot.conversationId && row.group)) {
+    await fetchConversations();
+  }
+  receiveGroupCallSnapshot(snapshot);
+  const participant = snapshot.participants.find(person => person.userId === userId);
+  if (
+    snapshot.call.status === 'ended' ||
+    !participant ||
+    participant.status === 'left' ||
+    participant.status === 'declined'
+  ) {
+    updateStatus('Group call no longer active', 'info');
+    return 'terminal';
+  }
+  openGroupConversation(snapshot.conversationId);
+  if (participant.status === 'accepted') joinGroupCall(snapshot.conversationId);
+  logInfo('[CallFlow] Rehydrated group call from push', {
+    callId: snapshot.callId,
+    conversationId: snapshot.conversationId,
+    participantStatus: participant.status,
+  });
+  return 'group_call';
+}
 
 function callTimelineStatus(call: CallRecord): string {
   return call.status === 'ended' && call.endReason === 'cancelled' ? 'cancelled' : call.status;
@@ -429,6 +491,7 @@ export default function useCallFlow({
 
   // ─── Media / WebRTC state ─────────────────────────────────────────────────
   const [remoteStream, setRemoteStream] = useState(null as WebrtcMediaStream | null);
+  const groupPeerConnectionsRef = useRef(new Map<string, GroupPeerConnection>());
   const [isMuted, setIsMuted] = useState(false);
   const isConnectionLostRef = useRef(false);
   const markCallConnectedRef = useRef(() => {});
@@ -785,10 +848,6 @@ export default function useCallFlow({
     },
   });
 
-  useEffect(() => {
-    replaceOutgoingVideoTrackRef.current = replaceOutgoingVideoTrack;
-  }, [replaceOutgoingVideoTrack]);
-
   const {
     isScreenSharing,
     isTogglingScreenShare,
@@ -802,11 +861,42 @@ export default function useCallFlow({
     resetScreenShare,
   } = useScreenShare({
     peerConnectionRef,
+    peerConnectionsRef: groupPeerConnectionsRef,
     localStreamRef,
     setLocalStream,
     setStatus: updateStatus,
     renegotiate,
   });
+
+  const groupCallMedia = useGroupCallMedia({
+    groupCalls: messaging.groupCalls,
+    conversations: messaging.conversations,
+    userId,
+    localStreamRef,
+    peerConnectionsRef: groupPeerConnectionsRef,
+    startLocalPreview,
+    signalingRef,
+    signalingUrl,
+    ensureIceSessionId,
+    iceTransportPolicy: activeIceTransportPolicy,
+    connected: messaging.isSignalingConnected,
+    canJoin: !isCallActiveState(callPhase),
+    isMuted,
+    isVideoEnabled,
+    isScreenSharing,
+    updateStatus,
+  });
+
+  useEffect(() => {
+    replaceOutgoingVideoTrackRef.current = async track => {
+      await replaceOutgoingVideoTrack(track);
+      await Promise.all([...groupPeerConnectionsRef.current.values()].map(async peer => {
+        const sender = peer.pc.getSenders?.().find(candidate => candidate.track?.kind === 'video') ??
+          peer.pc.getTransceivers?.().find(transceiver => transceiver.receiver.track?.kind === 'video')?.sender;
+        if (sender) await sender.replaceTrack(track);
+      }));
+    };
+  }, [replaceOutgoingVideoTrack]);
 
   const applyVideoAdaptation = useCallback((quality: { bars: number; label: string }) => {
     if (quality.label === 'No link') return;
@@ -1537,6 +1627,20 @@ export default function useCallFlow({
           headers: bearerAuthHeaders(sessionId),
         });
 
+        if (response.status === 404) {
+          return rehydrateGroupCallFromPush({
+            callId,
+            sessionId,
+            signalingUrl,
+            userId,
+            conversations: messaging.conversations,
+            fetchConversations,
+            receiveGroupCallSnapshot: messaging.receiveGroupCallSnapshot,
+            joinGroupCall: groupCallMedia.join,
+            updateStatus,
+          });
+        }
+
         if (!response.ok) {
           const failure = classifyLookupFailure(response.status);
           if (failure.outcome === 'not_found') {
@@ -1583,9 +1687,18 @@ export default function useCallFlow({
         return 'error';
       }
     },
-    // connectSocket and createOrGetSession are stable relative to userId/signalingUrl
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [userId, signalingUrl, updateStatus],
+    [
+      fetchConversations,
+      groupCallMedia.join,
+      messaging.conversations,
+      messaging.receiveGroupCallSnapshot,
+      connectSocket,
+      createOrGetSession,
+      showIncomingCallUi,
+      userId,
+      signalingUrl,
+      updateStatus,
+    ],
   );
 
   // Store in a ref so deep-link effects always call the latest version.
@@ -2251,6 +2364,10 @@ export default function useCallFlow({
       typingByPeer: messaging.typingByPeer,
       groupTyping: messaging.groupTyping,
       groupCalls: messaging.groupCalls,
+      groupCallPeers: groupCallMedia.peers,
+      activeGroupCallId: groupCallMedia.activeCallId,
+      activeGroupConversationId: groupCallMedia.activeConversationId,
+      activeGroupSpeakerId: groupCallMedia.activeSpeakerId,
       isRemoteScreenSharing,
 
       // Attachments (photo / camera / file / voice note)
@@ -2349,6 +2466,10 @@ export default function useCallFlow({
       messaging.typingByPeer,
       messaging.groupTyping,
       messaging.groupCalls,
+      groupCallMedia.peers,
+      groupCallMedia.activeCallId,
+      groupCallMedia.activeConversationId,
+      groupCallMedia.activeSpeakerId,
       messaging.unreadTotal,
       peerVerifications,
       presenceSearch.calleePresence,
@@ -2404,7 +2525,14 @@ export default function useCallFlow({
       sendMessage: messaging.sendMessage,
       groupActions: messaging.groupActions,
       groupPreviewActions: messaging.groupPreviewActions,
-      groupCallActions: messaging.groupCallActions,
+      groupCallActions: {
+        ...messaging.groupCallActions,
+        joinMedia: groupCallMedia.join,
+        leaveMedia: groupCallMedia.leave,
+        toggleMute: handleMuteToggle,
+        toggleVideo: handleVideoToggle,
+        toggleScreenShare: handleScreenShareToggle,
+      },
       retryMessage: messaging.retryMessage,
       retryAttachmentUpload: attachments.retryUpload,
       discardMessage: messaging.discardMessage,
@@ -2492,6 +2620,8 @@ export default function useCallFlow({
       messaging.groupActions,
       messaging.groupPreviewActions,
       messaging.groupCallActions,
+      groupCallMedia.join,
+      groupCallMedia.leave,
       messaging.sendTypingIndicator,
       messaging.setActiveChatPeerId,
       placeCall,

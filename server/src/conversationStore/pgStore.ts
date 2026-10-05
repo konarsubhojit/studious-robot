@@ -43,6 +43,23 @@ const PARTICIPANT_TRANSITIONS: Record<
   decline: { ringing: 'declined' },
   leave: { ringing: 'left', accepted: 'left' },
 };
+const MAX_GROUP_CALL_PARTICIPANTS = 4;
+
+async function assertGroupCallCapacity(tx: Tx, callId: string): Promise<void> {
+  const accepted = await tx
+    .select({ userId: callParticipantsTable.userId })
+    .from(callParticipantsTable)
+    .where(and(
+      eq(callParticipantsTable.callId, callId),
+      eq(callParticipantsTable.status, 'accepted'),
+    ));
+  if (accepted.length >= MAX_GROUP_CALL_PARTICIPANTS) {
+    throw new ConversationStoreError(
+      'group_call_full',
+      `Group call is full; mesh calls support up to ${MAX_GROUP_CALL_PARTICIPANTS} participants`,
+    );
+  }
+}
 
 // ECMAScript WhiteSpace + LineTerminator, including historical stored URLs.
 const JS_TRIM_WHITESPACE = '\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
@@ -1025,6 +1042,12 @@ function createPgConversationStore(db: Database): ConversationStore {
       });
     },
 
+    async getCall(callId) {
+      const [call] = await db.select().from(callsTable)
+        .where(eq(callsTable.callId, callId)).limit(1);
+      return call ? callChange(call) : null;
+    },
+
     async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [] }) {
       return db.transaction(async (tx) => {
         const [conversation] = await tx
@@ -1117,6 +1140,9 @@ function createPgConversationStore(db: Database): ConversationStore {
           call.ringTimeoutAt.getTime() <= now.getTime()
         ) {
           return expireLockedCall(call, tx, now);
+        }
+        if (action === 'accept' && participant.status === 'ringing') {
+          await assertGroupCallCapacity(tx, callId);
         }
         const nextStatus =
           PARTICIPANT_TRANSITIONS[action][participant.status as GroupCallParticipant['status']] ?? null;

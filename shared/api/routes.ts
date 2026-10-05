@@ -40,6 +40,7 @@ const API_ROUTES = Object.freeze({
   AVATAR_PRESIGN: '/avatar/presign',
   AVATAR_DOWNLOAD: '/avatar/download',
   CALLS: '/calls',
+  GROUP_CALLS: '/groups/calls',
   BLOCKS: '/blocks',
   TURN_CREDENTIALS: '/turn-credentials',
 });

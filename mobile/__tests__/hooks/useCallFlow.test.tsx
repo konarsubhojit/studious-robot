@@ -11,8 +11,10 @@ import type { PeerTrackEvent, WebrtcMediaStream } from '../../src/hooks/useCallF
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 import { registerCrashContext } from '../../src/crashReporting';
 import { startScreenCapture } from '../../src/screenShare';
-import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
+import { CALL_RECOVERY_BUDGET_MS, SIGNALING_VERSION } from '../../../shared';
 import { fetchPeerProfile } from '../../src/profile/fetchPeerProfile';
+import { createMockGroup } from '../../src/chat/groupMockAdapter';
+import { startMockGroupCall, transitionMockGroupCall } from '../../src/chat/groupCallAdapter';
 
 jest.mock('../../src/profile/fetchPeerProfile', () => ({
   fetchPeerProfile: jest.fn(async () => null),
@@ -22,8 +24,11 @@ jest.mock('../../src/profile/fetchPeerProfile', () => ({
 
 // The messaging hook hydrates from (and persists to) the local chat store; the
 // store itself is covered by `__tests__/storage/chatDb.test.js`.
+let mockInitialChatSnapshot: any = null;
 jest.mock('../../src/storage/chatDb', () => ({
-  loadChatSnapshot: jest.fn(async () => ({ conversations: [], messagesByPeer: {}, outbox: [] })),
+  loadChatSnapshot: jest.fn(async () => mockInitialChatSnapshot ?? ({
+    conversations: [], messagesByPeer: {}, outbox: [],
+  })),
   saveChatSnapshot: jest.fn(),
   flushChatDb: jest.fn(async () => {}),
 }));
@@ -52,6 +57,10 @@ jest.mock('../../src/hooks/useMessaging', () => {
     },
   };
 });
+
+jest.mock('../../src/navigation/navigationRef', () => ({
+  openGroupConversation: jest.fn(),
+}));
 
 // `voiceRecorder.js` (pulled in via `useAttachments`) imports this directly
 // (it's a hard app dependency, not an optional native module); the real
@@ -365,6 +374,7 @@ async function renderHook(options?: any) {
 // timer to actually fire (see `jest.advanceTimersByTime` below).
 beforeEach(() => {
   jest.useFakeTimers();
+  mockInitialChatSnapshot = null;
 });
 
 describe('useCallFlow', () => {
@@ -373,6 +383,7 @@ describe('useCallFlow', () => {
     jest.clearAllMocks();
     jest.useRealTimers();
     mockChurnMessagingIdentity = false;
+    mockInitialChatSnapshot = null;
     delete ((global as any)).fetch;
   });
 
@@ -935,6 +946,11 @@ describe('rehydrateCallFromPush', () => {
         ok: false,
         status: 404,
         json: async () => ({}),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
       });
 
     const { resultRef, tree } = await renderHook();
@@ -997,6 +1013,51 @@ describe('rehydrateCallFromPush', () => {
 
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.INCOMING_RINGING);
     expect(resultRef.current.incomingCall).toEqual(fakeCall);
+  });
+
+  test('rehydrates a group-call push into the group lifecycle and opens its conversation', async () => {
+    const conversation = createMockGroup('alice', 'Team', ['bob', 'carol'], 'group-528');
+    let snapshot = startMockGroupCall(
+      conversation, 'alice', 'group-call-528', 'audio', '2026-10-03T06:00:00Z',
+    );
+    snapshot = transitionMockGroupCall(snapshot, 'bob', 'accept', '2026-10-03T06:00:01Z');
+    mockInitialChatSnapshot = {
+      conversations: [conversation],
+      messagesByPeer: {},
+      outbox: [],
+    };
+    const fetchMock = jest.fn(async (url: string) => {
+      if (url.includes('/groups/calls/')) {
+        return { ok: true, status: 200, json: async () => snapshot };
+      }
+      if (url.includes('/calls/')) return { ok: false, status: 404, json: async () => ({}) };
+      return {
+        ok: true, status: 201,
+        json: async () => ({ sessionId: 'group-push-session', userId: 'alice' }),
+      };
+    });
+    (global as any).fetch = fetchMock;
+
+    const { resultRef, tree } = await renderHook();
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await flushAsyncEffects();
+
+    let outcome: string;
+    await act(async () => {
+      outcome = await resultRef.current.rehydrateCallFromPush(snapshot.callId);
+    });
+
+    expect(outcome!).toBe('group_call');
+    expect(fetchMock.mock.calls.some(([url]) => url.includes('/groups/calls/group-call-528'))).toBe(true);
+    expect(resultRef.current.groupCalls[conversation.peerId]).toMatchObject({
+      callId: snapshot.callId,
+      conversationId: snapshot.conversationId,
+    });
+    expect(resultRef.current.activeGroupConversationId).toBe(conversation.conversationId);
+    expect(require('../../src/navigation/navigationRef').openGroupConversation)
+      .toHaveBeenCalledWith(conversation.conversationId);
+    await act(async () => { tree.unmount(); });
   });
 
   test('sets informational status for a missed call', async () => {
@@ -2598,7 +2659,11 @@ describe('useCallFlow session lifecycle', () => {
     expect(io).toHaveBeenCalledTimes(2);
     expect((io as jest.Mock).mock.calls[1][1]).toEqual(
       expect.objectContaining({
-        auth: { sessionId: 'sess-fresh', correlationId: expect.stringMatching(/^wt-/) },
+        auth: {
+          sessionId: 'sess-fresh',
+          correlationId: expect.stringMatching(/^wt-/),
+          signalingVersion: SIGNALING_VERSION,
+        },
       }),
     );
   });
@@ -2950,7 +3015,7 @@ describe('useCallFlow chat', () => {
         capturedPayload = payload;
         cb?.({
           ok: true,
-          version: 2,
+          version: SIGNALING_VERSION,
           event: 'message.send',
           message: {
             messageId: 'server-msg-1',
@@ -2975,7 +3040,7 @@ describe('useCallFlow chat', () => {
     });
 
     expect(capturedPayload).toEqual({
-      version: 2,
+      version: SIGNALING_VERSION,
       recipientId: 'bob',
       body: 'hi there',
       // Client-generated so the server's upsert makes a replay idempotent.
@@ -3629,7 +3694,7 @@ describe('useCallFlow chat', () => {
 
     expect(resultRef.current.isScreenSharing).toBe(true);
     expect(mediaStateEmits).toContainEqual({
-      version: 2,
+      version: SIGNALING_VERSION,
       callId: 'call-share-1',
       // Both flags travel in one frame so the peer can never apply half an
       // update: the camera state is what lets their stage tell a picture from
@@ -3654,7 +3719,7 @@ describe('useCallFlow chat', () => {
     });
     expect(mediaStateEmits).toEqual([
       {
-        version: 2,
+        version: SIGNALING_VERSION,
         callId: 'call-share-1',
         mediaState: { isScreenSharing: true, isVideoEnabled: false },
       },
@@ -3912,7 +3977,7 @@ describe('useCallFlow chat', () => {
 
     expect(mediaStateEmits).toEqual([
       {
-        version: 2,
+        version: SIGNALING_VERSION,
         callId: 'call-snapshot-1',
         mediaState: { isScreenSharing: false, isVideoEnabled: true },
       },
@@ -4124,7 +4189,7 @@ describe('useCallFlow chat', () => {
     const connectedEmits = emits.filter((entry: any) => entry.event === 'call.connected');
     expect(connectedEmits).toHaveLength(1);
     expect(connectedEmits[0].payload).toEqual({
-      version: 2,
+      version: SIGNALING_VERSION,
       callId: 'call-connected-1',
       iceState: 'connected',
     });
@@ -4177,7 +4242,7 @@ describe('useCallFlow chat', () => {
 
     expect(emits.find((entry: any) => entry.event === 'call.stats')?.payload).toEqual(
       expect.objectContaining({
-        version: 2,
+        version: SIGNALING_VERSION,
         callId: 'call-stats-1',
         rttMs: 80,
         jitterMs: 20,
@@ -4210,7 +4275,7 @@ describe('useCallFlow chat', () => {
       );
       expect(beats.length).toBeGreaterThan(beatsBefore);
       expect(beats[0].payload).toEqual({
-        version: 2,
+        version: SIGNALING_VERSION,
         callId: 'call-connected-2',
         mediaState: { isScreenSharing: false, heartbeat: true },
       });
@@ -4434,7 +4499,7 @@ describe('useCallFlow chat', () => {
       });
       expect(emits).toContainEqual({
         event: 'call.end',
-        payload: { version: 2, callId: 'call-hb-end-1', reason: 'user_hangup' },
+        payload: { version: SIGNALING_VERSION, callId: 'call-hb-end-1', reason: 'user_hangup' },
       });
       act(() => {
         tree.update(<TestHook resultRef={resultRef} />);

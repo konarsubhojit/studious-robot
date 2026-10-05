@@ -26,10 +26,14 @@ async function createSession(url: string, userId: string): Promise<string> {
   return result.body.sessionId;
 }
 
-function connect(url: string, sessionId: string): Promise<import('socket.io-client').Socket> {
+function connect(
+  url: string,
+  sessionId: string,
+  signalingVersion?: number,
+): Promise<import('socket.io-client').Socket> {
   return new Promise((resolve, reject) => {
     const socket = ioClient(url, {
-      auth: { sessionId },
+      auth: { sessionId, ...(signalingVersion ? { signalingVersion } : {}) },
       forceNew: true,
       transports: ['websocket'],
     });
@@ -363,6 +367,88 @@ test('group calls ring participants, record individual decisions, and end after 
     assert.ok(ended.call.stateVersion > afterMemberLeaves.call.stateVersion);
   } finally {
     await teardown(caller, accepting, declining);
+  }
+});
+
+test('group call acceptance enforces the four-participant mesh limit without disturbing active peers', async () => {
+  const { url, teardown } = await startServer();
+  const userIds = ['mesh-caller', 'mesh-a', 'mesh-b', 'mesh-c', 'mesh-d'];
+  const sessions = await Promise.all(userIds.map(id => createSession(url, id)));
+  const sockets = await Promise.all(sessions.map(session => connect(url, session, SIGNALING_VERSION)));
+  const [caller, ...invitees] = sockets;
+  let outsider: Awaited<ReturnType<typeof connect>> | undefined;
+  try {
+    const created = await emitWithAck(caller, CLIENT_EVENTS.CONVERSATION_CREATE, {
+      version: SIGNALING_VERSION,
+      name: 'Mesh capacity',
+      inviteeIds: userIds.slice(1),
+    });
+    await acceptInvitations(url, created.invitations, sessions.slice(1));
+    const started = await emitWithAck(caller, CLIENT_EVENTS.CONVERSATION_CALL_START, {
+      version: SIGNALING_VERSION,
+      conversationId: created.conversation.conversationId,
+      mediaType: 'audio',
+    });
+    assert.equal(started.ok, true);
+
+    for (const socket of invitees.slice(0, 3)) {
+      const accepted = await emitWithAck(socket, CLIENT_EVENTS.CONVERSATION_CALL_ACCEPT, {
+        version: SIGNALING_VERSION,
+        callId: started.call.callId,
+      });
+      assert.equal(accepted.ok, true);
+    }
+    const offerToAcceptedPeer = waitFor(invitees[0], SERVER_EVENTS.RTC_OFFER);
+    const relayed = await emitWithAck(caller, CLIENT_EVENTS.RTC_OFFER, {
+      version: SIGNALING_VERSION,
+      callId: started.call.callId,
+      peerId: 'mesh-a',
+      sdp: { type: 'offer', sdp: 'mesh-offer' },
+    });
+    assert.equal(relayed.ok, true);
+    assert.equal((await offerToAcceptedPeer).peerId, 'mesh-caller');
+    const offerToRingingPeer = await emitWithAck(caller, CLIENT_EVENTS.RTC_OFFER, {
+      version: SIGNALING_VERSION,
+      callId: started.call.callId,
+      peerId: 'mesh-d',
+      sdp: { type: 'offer', sdp: 'not-yet-accepted' },
+    });
+    assert.equal(offerToRingingPeer.ok, false);
+
+    const overCapacity = await emitWithAck(invitees[3], CLIENT_EVENTS.CONVERSATION_CALL_ACCEPT, {
+      version: SIGNALING_VERSION,
+      callId: started.call.callId,
+    });
+    assert.equal(overCapacity.ok, false);
+    assert.match(overCapacity.error.message, /up to 4 participants/i);
+
+    const snapshot = await getJson(url, `${API_ROUTES.GROUP_CALLS}/${started.call.callId}`, sessions[0]);
+    assert.equal(snapshot.status, 200);
+    assert.equal(snapshot.body.call.status, 'active');
+    assert.equal(snapshot.body.participants.filter((person: any) => person.status === 'accepted').length, 4);
+    assert.equal(snapshot.body.participants.find((person: any) => person.userId === 'mesh-d').status, 'ringing');
+    const outsiderSession = await createSession(url, 'mesh-outsider');
+    outsider = await connect(url, outsiderSession, SIGNALING_VERSION);
+    const hiddenSnapshot = await getJson(
+      url, `${API_ROUTES.GROUP_CALLS}/${started.call.callId}`, outsiderSession,
+    );
+    assert.equal(hiddenSnapshot.status, 404);
+    const offerToOutsider = await emitWithAck(caller, CLIENT_EVENTS.RTC_OFFER, {
+      version: SIGNALING_VERSION,
+      callId: started.call.callId,
+      peerId: 'mesh-outsider',
+      sdp: { type: 'offer', sdp: 'not-a-participant' },
+    });
+    assert.equal(offerToOutsider.ok, false);
+    const offerFromOutsider = await emitWithAck(outsider, CLIENT_EVENTS.RTC_OFFER, {
+      version: SIGNALING_VERSION,
+      callId: started.call.callId,
+      peerId: 'mesh-caller',
+      sdp: { type: 'offer', sdp: 'unauthorized-sender' },
+    });
+    assert.equal(offerFromOutsider.ok, false);
+  } finally {
+    await teardown(...sockets, ...(outsider ? [outsider] : []));
   }
 });
 

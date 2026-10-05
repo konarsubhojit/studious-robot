@@ -1,4 +1,4 @@
-import { CLIENT_EVENTS, parseEventPayload, SERVER_EVENTS } from '../../../shared';
+import { CLIENT_EVENTS, parseEventPayload, SERVER_EVENTS, SIGNALING_VERSION } from '../../../shared';
 import { groupCallAcknowledgement, groupCallRequest, parseGroupCallSnapshot, startMockGroupCall, transitionMockGroupCall } from '../../src/chat/groupCallAdapter';
 import { createMockGroup } from '../../src/chat/groupMockAdapter';
 
@@ -9,12 +9,12 @@ const start = () => startMockGroupCall(row(), 'alice', 'mock-call-1', 'audio', n
 test('all group call requests use exactly the frozen schema, never peer-call events', () => {
   expect(groupCallRequest('start', 'group-1', 'video')).toEqual({
     event: CLIENT_EVENTS.CONVERSATION_CALL_START,
-    payload: { version: 2, conversationId: 'group-1', mediaType: 'video' },
+    payload: { version: SIGNALING_VERSION, conversationId: 'group-1', mediaType: 'video' },
   });
   for (const action of ['accept', 'decline', 'leave'] as const) {
     const request = groupCallRequest(action, 'call-1');
     expect(request.event).toBe(`conversation.call.${action}`);
-    expect(request.payload).toEqual({ version: 2, callId: 'call-1' });
+    expect(request.payload).toEqual({ version: SIGNALING_VERSION, callId: 'call-1' });
     expect(parseEventPayload(request.event, request.payload, 'client').success).toBe(true);
   }
   expect(() => groupCallRequest('start', '')).toThrow();
@@ -33,7 +33,7 @@ test('local snapshots carry every required call and participant field from the s
     { callId: 'mock-call-1', userId: 'carol', status: 'ringing', invitedAt: now, acceptedAt: null, leftAt: null },
   ]);
   expect(snapshot.participants[0]).not.toHaveProperty('muted');
-  expect(groupCallAcknowledgement({ ok: true, version: 2, call: snapshot.call, participants: snapshot.participants }))
+  expect(groupCallAcknowledgement({ ok: true, version: SIGNALING_VERSION, call: snapshot.call, participants: snapshot.participants }))
     .toEqual(snapshot);
   expect(() => groupCallAcknowledgement({ ok: true })).toThrow();
 });

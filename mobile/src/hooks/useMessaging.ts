@@ -282,7 +282,7 @@ export default function useMessaging({
   const socketCursorScopeRef = useRef(scope);
   const persistChatSnapshotRef = useRef<(snapshot?: Partial<ChatSnapshot>) => boolean>(() => false);
   const lastLocalCreatedAtMsRef = useRef(0);
-  const { groupCalls, groupCallActions } = useGroupCalls({
+  const { groupCalls, groupCallActions, receiveGroupCallSnapshot } = useGroupCalls({
     scope, userId, conversationsRef, signalingRef, socketRef, connected: isSocketConnected,
   });
 
@@ -1986,6 +1986,8 @@ export default function useMessaging({
     groupPreviewActions,
     groupCalls,
     groupCallActions,
+    receiveGroupCallSnapshot,
+    isSignalingConnected: isSocketConnected === true,
     unreadTotal: stateScope === scope ? unreadTotal : 0,
     // Only reported once the socket has told us either way, so the banner
     // never flashes during the first connect.

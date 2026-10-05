@@ -257,7 +257,7 @@ export default function usePeerConnection({
       }
     }
 
-    pc.onicecandidate = ({ candidate }) => {
+    pc.onicecandidate = ({ candidate }: PeerIceCandidateEvent) => {
       if (!candidate || !socketRef.current?.connected) return;
       const summary = summarizeIceCandidate(candidate);
       logVerbose('[CallFlow] ICE candidate sent', summary);
@@ -271,7 +271,7 @@ export default function usePeerConnection({
       });
     };
 
-    pc.ontrack = ({ streams }) => {
+    pc.ontrack = ({ streams }: PeerTrackEvent) => {
       const [stream] = streams;
       if (stream) {
         remoteTrackReceivedRef.current = true;
@@ -302,7 +302,7 @@ export default function usePeerConnection({
           firstRemoteTrackReportedRef.current = true;
           const callId = activeCallIdRef.current;
           Telemetry.trackFirstRemoteFrame(callId);
-          const tracks = stream.getTracks?.() ?? [];
+          const tracks: WebrtcMediaStreamTrack[] = stream.getTracks?.() ?? [];
           const kinds = [...new Set(tracks.map(track => track.kind))].join(',') || 'unknown';
           const hasVideo = tracks.some(track => track.kind === 'video');
           sendPushReceipt({

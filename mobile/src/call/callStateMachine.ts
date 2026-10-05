@@ -19,6 +19,126 @@
  */
 
 export type CallState = 'idle' | 'outgoing_ringing' | 'incoming_ringing' | 'in_call' | 'ended';
+
+export type ParticipantConnectionState =
+  | 'new'
+  | 'connecting'
+  | 'connected'
+  | 'disconnected'
+  | 'failed'
+  | 'closed';
+
+/** UI-safe participant state; the owning call hook keeps the RTCPeerConnection alongside it. */
+export type CallPeerState<TStream = unknown> = {
+  userId: string;
+  connectionState: ParticipantConnectionState;
+  stream: TStream | null;
+  isMuted: boolean | null;
+  isVideoEnabled: boolean | null;
+  isScreenSharing: boolean | null;
+  quality: 'good' | 'connecting' | 'poor' | 'offline';
+  isSpeaking: boolean;
+};
+
+export type CallPeerMap<TStream = unknown> = Record<string, CallPeerState<TStream>>;
+
+export type CallPeerEvent<TStream = unknown> =
+  | { type: 'join'; userId: string }
+  | { type: 'leave'; userId: string }
+  | { type: 'connection'; userId: string; connectionState: ParticipantConnectionState }
+  | { type: 'stream'; userId: string; stream: TStream | null }
+  | { type: 'media'; userId: string; isMuted?: boolean; isVideoEnabled?: boolean; isScreenSharing?: boolean }
+  | { type: 'quality'; userId: string; quality: CallPeerState['quality'] }
+  | { type: 'speaker'; userId: string; isSpeaking: boolean }
+  | { type: 'reset' };
+
+export const INITIAL_CALL_PEERS: CallPeerMap = {};
+
+function createInitialPeer<TStream>(userId: string): CallPeerState<TStream> {
+  return {
+    userId,
+    connectionState: 'new',
+    stream: null,
+    isMuted: null,
+    isVideoEnabled: null,
+    isScreenSharing: null,
+    quality: 'connecting',
+    isSpeaking: false,
+  };
+}
+
+function qualityForConnection(state: ParticipantConnectionState): CallPeerState['quality'] {
+  if (state === 'connected') return 'good';
+  if (state === 'failed' || state === 'closed') return 'offline';
+  if (state === 'disconnected') return 'poor';
+  return 'connecting';
+}
+
+function updateForPeerEvent<TStream>(
+  current: CallPeerState<TStream>,
+  event: Exclude<CallPeerEvent<TStream>, { type: 'join' | 'leave' | 'reset' }>,
+): Partial<CallPeerState<TStream>> {
+  switch (event.type) {
+    case 'connection':
+      return {
+        connectionState: event.connectionState,
+        quality: qualityForConnection(event.connectionState),
+      };
+    case 'stream':
+      return { stream: event.stream };
+    case 'media':
+      return {
+        ...(event.isMuted === undefined ? {} : { isMuted: event.isMuted }),
+        ...(event.isVideoEnabled === undefined ? {} : { isVideoEnabled: event.isVideoEnabled }),
+        ...('isScreenSharing' in event ? { isScreenSharing: Boolean(event.isScreenSharing) } : {}),
+      };
+    case 'quality':
+      return { quality: event.quality };
+    case 'speaker':
+      return { isSpeaking: event.isSpeaking };
+  }
+}
+
+function matchesPeerUpdate<TStream>(
+  current: CallPeerState<TStream>,
+  update: Partial<CallPeerState<TStream>>,
+): boolean {
+  return Object.keys(update).every(key =>
+    current[key as keyof CallPeerState<TStream>] === update[key as keyof typeof update],
+  );
+}
+
+/**
+ * Participant-scoped media reducer. A failure or leave only changes that
+ * participant; the call lifecycle is not ended while another peer is healthy.
+ */
+export function callPeerMapReducer<TStream = unknown>(
+  peers: CallPeerMap<TStream>,
+  event: CallPeerEvent<TStream>,
+): CallPeerMap<TStream> {
+  if (event.type === 'reset') return Object.keys(peers).length ? {} : peers;
+  const userId = event.userId.trim();
+  if (!userId) return peers;
+  if (event.type === 'leave') {
+    if (!(userId in peers)) return peers;
+    const next = { ...peers };
+    delete next[userId];
+    return next;
+  }
+  const current = peers[userId];
+  if (event.type === 'join') {
+    if (current) return peers;
+    return {
+      ...peers,
+      [userId]: createInitialPeer(userId),
+    };
+  }
+  if (!current) return peers;
+  const update = updateForPeerEvent(current, event);
+  return matchesPeerUpdate(current, update)
+    ? peers
+    : { ...peers, [userId]: { ...current, ...update } };
+}
 export const CALL_STATES = {
   IDLE: 'idle',
   OUTGOING_RINGING: 'outgoing_ringing',

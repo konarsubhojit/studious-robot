@@ -26,6 +26,8 @@ import {
 export type UseScreenShareParams = {
   /** holds an `RTCPeerConnection`. */
   peerConnectionRef: { current: any; };
+  /** Additional participant connections in a group call. */
+  peerConnectionsRef?: { current: Map<string, { pc: any }> };
   /** holds a `MediaStream`. */
   localStreamRef: { current: any; };
   setLocalStream: (stream: any) => void;
@@ -52,6 +54,14 @@ type ScreenShareResources = {
   /** Whether {@link attachScreenVideo} created `videoSender` for the share. */
   addedVideoSender: boolean;
   previousVideoParameters: any;
+  peerResources: Array<{
+    pc: any;
+    cameraTrack: any;
+    audioSender: any;
+    videoSender: any;
+    addedVideoSender: boolean;
+    previousVideoParameters: any;
+  }>;
 };
 
 function takeScreenShareResources(refs: {
@@ -62,6 +72,7 @@ function takeScreenShareResources(refs: {
   screenVideoSender: MutableValue;
   screenVideoSenderAdded: MutableValue<boolean>;
   previousVideoParameters: MutableValue;
+  peerResources: MutableValue<ScreenShareResources['peerResources']>;
 }): ScreenShareResources {
   const resources = {
     screenStream: refs.screenStream.current,
@@ -71,6 +82,7 @@ function takeScreenShareResources(refs: {
     videoSender: refs.screenVideoSender.current,
     addedVideoSender: refs.screenVideoSenderAdded.current,
     previousVideoParameters: refs.previousVideoParameters.current,
+    peerResources: refs.peerResources.current,
   };
   refs.screenStream.current = null;
   refs.screenVideoTrack.current = null;
@@ -79,7 +91,17 @@ function takeScreenShareResources(refs: {
   refs.screenVideoSender.current = null;
   refs.screenVideoSenderAdded.current = false;
   refs.previousVideoParameters.current = null;
+  refs.peerResources.current = [];
   return resources;
+}
+
+function getPeerConnections(
+  peerConnectionRef: MutableValue,
+  peerConnectionsRef?: MutableValue<Map<string, { pc: any }>>,
+): any[] {
+  const connections = [peerConnectionRef.current, ...[...(peerConnectionsRef?.current.values() ?? [])]
+    .map(entry => entry?.pc)];
+  return [...new Set(connections.filter(Boolean))];
 }
 
 function resetScreenShareState({
@@ -137,12 +159,11 @@ async function restoreCameraTrack(
   videoSender: any,
   previousVideoParameters: any,
 ) {
-  if (!cameraTrack) return;
-  cameraTrack.enabled = true;
+  if (cameraTrack) cameraTrack.enabled = true;
   try {
     const sender =
       videoSender ?? pc?.getSenders?.().find((candidate: any) => candidate.track?.kind === 'video');
-    if (sender) await sender.replaceTrack(cameraTrack);
+    if (sender) await sender.replaceTrack(cameraTrack ?? null);
     await restoreVideoSenderParameters(sender, previousVideoParameters);
   } catch (error) {
     logWarn('Failed to restore camera track after screen share', {
@@ -244,7 +265,8 @@ function applyScreenEncodingHints(videoTrack: any, sender: any): any {
 }
 
 async function attachScreenVideo(pc: any, stream: any, videoTrack: any) {
-  const existingSender = pc.getSenders?.().find((sender: any) => sender.track?.kind === 'video');
+  const existingSender = pc.getSenders?.().find((sender: any) => sender.track?.kind === 'video') ??
+    pc.getTransceivers?.().find((transceiver: any) => transceiver.receiver?.track?.kind === 'video')?.sender;
   const cameraTrack = existingSender?.track ?? null;
   const sender = existingSender ?? pc.addTrack?.(videoTrack, stream) ?? null;
   if (existingSender) await existingSender.replaceTrack(videoTrack);
@@ -403,6 +425,7 @@ async function resetFailedScreenShareStart({
   screenVideoSenderRef,
   screenVideoSenderAddedRef,
   previousVideoParametersRef,
+  peerResourcesRef,
   setIsScreenSharing,
   setIsScreenAudioShared,
   setScreenShareDelivery,
@@ -418,6 +441,7 @@ async function resetFailedScreenShareStart({
   screenVideoSenderRef: MutableValue;
   screenVideoSenderAddedRef: MutableValue<boolean>;
   previousVideoParametersRef: MutableValue;
+  peerResourcesRef: MutableValue<ScreenShareResources['peerResources']>;
   setIsScreenSharing: (value: boolean) => void;
   setIsScreenAudioShared: (value: boolean) => void;
   setScreenShareDelivery: (value: ScreenShareDelivery) => void;
@@ -425,16 +449,33 @@ async function resetFailedScreenShareStart({
 }) {
   await detachSystemAudio(localStreamRef.current);
   stopScreenCapture(stream);
-  await removeScreenSender(pc, screenAudioSenderRef.current, 'audio');
-  if (screenVideoSenderAddedRef.current) {
-    await removeScreenSender(pc, screenVideoSenderRef.current, 'video');
+  const peerResources = peerResourcesRef.current;
+  if (peerResources.length) {
+    await Promise.all(peerResources.map(async resource => {
+      await removeScreenSender(resource.pc, resource.audioSender, 'audio');
+      if (resource.addedVideoSender) {
+        await removeScreenSender(resource.pc, resource.videoSender, 'video');
+      } else {
+        await restoreCameraTrack(
+          resource.pc,
+          resource.cameraTrack,
+          resource.videoSender,
+          resource.previousVideoParameters,
+        );
+      }
+    }));
   } else {
-    await restoreCameraTrack(
-      pc,
-      cameraTrackRef.current,
-      screenVideoSenderRef.current,
-      previousVideoParametersRef.current,
-    );
+    await removeScreenSender(pc, screenAudioSenderRef.current, 'audio');
+    if (screenVideoSenderAddedRef.current) {
+      await removeScreenSender(pc, screenVideoSenderRef.current, 'video');
+    } else {
+      await restoreCameraTrack(
+        pc,
+        cameraTrackRef.current,
+        screenVideoSenderRef.current,
+        previousVideoParametersRef.current,
+      );
+    }
   }
   screenStreamRef.current = null;
   screenVideoTrackRef.current = null;
@@ -442,6 +483,7 @@ async function resetFailedScreenShareStart({
   screenVideoSenderRef.current = null;
   screenVideoSenderAddedRef.current = false;
   previousVideoParametersRef.current = null;
+  peerResourcesRef.current = [];
   if (cameraTrackRef.current) {
     cameraTrackRef.current.enabled = true;
     cameraTrackRef.current = null;
@@ -468,6 +510,7 @@ async function resetFailedScreenShareStart({
  */
 export default function useScreenShare({
   peerConnectionRef,
+  peerConnectionsRef,
   localStreamRef,
   setLocalStream,
   setStatus,
@@ -496,6 +539,7 @@ export default function useScreenShare({
   const screenVideoSenderRef = useRef((null as any));
   const screenVideoSenderAddedRef = useRef(false);
   const previousVideoParametersRef = useRef((null as any));
+  const peerResourcesRef = useRef([] as ScreenShareResources['peerResources']);
   const isTogglingRef = useRef(false);
   // Mirrored into state because the control has to *look* busy: the toggle
   // round-trips through a system capture prompt and (with screen audio) a
@@ -525,6 +569,7 @@ export default function useScreenShare({
         screenVideoSender: screenVideoSenderRef,
         screenVideoSenderAdded: screenVideoSenderAddedRef,
         previousVideoParameters: previousVideoParametersRef,
+        peerResources: peerResourcesRef,
       });
 
       if (!resources.screenStream && !resources.screenVideoTrack) {
@@ -536,20 +581,33 @@ export default function useScreenShare({
       // Before the capture is torn down: the mix borrows its MediaProjection.
       await detachSystemAudio(localStreamRef.current);
 
-      const pc = peerConnectionRef.current;
-      await removeScreenSender(pc, resources.audioSender, 'audio');
-      if (resources.addedVideoSender) {
-        // Nothing to restore: leaving the sender in place would keep the
-        // remote peer staring at the last captured frame for the rest of an
-        // otherwise audio-only call.
-        await removeScreenSender(pc, resources.videoSender, 'video');
+      if (resources.peerResources.length) {
+        await Promise.all(resources.peerResources.map(async resource => {
+          await removeScreenSender(resource.pc, resource.audioSender, 'audio');
+          if (resource.addedVideoSender) {
+            await removeScreenSender(resource.pc, resource.videoSender, 'video');
+          } else {
+            await restoreCameraTrack(
+              resource.pc,
+              resource.cameraTrack,
+              resource.videoSender,
+              resource.previousVideoParameters,
+            );
+          }
+        }));
       } else {
-        await restoreCameraTrack(
-          pc,
-          resources.cameraTrack,
-          resources.videoSender,
-          resources.previousVideoParameters,
-        );
+        const pc = peerConnectionRef.current;
+        await removeScreenSender(pc, resources.audioSender, 'audio');
+        if (resources.addedVideoSender) {
+          await removeScreenSender(pc, resources.videoSender, 'video');
+        } else {
+          await restoreCameraTrack(
+            pc,
+            resources.cameraTrack,
+            resources.videoSender,
+            resources.previousVideoParameters,
+          );
+        }
       }
       restoreLocalStream(
         localStreamRef.current,
@@ -575,7 +633,8 @@ export default function useScreenShare({
   const startScreenShare = useCallback(async () => {
     if (screenStreamRef.current) return;
 
-    const pc = peerConnectionRef.current;
+    const peerConnections = getPeerConnections(peerConnectionRef, peerConnectionsRef);
+    const pc = peerConnections[0];
     if (!pc) {
       setStatus('Screen sharing needs an active call', 'error');
       return;
@@ -606,17 +665,31 @@ export default function useScreenShare({
     } = capture as any;
 
     try {
-      const { cameraTrack, videoSender, addedVideoSender, previousVideoParameters } =
-        await attachScreenVideo(pc, stream, videoTrack);
-      cameraTrackRef.current = cameraTrack;
-      screenVideoSenderRef.current = videoSender;
-      screenVideoSenderAddedRef.current = addedVideoSender;
-      previousVideoParametersRef.current = previousVideoParameters;
-      const audioSender = attachScreenAudio(pc, stream, audioTrack);
+      const peerResources: ScreenShareResources['peerResources'] = [];
+      for (const currentPc of peerConnections) {
+        const { cameraTrack, videoSender, addedVideoSender, previousVideoParameters } =
+          await attachScreenVideo(currentPc, stream, videoTrack);
+        const resource: ScreenShareResources['peerResources'][number] = {
+          pc: currentPc,
+          cameraTrack,
+          videoSender,
+          addedVideoSender,
+          previousVideoParameters,
+          audioSender: null,
+        };
+        peerResources.push(resource);
+        peerResourcesRef.current = peerResources;
+        resource.audioSender = attachScreenAudio(currentPc, stream, audioTrack);
+      }
+      const primary = peerResources[0];
+      cameraTrackRef.current = primary?.cameraTrack ?? null;
+      screenVideoSenderRef.current = primary?.videoSender ?? null;
+      screenVideoSenderAddedRef.current = Boolean(primary?.addedVideoSender);
+      previousVideoParametersRef.current = primary?.previousVideoParameters ?? null;
+      screenAudioSenderRef.current = primary?.audioSender ?? null;
       screenStreamRef.current = stream;
       screenVideoTrackRef.current = videoTrack;
-      screenAudioSenderRef.current = audioSender;
-      replaceLocalCamera(localStreamRef.current, cameraTrack, videoTrack, setLocalStream);
+      replaceLocalCamera(localStreamRef.current, primary?.cameraTrack ?? null, videoTrack, setLocalStream);
       // Started once the projection exists and before renegotiation, though it
       // needs neither a sender nor an SDP change: the mix rides the microphone
       // track the call is already sending.
@@ -639,7 +712,7 @@ export default function useScreenShare({
       await verifyScreenShareDelivery({
         stream,
         screenStreamRef,
-        peerConnectionRef,
+        peerConnectionRef: { current: pc },
         setScreenShareDelivery,
         isScreenAudioEnabled,
         audioShared,
@@ -660,6 +733,7 @@ export default function useScreenShare({
         screenVideoSenderRef,
         screenVideoSenderAddedRef,
         previousVideoParametersRef,
+        peerResourcesRef,
         setIsScreenSharing,
         setIsScreenAudioShared,
         setScreenShareDelivery,
@@ -670,6 +744,7 @@ export default function useScreenShare({
     isScreenAudioEnabled,
     localStreamRef,
     peerConnectionRef,
+    peerConnectionsRef,
     setLocalStream,
     setStatus,
     stopScreenShare,

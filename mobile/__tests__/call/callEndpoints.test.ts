@@ -7,6 +7,7 @@
 
 import {
   buildCallActionUrl,
+  buildGroupCallLookupUrl,
   buildCallLookupUrl,
 } from '../../src/call/callEndpoints';
 
@@ -23,12 +24,26 @@ describe('buildCallLookupUrl', () => {
     ).toBe('https://s.example/calls/c');
   });
 
+  it('normalizes a trailing slash on the signaling base URL', () => {
+    expect(buildCallLookupUrl({ signalingUrl: 'https://s.example///', callId: 'c' }))
+      .toBe('https://s.example/calls/c');
+  });
+
   it('escapes the callId, so a payload cannot reshape the request', () => {
     const url = buildCallLookupUrl({
       signalingUrl: 'https://s.example',
       callId: '../admin',
     });
     expect(url).toBe('https://s.example/calls/..%2Fadmin');
+  });
+
+  describe('buildGroupCallLookupUrl', () => {
+    it('uses the authenticated group-call resource path and escapes the call id', () => {
+      expect(buildGroupCallLookupUrl({
+        signalingUrl: 'https://s.example/',
+        callId: '../group-call',
+      })).toBe('https://s.example/groups/calls/..%2Fgroup-call');
+    });
   });
 
   // The session id is a bearer token and must never reach a URL, where proxy

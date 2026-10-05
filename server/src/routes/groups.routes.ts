@@ -26,7 +26,7 @@ function userFrom(value: unknown): string {
 
 function storeErrorStatus(code: ConversationStoreError['code']): number {
   if (code === 'not_member' || code === 'forbidden') return 403;
-  return code === 'group_full' ? 409 : 400;
+  return code === 'group_full' || code === 'group_call_full' ? 409 : 400;
 }
 
 function createGroupsRouter({ state, io }: { state: ServerState; io: import('socket.io').Server }): express.Router {
@@ -110,6 +110,32 @@ function createGroupsRouter({ state, io }: { state: ServerState; io: import('soc
   });
   endpoint('get', '/groups/:groupId', async (_req, res, userId, groupId) => {
     res.json({ group: await state.conversationStore.get(groupId, userId) });
+  });
+  router.get('/groups/calls/:callId', async (req, res) => {
+    try {
+      const session = await getSessionFromRequestAsync(req, state);
+      if (!session) { res.status(401).json({ error: 'invalid session' }); return; }
+      const callId = String(req.params.callId ?? '');
+      if (!uuid.test(callId)) { res.status(400).json({ error: 'invalid callId' }); return; }
+      const change = await state.conversationStore.getCall(callId);
+      const participant = change?.participants.find(({ userId }) => userId === session.userId);
+      if (!change || !participant || participant.status === 'declined' || participant.status === 'left' ||
+          !(await state.conversationStore.get(change.call.conversationId, session.userId))) {
+        // A lookup does not disclose whether an unrelated participant has a call.
+        res.status(404).json({ error: 'group call not found' });
+        return;
+      }
+      res.json({
+        version: SIGNALING_VERSION,
+        conversationId: change.call.conversationId,
+        callId: change.call.callId,
+        call: change.call,
+        participants: change.participants,
+      });
+    } catch (error) {
+      console.error(`[groups] call lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+      res.status(503).json({ error: 'group call lookup unavailable' });
+    }
   });
   endpoint('post', '/groups/:groupId/invitations', async (req, res, actorId, conversationId) => {
     const userId = userFrom(req.body?.userId);

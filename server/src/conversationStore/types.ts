@@ -167,6 +167,7 @@ export type ConversationStore = {
     emoji: string;
     action: 'add' | 'remove';
   }) => Promise<{ message: StoredMessage; recipients: string[] } | null>;
+  getCall: (callId: string) => Promise<GroupCallChange | null>;
   startCall: (args: {
     conversationId: string;
     initiatorId: string;
@@ -195,7 +196,7 @@ export type ConversationStore = {
 };
 
 export class ConversationStoreError extends Error {
-  code: 'not_member' | 'forbidden' | 'group_full' | 'invalid_members' | 'invalid_invitation';
+  code: 'not_member' | 'forbidden' | 'group_full' | 'group_call_full' | 'invalid_members' | 'invalid_invitation';
 
   constructor(code: ConversationStoreError['code'], message: string) {
     super(message);
