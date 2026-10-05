@@ -1534,8 +1534,8 @@ describe('useMessaging', () => {
     });
 
     const sends = socket.emit.mock.calls
-      .filter(([event]: [string]) => event === 'message.send')
-      .map(([, payload]: [string, { clientMessageId: string }]) => payload.clientMessageId);
+      .filter(call => call[0] === 'message.send')
+      .map(call => call[1].clientMessageId);
     expect(sends).toEqual(ids);
     expect(new Set(sends).size).toBe(3);
     expect((chatDb as any).__snapshot.outbox).toEqual([]);
