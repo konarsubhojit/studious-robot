@@ -1515,6 +1515,33 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ syncState: 'synced' });
   });
 
+  test('multiple offline messages replay exactly once in composition order after reconnect', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    const ids: string[] = [];
+
+    await act(async () => {
+      for (const body of ['first', 'second', 'third']) {
+        ids.push(await resultRef.current.sendMessage('bob', body));
+      }
+    });
+
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(3);
+    socket.connected = true;
+    await act(async () => {
+      resultRef.current.handleSocketConnected();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    const sends = socket.emit.mock.calls
+      .filter(call => call[0] === 'message.send')
+      .map(call => call[1].clientMessageId);
+    expect(sends).toEqual(ids);
+    expect(new Set(sends).size).toBe(3);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(3);
+  });
+
   test('a delivered message buzzes so the sender need not watch the screen', async () => {
     const { resultRef } = setup();
 
