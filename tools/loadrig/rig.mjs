@@ -8,6 +8,10 @@ const CLIENT_EVENTS = Object.freeze({
   CALL_DECLINE: 'call.decline',
   CALL_END: 'call.end',
   CALL_INITIATE: 'call.initiate',
+  CONVERSATION_CALL_ACCEPT: 'conversation.call.accept',
+  CONVERSATION_CALL_DECLINE: 'conversation.call.decline',
+  CONVERSATION_CALL_LEAVE: 'conversation.call.leave',
+  CONVERSATION_CALL_START: 'conversation.call.start',
   MESSAGE_SEND: 'message.send',
   RTC_ANSWER: 'rtc.answer',
   RTC_OFFER: 'rtc.offer',
@@ -19,7 +23,7 @@ const SERVER_EVENTS = Object.freeze({
   SESSION_INVALID: 'session.invalid',
   SIGNALING_ERROR: 'signaling.error',
 });
-const SIGNALING_VERSION = 1;
+const SIGNALING_VERSION = 3;
 const REPORT_INTERVAL_MS = 15_000;
 const SWEEP_INTERVAL_MS = 5_000;
 const LATENCY_SAMPLE_LIMIT = 10_000;
@@ -36,6 +40,8 @@ const DEFAULTS = Object.freeze({
   CALLS_PER_MIN: 0,
   CALL_HOLD_SECS: 10,
   CALL_ANSWER_RATE: 100,
+  GROUP_CALL_RATE: 0,
+  GROUP_CALL_SIZE: 4,
 });
 
 class ConfigError extends Error {}
@@ -76,6 +82,14 @@ function loadConfig(env = process.env, now = new Date()) {
   if (callAnswerRate > 100) {
     throw new ConfigError(`CALL_ANSWER_RATE must be an integer between 0 and 100; got ${callAnswerRate}.`);
   }
+  const groupCallRate = parseInteger(env, 'GROUP_CALL_RATE', DEFAULTS.GROUP_CALL_RATE, { min: 0 });
+  if (groupCallRate > 100) {
+    throw new ConfigError(`GROUP_CALL_RATE must be an integer between 0 and 100; got ${groupCallRate}.`);
+  }
+  const groupCallSize = parseInteger(env, 'GROUP_CALL_SIZE', DEFAULTS.GROUP_CALL_SIZE, { min: 3 });
+  if (groupCallRate > 0 && groupCallSize > users) {
+    throw new ConfigError(`GROUP_CALL_SIZE must not exceed USERS (${users}); got ${groupCallSize}.`);
+  }
   const minRampBatch = Math.max(1, Math.ceil(users / rampSecs));
   const rampBatch = env.RAMP_BATCH === undefined
     ? minRampBatch
@@ -101,6 +115,8 @@ function loadConfig(env = process.env, now = new Date()) {
     callsPerMin,
     callHoldSecs,
     callAnswerRate,
+    groupCallRate,
+    groupCallSize,
     maxInFlightMessages: Math.max(users * 2, Math.ceil(users * msgPerMin * deliveryTimeoutMs / 60_000 * 2)),
     maxInFlightCalls: Math.max(1, Math.floor(users / 2)),
     out: env.OUT || defaultOutputPath(now),
@@ -302,7 +318,8 @@ async function openUser(io, config, index, state, startedAt) {
     recordLatency(bucket, latency);
   });
 
-  const user = { index, userId, socket, sendSequence: 0, timers: [] };
+  const user = { index, userId, sessionId: session.sessionId, socket, sendSequence: 0, timers: [] };
+  state.usersByIndex.set(index, user);
   socket.on(SERVER_EVENTS.CALL_INCOMING, (payload) => {
     handleIncomingCall(config, state, user, payload);
   });
@@ -369,6 +386,7 @@ function releaseCall(state, key, reason) {
   clearTimeout(record.cleanupTimer);
   state.callStates.delete(key);
   state.busyPairs.delete(record.pairKey);
+  for (const participant of record.participants) state.busyUsers.delete(participant.userId);
   if (reason) increment(state.errors, reason);
 }
 
@@ -386,7 +404,7 @@ function startCallScheduler(config, state, users, startedAt) {
     for (let attempted = 0; attempted < callers.length; attempted += 1) {
       const user = callers[cursor % callers.length];
       cursor += 1;
-      if (startCall(config, state, user, startedAt)) return;
+      if (startScheduledCall(config, state, user, users, startedAt)) return;
     }
     increment(state.errors, 'call_pair_backpressure');
   };
@@ -399,15 +417,217 @@ function startCallScheduler(config, state, users, startedAt) {
   return timeout;
 }
 
+function startScheduledCall(config, state, caller, users, startedAt) {
+  if (config.groupCallRate > 0 &&
+    (state.callsStarted * config.groupCallRate) % 100 < config.groupCallRate) {
+    const group = state.groupPools.find((candidate) =>
+      candidate.users.includes(caller) &&
+      candidate.users.every((user) => user.socket.connected && !state.busyUsers.has(user.userId))
+    );
+    if (group && startGroupCall(config, state, group, caller, startedAt)) return true;
+  }
+  return startCall(config, state, caller, startedAt);
+}
+
+function callPairKey(left, right) {
+  return `${Math.min(left.index, right.index)}:${Math.max(left.index, right.index)}`;
+}
+
+function groupPairKeys(participants) {
+  const keys = [];
+  for (let left = 0; left < participants.length; left += 1) {
+    for (let right = left + 1; right < participants.length; right += 1) {
+      keys.push(callPairKey(participants[left], participants[right]));
+    }
+  }
+  return keys;
+}
+
+function releaseGroupCall(state, record, reason) {
+  if (!state.groupCallStates.delete(record.key)) return;
+  for (const participant of record.participants) state.busyUsers.delete(participant.userId);
+  for (const pairKey of record.pairKeys) state.busyPairs.delete(pairKey);
+  if (reason) increment(state.errors, reason);
+}
+
+async function postCallAction(config, user, path, body = {}) {
+  const response = await fetch(`${config.target}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...body, sessionId: user.sessionId }),
+  });
+  let result = null;
+  try {
+    result = await response.json();
+  } catch {
+    // Keep the HTTP status as the failure reason when the server returned no JSON.
+  }
+  return { ok: response.ok, result, status: response.status };
+}
+
+async function prepareGroupPools(config, state, users) {
+  const connectedUsers = users.filter((user) => user.socket.connected);
+  const usersById = new Map(connectedUsers.map((user) => [user.userId, user]));
+  for (let offset = 0; offset + config.groupCallSize <= connectedUsers.length; offset += config.groupCallSize) {
+    const members = connectedUsers.slice(offset, offset + config.groupCallSize);
+    const [creator, ...invitees] = members;
+    const created = await postCallAction(config, creator, '/groups', {
+      name: `loadrig-${creator.userId}`,
+      inviteeIds: invitees.map((user) => user.userId),
+    });
+    if (!created.ok || !created.result?.group?.conversationId) {
+      throw new Error(`group setup failed (${created.status})`);
+    }
+    const conversationId = created.result.group.conversationId;
+    for (const invitation of created.result.invitations ?? []) {
+      const invitee = usersById.get(invitation.inviteeId);
+      const accepted = invitee && await postCallAction(
+        config,
+        invitee,
+        `/groups/${conversationId}/invitations/${invitation.invitationId}/accept`
+      );
+      if (!accepted?.ok) throw new Error(`group membership setup failed (${accepted?.status ?? 'missing user'})`);
+    }
+    state.groupPools.push({ conversationId, users: members });
+  }
+}
+
+function emitAck(socket, eventName, payload, timeoutMs) {
+  return new Promise((resolve) => {
+    emitWithAck(socket, eventName, payload, timeoutMs, resolve, () => resolve({ ok: false, error: 'timeout' }));
+  });
+}
+
+function startGroupCall(config, state, group, caller, startedAt) {
+  const participants = group.users;
+  if (state.groupCallStates.size + state.callStates.size >= config.maxInFlightCalls) {
+    increment(state.errors, 'call_backpressure');
+    return false;
+  }
+  const pairKeys = groupPairKeys(participants);
+  if (participants.some((user) => state.busyUsers.has(user.userId)) ||
+    pairKeys.some((key) => state.busyPairs.has(key))) return false;
+
+  const record = {
+    key: `group:${state.callsStarted}`,
+    participants,
+    pairKeys,
+    phase: phaseFor(startedAt, config.rampSecs),
+    callId: null,
+  };
+  state.callsStarted += 1;
+  state.groupCallsStarted += 1;
+  state.groupCallStates.set(record.key, record);
+  for (const participant of participants) state.busyUsers.add(participant.userId);
+  for (const pairKey of pairKeys) state.busyPairs.add(pairKey);
+
+  record.promise = (async () => {
+    const created = await emitAck(caller.socket, CLIENT_EVENTS.CONVERSATION_CALL_START, {
+      version: SIGNALING_VERSION,
+      conversationId: group.conversationId,
+      mediaType: 'audio',
+    }, config.deliveryTimeoutMs);
+    const callId = created?.call?.callId;
+    if (!created?.ok || !callId) {
+      releaseGroupCall(state, record, extractErrorReason(created, 'group_call_create_error'));
+      return;
+    }
+    record.callId = callId;
+    const invitees = participants.filter((user) => user !== caller);
+    const inviteeStates = new Map(created.participants.map(({ userId, status }) => [userId, status]));
+    state.groupParticipants += participants.length;
+    state.maxGroupParticipants = Math.max(state.maxGroupParticipants, participants.length);
+
+    const answerSequence = state.groupParticipantsSeen;
+    state.groupParticipantsSeen += invitees.length;
+    const joined = [caller];
+    for (const [index, participant] of invitees.entries()) {
+      if (inviteeStates.get(participant.userId) !== 'ringing') {
+        state.groupPeersDeclined += 1;
+        continue;
+      }
+      const shouldJoin = (answerSequence + index) % 100 < config.callAnswerRate;
+      const event = shouldJoin
+        ? CLIENT_EVENTS.CONVERSATION_CALL_ACCEPT
+        : CLIENT_EVENTS.CONVERSATION_CALL_DECLINE;
+      const response = await emitAck(participant.socket, event, {
+        version: SIGNALING_VERSION,
+        callId,
+      }, config.deliveryTimeoutMs);
+      if (!response?.ok && response?.error?.code === 'group_call_full') {
+        state.groupPeersDeclined += 1;
+        continue;
+      }
+      if (!response?.ok) {
+        releaseGroupCall(state, record, extractErrorReason(response, 'group_call_participant_error'));
+        return;
+      }
+      if (shouldJoin) joined.push(participant);
+      else state.groupPeersDeclined += 1;
+    }
+
+    if (joined.length > 1) {
+      state.groupMeshExpectedMessages += joined.length * (joined.length - 1);
+      for (let left = 0; left < joined.length; left += 1) {
+        for (let right = left + 1; right < joined.length; right += 1) {
+          const offer = await emitAck(joined[left].socket, CLIENT_EVENTS.RTC_OFFER, {
+            version: SIGNALING_VERSION,
+            callId,
+            peerId: joined[right].userId,
+            sdp: { type: 'offer', sdp: 'loadrig-group-offer' },
+          }, config.deliveryTimeoutMs);
+          if (!offer?.ok) {
+            releaseGroupCall(state, record, extractErrorReason(offer, 'group_rtc_offer_error'));
+            return;
+          }
+          state.groupMeshSignalingMessages += 1;
+          const answer = await emitAck(joined[right].socket, CLIENT_EVENTS.RTC_ANSWER, {
+            version: SIGNALING_VERSION,
+            callId,
+            peerId: joined[left].userId,
+            sdp: { type: 'answer', sdp: 'loadrig-group-answer' },
+          }, config.deliveryTimeoutMs);
+          if (!answer?.ok) {
+            releaseGroupCall(state, record, extractErrorReason(answer, 'group_rtc_answer_error'));
+            return;
+          }
+          state.groupMeshSignalingMessages += 1;
+        }
+      }
+      state.groupCallsInCall += 1;
+      await new Promise((resolve) => setTimeout(resolve, config.callHoldSecs * 1000));
+      for (const participant of joined) {
+        const leftCall = await emitAck(participant.socket, CLIENT_EVENTS.CONVERSATION_CALL_LEAVE, {
+          version: SIGNALING_VERSION,
+          callId,
+        }, config.deliveryTimeoutMs);
+        if (!leftCall?.ok) {
+          releaseGroupCall(state, record, extractErrorReason(leftCall, 'group_call_leave_error'));
+          return;
+        }
+      }
+      state.groupCallsEnded += 1;
+    } else {
+      state.groupCallsDeclined += 1;
+    }
+    releaseGroupCall(state, record);
+  })().catch((error) => {
+    releaseGroupCall(state, record, error?.message ? `group_call_error:${error.message}` : 'group_call_error');
+  });
+  return true;
+}
+
 function startCall(config, state, caller, startedAt) {
   if (!caller.socket.connected) return false;
-  if (state.callStates.size >= config.maxInFlightCalls) {
+  if (state.callStates.size + state.groupCallStates.size >= config.maxInFlightCalls) {
     increment(state.errors, 'call_backpressure');
     return false;
   }
 
   const calleeIndex = peerIndex(caller.index);
   const pairKey = `${Math.min(caller.index, calleeIndex)}:${Math.max(caller.index, calleeIndex)}`;
+  const callee = state.usersByIndex.get(calleeIndex);
+  if (!callee || state.busyUsers.has(caller.userId) || state.busyUsers.has(callee.userId)) return false;
   if (state.busyPairs.has(pairKey)) return false;
 
   const sequence = state.callsStarted;
@@ -417,10 +637,11 @@ function startCall(config, state, caller, startedAt) {
   const record = {
     key,
     pairKey,
+    participants: [caller, callee],
     sequence,
     phase,
     caller,
-    calleeId: userIdAt(config, calleeIndex),
+    calleeId: callee.userId,
     initiatedAt: now,
     incomingAt: null,
     acceptedAt: null,
@@ -429,6 +650,8 @@ function startCall(config, state, caller, startedAt) {
   };
   state.callsStarted += 1;
   state.busyPairs.add(pairKey);
+  state.busyUsers.add(caller.userId);
+  state.busyUsers.add(callee.userId);
   state.callStates.set(key, record);
 
   emitWithAck(
@@ -516,7 +739,12 @@ function connectCallMedia(config, state, callee, record) {
   emitWithAck(
     record.caller.socket,
     CLIENT_EVENTS.RTC_OFFER,
-    { version: SIGNALING_VERSION, callId: record.callId, sdp: { type: 'offer', sdp: 'loadrig-offer' } },
+    {
+      version: SIGNALING_VERSION,
+      callId: record.callId,
+      peerId: record.calleeId,
+      sdp: { type: 'offer', sdp: 'loadrig-offer' },
+    },
     config.deliveryTimeoutMs,
     (offerAck) => {
       if (!offerAck?.ok) {
@@ -526,7 +754,12 @@ function connectCallMedia(config, state, callee, record) {
       emitWithAck(
         callee.socket,
         CLIENT_EVENTS.RTC_ANSWER,
-        { version: SIGNALING_VERSION, callId: record.callId, sdp: { type: 'answer', sdp: 'loadrig-answer' } },
+        {
+          version: SIGNALING_VERSION,
+          callId: record.callId,
+          peerId: record.caller.userId,
+          sdp: { type: 'answer', sdp: 'loadrig-answer' },
+        },
         config.deliveryTimeoutMs,
         (answerAck) => {
           if (!answerAck?.ok) {
@@ -612,7 +845,16 @@ function snapshot(tag, config, state, startedAt) {
       timedOut: state.callsTimedOut,
       inCall: state.callsInCall,
       ended: state.callsEnded,
-      pending: state.callStates.size,
+      groupStarted: state.groupCallsStarted,
+      groupInCall: state.groupCallsInCall,
+      groupEnded: state.groupCallsEnded,
+      groupDeclined: state.groupCallsDeclined,
+      groupPeersDeclined: state.groupPeersDeclined,
+      groupParticipants: state.groupParticipants,
+      maxGroupParticipants: state.maxGroupParticipants,
+      groupMeshSignalingMessages: state.groupMeshSignalingMessages,
+      groupMeshExpectedMessages: state.groupMeshExpectedMessages,
+      pending: state.callStates.size + state.groupCallStates.size,
     };
     line.ringAccept = summarize(state.ringAcceptSteady);
     line.acceptInCall = summarize(state.acceptInCallSteady);
@@ -666,13 +908,27 @@ async function run(config) {
     acceptInCallRamp: createLatencyBucket(),
     errors: {},
     callStates: new Map(),
+    groupCallStates: new Map(),
+    groupPools: [],
+    busyUsers: new Set(),
     busyPairs: new Set(),
+    usersByIndex: new Map(),
     callsStarted: 0,
     callsAccepted: 0,
     callsDeclined: 0,
     callsTimedOut: 0,
     callsInCall: 0,
     callsEnded: 0,
+    groupCallsStarted: 0,
+    groupCallsInCall: 0,
+    groupCallsEnded: 0,
+    groupCallsDeclined: 0,
+    groupPeersDeclined: 0,
+    groupParticipants: 0,
+    groupParticipantsSeen: 0,
+    maxGroupParticipants: 0,
+    groupMeshSignalingMessages: 0,
+    groupMeshExpectedMessages: 0,
     callTimer: null,
   };
   const users = [];
@@ -692,12 +948,13 @@ async function run(config) {
     finalized = true;
     clearInterval(reporter);
     clearInterval(sweeper);
+    if (state.callTimer) clearTimeout(state.callTimer);
+    await Promise.all([...state.groupCallStates.values()].map((record) => record.promise));
     sweepDeliveryTimeouts(state.inFlight, Date.now(), config.deliveryTimeoutMs, state.errors);
     for (const user of users) {
       clearUserTimers(user);
       user.socket.disconnect();
     }
-    if (state.callTimer) clearTimeout(state.callTimer);
     for (const record of state.callStates.values()) clearTimeout(record.cleanupTimer);
     emitLine(stream, snapshot('final', config, state, startedAt));
     await closeStream(stream);
@@ -711,6 +968,9 @@ async function run(config) {
   // The default batch is derived from USERS/RAMP_SECS so the ramp completes
   // before the steady hold window begins, instead of silently measuring connect churn.
   users.push(...await rampUsers(io, config, state, startedAt));
+  if (config.groupCallRate > 0 && config.callsPerMin > 0) {
+    await prepareGroupPools(config, state, users);
+  }
   startCallScheduler(config, state, users, startedAt);
   const elapsed = Date.now() - startedAt;
   const holdUntil = config.rampSecs * 1000 + config.holdSecs * 1000;

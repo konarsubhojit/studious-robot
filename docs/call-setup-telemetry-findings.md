@@ -74,6 +74,13 @@ would not fix this: shared-timestamp connect samples can be recorded by a host
 that never handled the accept. Keep provenance explicit rather than shipping
 that misleading replacement or renaming metrics without compatibility planning.
 
+Group-call participant metrics use like-for-like units: `call_participant_join_rate`
+is `call_participants_joined_total / call_participants_total`, while the existing
+connect and completion rates remain call-to-call ratios. The participant
+histograms and peer-failure counters are still process-local, so their fleet
+totals require aggregating counters across instances rather than averaging
+per-instance rates.
+
 ## What remains unmeasured here
 
 No fresh production scrape, host-clock verification, device run or profiling

@@ -62,6 +62,7 @@ function createGroupsRouter({ state, io }: { state: ServerState; io: import('soc
       payload: { version: SIGNALING_VERSION, conversation: result.conversation, updatedBy: actorId },
     });
     for (const { call, participants } of result.callChanges ?? []) {
+      state.telemetry.recordGroupCallSnapshot(call, participants);
       await fanoutConversationEvent(io, state, {
         conversationId: result.conversation.conversationId,
         eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
