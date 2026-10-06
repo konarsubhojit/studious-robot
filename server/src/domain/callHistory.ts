@@ -84,9 +84,7 @@ function lastActivityMs(call: CallRecord): number {
 /**
  * Page a user's call history out of the in-memory map.
  *
- * Reversing before sorting makes ties deterministic: `Array#sort` is stable and
- * `Map` iterates in insertion order, so two calls sharing a millisecond come
- * back most-recently-created first, like every other pair.
+ * Use the same tie-breaks as the durable read and the merged group/direct page.
  */
 function readFromMemory(state: ServerState, { userId, statusFilter = null, limit, offset = 0 }: CallHistoryQuery): CallHistoryPage {
   const userCalls: CallRecord[] = [];
@@ -97,8 +95,8 @@ function readFromMemory(state: ServerState, { userId, statusFilter = null, limit
     userCalls.push(call);
   }
 
-  userCalls.reverse();
-  userCalls.sort((a, b) => lastActivityMs(b) - lastActivityMs(a));
+  userCalls.sort((a, b) => lastActivityMs(b) - lastActivityMs(a) ||
+    b.createdAt.localeCompare(a.createdAt) || b.callId.localeCompare(a.callId));
 
   return {
     calls: userCalls.slice(offset, offset + limit),
