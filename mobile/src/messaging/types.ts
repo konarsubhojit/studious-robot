@@ -1,5 +1,6 @@
 import type { AttachmentRecord, ConversationRecord, MessageRecord } from '../../../shared/signaling/schemas';
 import type { DeliveryState } from './deliveryState';
+import type { PeerProfile } from '../types/directory';
 
 /**
  * The vocabulary the messaging client is written in: the shapes every
@@ -121,6 +122,8 @@ export type ConversationSummary = {
   lastActivity?: ConversationActivity | null;
   unreadCount?: number;
   group?: ConversationRecord;
+  /** Account-scoped, local-only identity snapshots; never part of the server group record. */
+  groupMemberProfiles?: Record<string, PeerProfile>;
   localMock?: boolean;
   left?: boolean;
   readByMember?: Record<string, string>;

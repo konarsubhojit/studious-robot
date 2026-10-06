@@ -36,8 +36,8 @@ afterEach(() => {
 });
 
 test('directory creation multi-select excludes self, retains selections across searches and opens the created group', async () => {
-  const search = jest.fn(async (query: string) => query ? [{ userId: 'carol' }] : [
-    { userId: 'alice' }, { userId: 'bob' }, { userId: 'bob' },
+  const search = jest.fn(async (query: string) => query ? [{ userId: 'carol', displayName: 'Caroline' }] : [
+    { userId: 'alice' }, { userId: 'bob', displayName: 'Bobby' }, { userId: 'bob' },
   ]);
   const create = jest.fn(async () => 'mock-group-created');
   const open = jest.fn();
@@ -48,6 +48,7 @@ test('directory creation multi-select excludes self, retains selections across s
   await directoryTick();
   expect(search).toHaveBeenCalledWith('');
   expect(tree.root.findAll(node => node.props.testID === 'group-select-alice')).toHaveLength(0);
+  expect(text(tree)).toContain('Bobby');
   act(() => {
     find(tree, 'group-name').props.onChangeText('Project');
     find(tree, 'group-select-bob').props.onPress();
@@ -55,10 +56,13 @@ test('directory creation multi-select excludes self, retains selections across s
   });
   await directoryTick();
   expect(text(tree)).toContain('bob');
+  expect(text(tree)).toContain('Caroline');
   expect(find(tree, 'group-directory-submit').props.disabled).toBe(true);
   act(() => find(tree, 'group-select-carol').props.onPress());
   await act(async () => { find(tree, 'group-directory-submit').props.onPress(); });
-  expect(create).toHaveBeenCalledWith('Project', ['bob', 'carol']);
+  expect(create).toHaveBeenCalledWith('Project', ['bob', 'carol'], {
+    bob: { displayName: 'Bobby' }, carol: { displayName: 'Caroline' },
+  });
   expect(open).toHaveBeenCalledWith('mock-group-created');
   expect(openDirect).not.toHaveBeenCalled();
 });
@@ -95,7 +99,7 @@ test('add picker excludes existing members and submit errors remain actionable',
   expect(tree.root.findAll(node => node.props.testID === 'group-select-bob')).toHaveLength(0);
   act(() => find(tree, 'group-select-dave').props.onPress());
   await act(async () => { find(tree, 'group-directory-submit').props.onPress(); });
-  expect(submit).toHaveBeenCalledWith('', ['dave']);
+  expect(submit).toHaveBeenCalledWith('', ['dave'], { dave: {} });
   expect(text(tree)).toContain('disk full');
   expect(find(tree, 'group-directory-submit').props.disabled).toBe(false);
 });
@@ -111,7 +115,7 @@ function groupProps(currentUserId = 'alice') {
     },
     messages: [] as ChatMessage[], currentUserId, typing: { bob: true, carol: true },
     actions: { mode: 'mock' as const, create: jest.fn(), members: jest.fn(async () => {}), rename: jest.fn(async () => {}),
-      leave: jest.fn(async () => {}) },
+      leave: jest.fn(async () => {}), cacheMemberProfiles: jest.fn() },
     preview: { activity: jest.fn(async () => {}) },
     onSearchUsers: jest.fn(async () => []), onSend: jest.fn(async () => 'm1'),
     onRetry: jest.fn(async () => {}), onTyping: jest.fn(), onRead: jest.fn(async () => {}),
@@ -157,15 +161,30 @@ test('group offline banner tracks socket state and retryable count', async () =>
 test('group timeline attributes bubbles, summarizes read members and clears a durably accepted draft', async () => {
   const props = groupProps();
   props.conversation.readByMember = { bob: '2026-10-03T02:00:00Z', carol: '2026-10-03T02:00:00Z' };
+  props.conversation.groupMemberProfiles = {
+    bob: { displayName: 'Bobby', avatarKey: 'avatar-bob' },
+    carol: { displayName: 'Carol', avatarKey: 'avatar-carol' },
+  };
   props.messages = [
-    { messageId: 'm2', senderId: 'alice', recipientId: 'mock-group-1', body: 'my message', createdAt: '2026-10-03T01:00:00Z' },
+    { messageId: 'm2', senderId: 'alice', recipientId: 'mock-group-1', body: 'my message',
+      createdAt: '2026-10-03T01:00:00Z', readBy: ['alice', 'bob', 'carol', 'eve'] },
+    { messageId: 'm3', senderId: 'alice', recipientId: 'mock-group-1', body: 'not read by anyone',
+      createdAt: '2026-10-03T00:00:00Z' },
     { messageId: 'm1', senderId: 'bob', recipientId: 'mock-group-1', body: 'from bob' },
   ];
   const tree = await render(<GroupConversationScreen {...props} />);
   expect(text(tree)).toContain('from bob');
+  expect(text(tree)).toContain('Bobby');
   expect(text(tree)).toContain('You');
-  expect(text(tree)).toContain('Read by bob, carol');
-  expect(text(tree)).toContain('bob, carol');
+  expect(text(tree)).toContain('Read by Bobby, Carol');
+  expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Message from Bobby').length).toBeGreaterThan(0);
+  expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Read by Bobby').length)
+    .toBeGreaterThan(0);
+  expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Read by Carol').length)
+    .toBeGreaterThan(0);
+  expect(tree.root.findAll(node => node.props.accessibilityLabel === 'Read by eve')).toHaveLength(0);
+  expect(tree.root.findAll(node => node.props.testID === 'group-message-readers-m3')).toHaveLength(0);
+  expect(tree.root.findAll(node => node.props.testID === 'group-sender-avatar-m1').length).toBeGreaterThan(0);
   expect(text(tree)).toContain("1 message will send when you're back online");
   expect(text(tree)).toContain('Saved locally (mock)');
   expect(props.onRead).toHaveBeenCalledTimes(1);
@@ -182,7 +201,11 @@ test('member management offers admin add/remove/rename and routes failures witho
   props.actions.members.mockRejectedValueOnce(new Error('save failed'));
   const tree = await render(<GroupConversationScreen {...props} />);
   act(() => find(tree, 'group-open-members').props.onPress());
-  await act(async () => { find(tree, 'group-remove-bob').props.onPress(); });
+  expect(tree.root.findAll(node => node.props.testID === 'group-member-avatar-bob').length).toBeGreaterThan(0);
+  act(() => find(tree, 'group-remove-bob').props.onPress());
+  expect(props.actions.members).not.toHaveBeenCalled();
+  expect(find(tree, 'group-action-confirmation')).toBeDefined();
+  await act(async () => { find(tree, 'group-confirm-remove').props.onPress(); });
   expect(props.actions.members).toHaveBeenCalledWith('mock-group-1', { type: 'remove', userId: 'bob' });
   expect(text(tree)).toContain('save failed');
   expect(find(tree, 'group-members-sheet')).toBeDefined();
@@ -196,7 +219,9 @@ test('live group owners can open server-backed add and remove controls', async (
   const tree = await render(<GroupConversationScreen {...props} />);
   act(() => find(tree, 'group-open-members').props.onPress());
   expect(text(tree)).toContain('Only group owners can add or remove members.');
-  await act(async () => { find(tree, 'group-remove-bob').props.onPress(); });
+  act(() => find(tree, 'group-remove-bob').props.onPress());
+  expect(props.actions.members).not.toHaveBeenCalled();
+  await act(async () => { find(tree, 'group-confirm-remove').props.onPress(); });
   expect(props.actions.members).toHaveBeenCalledWith('mock-group-1', { type: 'remove', userId: 'bob' });
   act(() => find(tree, 'group-add-members').props.onPress());
   expect(find(tree, 'group-directory-sheet')).toBeDefined();
@@ -209,7 +234,10 @@ test('non-admin members cannot mutate membership and leave navigates back', asyn
   expect(tree.root.findAll(node => node.props.testID === 'group-add-members')).toHaveLength(0);
   expect(tree.root.findAll(node => node.props.testID === 'group-remove-carol')).toHaveLength(0);
   expect(tree.root.findAll(node => node.props.testID === 'group-rename')).toHaveLength(0);
-  await act(async () => { find(tree, 'group-leave').props.onPress(); });
+  act(() => find(tree, 'group-leave').props.onPress());
+  expect(props.actions.leave).not.toHaveBeenCalled();
+  expect(find(tree, 'group-action-confirmation')).toBeDefined();
+  await act(async () => { find(tree, 'group-confirm-leave').props.onPress(); });
   expect(props.actions.leave).toHaveBeenCalledWith('mock-group-1');
   expect(props.onBack).toHaveBeenCalledTimes(1);
 });
@@ -326,6 +354,9 @@ test('removed members have disabled composer, sends, and call preview', async ()
   expect(find(tree, 'group-send').props.disabled).toBe(true);
   expect(find(tree, 'group-open-call').props.disabled).toBe(true);
   expect(props.onRead).not.toHaveBeenCalled();
+  act(() => find(tree, 'group-open-members').props.onPress());
+  expect(find(tree, 'group-leave').props.disabled).toBe(true);
+  expect(tree.root.findAll(node => node.props.testID === 'group-add-members')).toHaveLength(0);
 });
 
 test('unified search matches group names and opens the conversation key without treating it as a person', async () => {

@@ -227,6 +227,31 @@ describe('outbox bookkeeping', () => {
     expect(nextOutboxDeadline([head, later])).toBe(head.nextAttemptAt);
   });
 
+  test('group-targeted rows use the same per-conversation drain ordering and failure isolation as direct rows', async () => {
+    const drainBodies = async (targetKind?: 'group') => {
+      const queue = [
+        queued({ messageId: 'first', recipientId: targetKind ? 'group-1' : 'bob',
+          ...(targetKind ? { targetKind, conversationId: 'group-1' } : {}), body: 'first' }),
+        queued({ messageId: 'later', recipientId: targetKind ? 'group-1' : 'bob',
+          ...(targetKind ? { targetKind, conversationId: 'group-1' } : {}), body: 'later' }),
+        queued({ messageId: 'independent', recipientId: targetKind ? 'group-2' : 'carol',
+          ...(targetKind ? { targetKind, conversationId: 'group-2' } : {}), body: 'independent' }),
+      ];
+      const attempted: string[] = [];
+      const complete = await drainQueuedMessages(queue, async item => {
+        attempted.push(item.body!);
+        return item.messageId !== 'first';
+      });
+      return { attempted, complete };
+    };
+
+    expect(await drainBodies('group')).toEqual(await drainBodies());
+    expect(await drainBodies('group')).toEqual({
+      attempted: ['first', 'independent'],
+      complete: false,
+    });
+  });
+
   test('a transient failure pauses only its conversation; a terminal failure releases later rows', async () => {
     const queue = [queued(), queued({ messageId: 'later' }), queued({ messageId: 'other', recipientId: 'carol' })];
     const transient = jest.fn(async (item: any) => item.messageId !== 'm1');
