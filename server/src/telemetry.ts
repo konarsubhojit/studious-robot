@@ -316,6 +316,9 @@ function createTelemetry(): Telemetry {
     call_participants_joined_total: 0, // participants that accepted/joined
     call_peer_connection_failures_total: 0, // invited peers that did not join
     calls_partially_degraded_total: 0, // terminal calls with joined and failed peers
+    group_calls_started_total: 0,
+    group_calls_ended_total: 0,
+    group_calls_partially_degraded_total: 0,
     call_setup_failures_total: 0,
     socket_reconnects_total: 0,
     call_stats_received_total: 0,
@@ -514,7 +517,7 @@ function createTelemetry(): Telemetry {
     createdAt: string;
     status: string;
     participants?: { userId: string; state: string; joinedAt?: string | null }[];
-  }) {
+  }, isGroupCall = false) {
     let tracked = callParticipantStates.get(call.callId);
     const isNewCall = !tracked;
     if (!tracked) {
@@ -527,6 +530,7 @@ function createTelemetry(): Telemetry {
       const uniqueParticipants = new Map(participantRows.map((participant) => [participant.userId, participant]));
       observeHistogram(histograms.call_participants_per_call, uniqueParticipants.size);
       counters.call_participants_total += uniqueParticipants.size;
+      if (isGroupCall) counters.group_calls_started_total += 1;
       tracked = { callerId: call.callerId, participants: new Map() };
       callParticipantStates.set(call.callId, tracked);
     }
@@ -555,7 +559,7 @@ function createTelemetry(): Telemetry {
     }
 
     if (isNewCall && isTerminalStatus(call.status)) {
-      finishCallParticipants(call.callId);
+      finishCallParticipants(call.callId, isGroupCall);
     }
   }
 
@@ -577,13 +581,14 @@ function createTelemetry(): Telemetry {
             : participant.status,
         joinedAt: participant.acceptedAt,
       })),
-    });
-    if (isTerminalStatus(call.status)) finishCallParticipants(call.callId);
+    }, true);
+    if (isTerminalStatus(call.status)) finishCallParticipants(call.callId, true);
   }
 
-  function finishCallParticipants(callId: string) {
+  function finishCallParticipants(callId: string, isGroupCall = false) {
     const tracked = callParticipantStates.get(callId);
     if (!tracked) return;
+    if (isGroupCall) counters.group_calls_ended_total += 1;
     let joinedPeers = 0;
     let failedPeers = 0;
     for (const [userId, participant] of tracked.participants) {
@@ -596,7 +601,10 @@ function createTelemetry(): Telemetry {
       }
       if (participant.failed) failedPeers += 1;
     }
-    if (joinedPeers > 0 && failedPeers > 0) counters.calls_partially_degraded_total += 1;
+    if (joinedPeers > 0 && failedPeers > 0) {
+      counters.calls_partially_degraded_total += 1;
+      if (isGroupCall) counters.group_calls_partially_degraded_total += 1;
+    }
     callParticipantStates.delete(callId);
   }
 

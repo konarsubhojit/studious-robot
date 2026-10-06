@@ -758,6 +758,9 @@ test('group-call telemetry tracks participant counts, joins, peer failures, and 
   assert.equal(snap.counters.call_participants_joined_total, 2);
   assert.equal(snap.counters.call_peer_connection_failures_total, 2);
   assert.equal(snap.counters.calls_partially_degraded_total, 1);
+  assert.equal(snap.counters.group_calls_started_total, 0);
+  assert.equal(snap.counters.group_calls_ended_total, 0);
+  assert.equal(snap.counters.group_calls_partially_degraded_total, 0);
   assert.equal(snap.derived.call_participant_join_rate, 0.5);
 });
 
@@ -801,6 +804,9 @@ test('conversation group-call snapshots record accepted peers and partial failur
   assert.equal(snap.counters.call_participants_joined_total, 2);
   assert.equal(snap.counters.call_peer_connection_failures_total, 2);
   assert.equal(snap.counters.calls_partially_degraded_total, 1);
+  assert.equal(snap.counters.group_calls_started_total, 1);
+  assert.equal(snap.counters.group_calls_ended_total, 1);
+  assert.equal(snap.counters.group_calls_partially_degraded_total, 1);
   assert.equal(snap.derived.call_participant_join_rate, 0.5);
 });
 
