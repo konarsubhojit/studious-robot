@@ -245,6 +245,11 @@ const EVENT_LOOP_DELAY_RESOLUTION_MS = 1;
  * would only ever hold a stale zero.
  */
 type QueryOperationTotals = Omit<QueryOperationSnapshot, 'meanMs'>;
+type CallParticipant = { userId: string; state: string; joinedAt?: string | null };
+type TrackedCallParticipants = {
+  callerId: string;
+  participants: Map<string, { joined: boolean; failed: boolean }>;
+};
 type CallTimestamp = {
   createdMs: number;
   ringingMs: number | null;
@@ -468,10 +473,7 @@ function createTelemetry(): Telemetry {
 
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
   const callTimestamps: Map<string, CallTimestamp> = new Map();
-  const callParticipantStates = new Map<string, {
-    callerId: string;
-    participants: Map<string, { joined: boolean; failed: boolean }>;
-  }>();
+  const callParticipantStates = new Map<string, TrackedCallParticipants>();
 
   // ─── Recording API ──────────────────────────────────────────────────────
 
@@ -516,51 +518,63 @@ function createTelemetry(): Telemetry {
     callerId: string;
     createdAt: string;
     status: string;
-    participants?: { userId: string; state: string; joinedAt?: string | null }[];
+    participants?: CallParticipant[];
   }, isGroupCall = false) {
     let tracked = callParticipantStates.get(call.callId);
     const isNewCall = !tracked;
-    if (!tracked) {
-      const participantRows = call.participants?.length
-        ? call.participants
-        : [
-            { userId: call.callerId, state: 'joined', joinedAt: call.createdAt },
-            { userId: '__callee', state: 'ringing' },
-          ];
-      const uniqueParticipants = new Map(participantRows.map((participant) => [participant.userId, participant]));
-      observeHistogram(histograms.call_participants_per_call, uniqueParticipants.size);
-      counters.call_participants_total += uniqueParticipants.size;
-      if (isGroupCall) counters.group_calls_started_total += 1;
-      tracked = { callerId: call.callerId, participants: new Map() };
-      callParticipantStates.set(call.callId, tracked);
-    }
+    if (!tracked) tracked = initializeCallParticipants(call, isGroupCall);
     if (call.callerId) tracked.callerId = call.callerId;
 
     const rows = call.participants?.length
       ? call.participants
       : [{ userId: tracked.callerId, state: 'joined', joinedAt: call.createdAt }];
-    for (const participant of rows) {
-      if (!participant.userId) continue;
-      const previous = tracked.participants.get(participant.userId) ?? { joined: false, failed: false };
-      const joined = previous.joined || participant.state === 'joined' ||
-        (participant.state === 'left' && Boolean(participant.joinedAt));
-      if (!previous.joined && joined) {
-        counters.call_participants_joined_total += 1;
-        const joinedAtMs = participant.joinedAt ? Date.parse(participant.joinedAt) : Date.now();
-        const elapsed = measureElapsedMs(call.createdAt, joinedAtMs, MAX_PLAUSIBLE_SETUP_LATENCY_MS);
-        if (elapsed.ok) observeHistogram(histograms.call_participant_join_latency_ms, elapsed.elapsedMs);
-      }
-      const failedState = ['declined', 'missed', 'busy', 'unreachable'].includes(participant.state);
-      const failed = previous.failed || (!joined && failedState);
-      if (!previous.failed && failed && participant.userId !== tracked.callerId) {
-        counters.call_peer_connection_failures_total += 1;
-      }
-      tracked.participants.set(participant.userId, { joined, failed });
-    }
+    for (const participant of rows) recordCallParticipant(call, tracked, participant);
 
     if (isNewCall && isTerminalStatus(call.status)) {
       finishCallParticipants(call.callId, isGroupCall);
     }
+  }
+
+  function initializeCallParticipants(
+    call: { callId: string; callerId: string; createdAt: string; participants?: CallParticipant[] },
+    isGroupCall: boolean
+  ): TrackedCallParticipants {
+    const participantRows = call.participants?.length
+      ? call.participants
+      : [
+          { userId: call.callerId, state: 'joined', joinedAt: call.createdAt },
+          { userId: '__callee', state: 'ringing' },
+        ];
+    const uniqueParticipants = new Map(participantRows.map((participant) => [participant.userId, participant]));
+    observeHistogram(histograms.call_participants_per_call, uniqueParticipants.size);
+    counters.call_participants_total += uniqueParticipants.size;
+    if (isGroupCall) counters.group_calls_started_total += 1;
+    const tracked = { callerId: call.callerId, participants: new Map<string, { joined: boolean; failed: boolean }>() };
+    callParticipantStates.set(call.callId, tracked);
+    return tracked;
+  }
+
+  function recordCallParticipant(
+    call: { createdAt: string },
+    tracked: TrackedCallParticipants,
+    participant: CallParticipant
+  ) {
+    if (!participant.userId) return;
+    const previous = tracked.participants.get(participant.userId) ?? { joined: false, failed: false };
+    const joined = previous.joined || participant.state === 'joined' ||
+      (participant.state === 'left' && Boolean(participant.joinedAt));
+    if (!previous.joined && joined) {
+      counters.call_participants_joined_total += 1;
+      const joinedAtMs = participant.joinedAt ? Date.parse(participant.joinedAt) : Date.now();
+      const elapsed = measureElapsedMs(call.createdAt, joinedAtMs, MAX_PLAUSIBLE_SETUP_LATENCY_MS);
+      if (elapsed.ok) observeHistogram(histograms.call_participant_join_latency_ms, elapsed.elapsedMs);
+    }
+    const failedState = ['declined', 'missed', 'busy', 'unreachable'].includes(participant.state);
+    const failed = previous.failed || (!joined && failedState);
+    if (!previous.failed && failed && participant.userId !== tracked.callerId) {
+      counters.call_peer_connection_failures_total += 1;
+    }
+    tracked.participants.set(participant.userId, { joined, failed });
   }
 
   function recordGroupCallSnapshot(

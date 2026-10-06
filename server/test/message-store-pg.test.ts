@@ -201,31 +201,31 @@ test('listMessageChanges scopes participants, blocks, cursor and stable ordering
     limit: 10,
   });
 
-  test('listMessageChanges returns a typed delta with normalized timestamps', async () => {
-    const snapshot = messageRow({
-      createdAt: '2024-01-01 00:00:00+00',
-      readAt: null,
-    });
-    const { store } = createRecordingStore([
-      [[7, 'new', '2024-01-01 00:00:00+00', snapshot]],
-    ]);
-
-    const changes = await store.listMessageChanges?.({
-      userId: 'alice',
-      since: '2023-12-31T00:00:00.000Z',
-    });
-
-    assert.equal(changes?.[0].changeId, '7');
-    assert.equal(changes?.[0].type, 'new');
-    assert.equal(changes?.[0].changedAt, '2024-01-01T00:00:00.000Z');
-    assert.equal(changes?.[0].message.createdAt, '2024-01-01T00:00:00.000Z');
-  });
-
   const [query] = queries;
   assert.match(query.text, /"message_changes"\."sender_id" = \$\d+ or "message_changes"\."recipient_id" = \$\d+/);
   assert.match(query.text, /"message_changes"\."changed_at" > \$\d+/);
   assert.match(query.text, /"message_changes"\."change_id" > \$\d+/);
   assert.match(query.text, /order by "message_changes"\."changed_at" asc, "message_changes"\."change_id" asc/);
+});
+
+test('listMessageChanges returns a typed delta with normalized timestamps', async () => {
+  const snapshot = messageRow({
+    createdAt: '2024-01-01 00:00:00+00',
+    readAt: null,
+  });
+  const { store } = createRecordingStore([
+    [[7, 'new', '2024-01-01 00:00:00+00', snapshot]],
+  ]);
+
+  const changes = await store.listMessageChanges?.({
+    userId: 'alice',
+    since: '2023-12-31T00:00:00.000Z',
+  });
+
+  assert.equal(changes?.[0].changeId, '7');
+  assert.equal(changes?.[0].type, 'new');
+  assert.equal(changes?.[0].changedAt, '2024-01-01T00:00:00.000Z');
+  assert.equal(changes?.[0].message.createdAt, '2024-01-01T00:00:00.000Z');
 });
 
 test('listConversationChanges reads one conversation along its cursor index, at live message state', async () => {
