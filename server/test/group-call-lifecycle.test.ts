@@ -78,15 +78,22 @@ async function verifyHistory(stores: ConversationStore[]) {
   await store.removeMember({ conversationId, actorId: owner, userId: ids[1] });
   const removed = (await store.getCall(started.call.callId))!;
   assert.equal(removed.participants.find(person => person.userId === ids[1])!.status, 'left');
-  assert.equal((await store.listCallHistory({ userId: ids[1], limit: 20 })).total, 0);
+  assert.equal((await store.listCallHistory({ userId: ids[1], limit: 20 })).total, 1);
   await assert.rejects(store.listMessages({ conversationId, userId: ids[1], limit: 20 }), { code: 'not_member' });
   await store.expireCall(started.call.callId, Date.now() + 61_000);
   await store.leave({ conversationId, userId: ids[3] });
   assert.equal((await store.getCall(started.call.callId))!.participants.find(person => person.userId === ids[3])!.status, 'declined');
   await store.transitionCall({ callId: started.call.callId, userId: owner, action: 'leave' });
+  assert.equal((await store.listCallHistory({ userId: ids[3], limit: 20 })).calls[0].outcome, 'missed');
+  const reissued = (await store.addMembers({ conversationId, actorId: owner, userIds: [ids[1]] }))!;
+  await store.acceptInvitation({ conversationId, userId: ids[1], invitationId: reissued.invitations![0].invitationId });
+  assert.deepEqual(await store.listMessages({ conversationId, userId: ids[1], limit: 20 }), []);
+  const retained = await store.listCallHistory({ userId: ids[1], limit: 20 });
+  assert.equal(retained.total, 1, 'rejoin retains original history without duplicating membership intervals');
+  assert.equal(retained.calls[0].outcome, 'joined');
   const restarted = stores.at(-1)!;
   const joined = await restarted.listMessages({ conversationId, userId: owner, limit: 20 });
-  assert.equal(joined[0].messageId, started.call.callId);
+  assert.equal(joined[0].messageId, `group-call:${started.call.callId}`);
   assert.equal(joined[0].type, 'system');
   assert.equal(joined[0].body, 'Group audio call · Joined · Ended');
   const missed = await restarted.listMessages({ conversationId, userId: ids[2], limit: 20 });
@@ -100,6 +107,7 @@ async function verifyHistory(stores: ConversationStore[]) {
   assert.equal(history.calls[0].callStatus, 'ended');
   assert.equal((await restarted.listCallHistory({ userId: 'outsider', limit: 20 })).total, 0);
   const timestamp = started.call.createdAt;
+  await assert.rejects(store.saveMessage({ ...joined[0], type: 'text', body: 'forged call history' }), { code: 'forbidden' });
   for (const messageId of ['00000000-0000-4000-8000-000000000000', 'zz-last-message']) {
     await store.saveMessage({ messageId, conversationId, senderId: owner, recipientId: conversationId,
       body: 'notes', type: 'text', createdAt: timestamp, attachment: null, replyTo: null,
@@ -116,7 +124,7 @@ async function verifyHistory(stores: ConversationStore[]) {
     beforeMessageId = rows[0].messageId;
   }
   // Message creation times are server-authoritative, not the supplied timestamp.
-  assert.deepEqual(seen, ['zz-last-message', '00000000-0000-4000-8000-000000000000', started.call.callId]);
+  assert.deepEqual(seen, ['zz-last-message', '00000000-0000-4000-8000-000000000000', `group-call:${started.call.callId}`]);
 }
 
 test('memory room capacity, concurrent admissions, live rejoin, membership and final teardown', async () => {

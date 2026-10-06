@@ -621,8 +621,8 @@ async function verifyCallLog(t: Context, store: ConversationStore, restartStore:
   ]);
   assert.equal((await getJson(restarted.url, '/calls', restartedMember)).body.total, 2);
   await store.removeMember({ conversationId: id, actorId: 'log-owner', userId: 'log-member' });
-  assert.equal((await getJson(f.url, '/calls', member)).body.total, 0);
-  assert.equal((await getJson(restarted.url, '/calls', restartedMember)).body.total, 0);
+  assert.equal((await getJson(f.url, '/calls', member)).body.total, 2);
+  assert.equal((await getJson(restarted.url, '/calls', restartedMember)).body.total, 2);
   assert.equal((await getJson(f.url, `/groups/${id}/messages`, member)).status, 403);
 }
 

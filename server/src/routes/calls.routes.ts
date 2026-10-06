@@ -228,8 +228,8 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     const statusFilter = normaliseId(req.query.status) ?? null;
 
     const userId = session.userId;
-    // Authorization and outcomes change with membership/call transitions, so
-    // do not serve a cached group entry after revocation.
+    // Names, membership and outcomes change independently of direct-call
+    // invalidation; read group entries freshly, including departed invitees.
     const query = { userId, statusFilter, limit: offset + limit, offset: 0 };
     const [direct, group] = await Promise.all([
       readCallHistory(state, query),

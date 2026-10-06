@@ -852,7 +852,7 @@ describe('useMessaging', () => {
     expect(snapshot.participants.every((person: any) => person.callId === snapshot.callId && person.invitedAt)).toBe(true);
     expect(params.socketRef.current.emit).not.toHaveBeenCalled();
     expect(resultRef.current.messagesByPeer[id]).toEqual(expect.arrayContaining([
-      expect.objectContaining({ messageId: snapshot.callId, type: 'system', body: 'Group video call · Joined · Ended' }),
+      expect.objectContaining({ messageId: `group-call:${snapshot.callId}`, type: 'system', body: 'Group video call · Joined · Ended' }),
     ]));
   });
 

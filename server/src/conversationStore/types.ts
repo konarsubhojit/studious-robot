@@ -180,6 +180,7 @@ export type ConversationStore = {
     mediaType: 'audio' | 'video';
     ringTimeoutMs: number;
     excludedUserIds?: string[];
+    canInvite?: (userId: string) => Promise<boolean>;
   }) => Promise<GroupCallChange | null>;
   transitionCall: (args: {
     callId: string;

@@ -236,9 +236,11 @@ working physical-device bidirectional AV. Before release, record results for:
 Decision: keep `group_calls` and `group_call_participants` as the source of truth,
 not another call model or duplicated timeline rows. Both group message-history
 routes (`/groups/:id/messages` and `/conversations/:id/messages`) project one
-`type: system` entry per invited call, with `messageId = callId` and stable
+`type: system` entry per invited call, with `messageId = group-call:<callId>` and stable
 creation-time ordering. The existing `(before, beforeMessageId)` cursor merges
 these entries with messages, including arbitrary non-UUID message IDs.
+The stores reserve that ID prefix for call projections, so a client cannot
+overwrite/hide a call entry by sending a message with its timeline ID.
 
 The entry updates in place: **Joined** means the viewer has an `acceptedAt`
 (including the initiator); **Missed** means they never joined and their invite
@@ -256,10 +258,15 @@ Group entries carry `kind: group`, `conversationId`, `groupName`, `initiatorId`,
 conversation through Message, and never offers direct redial or contact-profile
 navigation for a group entry.
 
-History requires current active membership, an invited participant record and a
-creation time within the current membership interval. Newcomers get no old
-entries; removal/leave immediately revokes both history paths. Mixed call
-history is not cached, preventing stale cached membership authorization.
+Group timeline history requires current active membership and a creation time
+within the current membership interval. Newcomers get no old entries;
+removal/leave immediately revokes the group timeline and live-call actions.
+Personal `GET /calls` history instead checks the immutable invited participant
+record against the membership interval containing call creation, including
+departed intervals: original invitees retain their joined/missed/ended records
+after departure or rejoin, without duplicate rows from multiple intervals.
+Mixed call history is not cached, so transitions, renames and departures are
+reflected immediately.
 If group persistence fails, direct-call history remains available with
 `groupHistoryUnavailable: true`; unavailable group history is not represented
 as durable success. Read-only projections are not ordinary sendable, editable,
@@ -272,3 +279,19 @@ live rejoin, recovered joined/missed/ended history from recreated PostgreSQL
 stores, mixed-history authentication/attribution/offset pagination, group
 timeline pagination and mobile pre-dial/history rendering. Hardware/native
 media verification remains subject to the checklist above.
+
+Validation on 2026-10-06:
+
+- Full server suite: **847 passed, 6 database-gated skips**, including a final
+  concurrency-one run. The focused group/lifecycle/history run against an
+  isolated local PostgreSQL cluster: **62 passed, no skips**.
+- Full mobile suite: **174 suites / 3,002 tests passed**; focused group call,
+  message/history adapters and call-log navigation: **218 tests passed**.
+- Server/shared and mobile lint/typechecks, plus `db:check`, passed. No
+  dependencies, lockfiles, tables or migrations were added.
+- Android `:app:assembleDebug` and Android/iOS production JS bundles passed.
+  Native iOS compilation and physical-device AV were not available on Linux.
+- An unrelated fanout-probe test hit its three-millisecond peer expiry during
+  concurrent native compilation; the unchanged full suite passed after
+  compilation and again with controlled concurrency. Existing Jest
+  open-handle/deprecation and Metro package-export warnings remain.

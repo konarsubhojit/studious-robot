@@ -1,5 +1,6 @@
 /** Mesh policy applies to the whole current membership, including the initiator. */
 export const MAX_GROUP_CALL_PARTICIPANTS = 4;
+export const GROUP_CALL_MESSAGE_PREFIX = 'group-call:';
 export const GROUP_CALL_LIMIT_MESSAGE = 'Group calls support up to 4 members, including you. This group is too large to call.';
 
 type Call = {
@@ -42,7 +43,7 @@ export function groupCallTimelineMessage(
   const outcome = callOutcome(call.status, participant);
   const label = outcome === 'joined' ? 'Joined' : outcome === 'missed' ? 'Missed' : 'Ringing';
   return {
-    messageId: call.callId, conversationId: call.conversationId,
+    messageId: `${GROUP_CALL_MESSAGE_PREFIX}${call.callId}`, conversationId: call.conversationId,
     senderId: call.initiatorId, recipientId: call.conversationId,
     body: `Group ${call.mediaType} call · ${label}${call.status === 'ended' ? ' · Ended' : ''}`,
     type: 'system', createdAt: typeof call.createdAt === 'string' ? call.createdAt : participant.invitedAt ?? '',

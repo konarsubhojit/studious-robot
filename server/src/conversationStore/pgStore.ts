@@ -28,7 +28,7 @@ import {
 import type { GroupInvitation, GroupMembershipEvent } from './types.ts';
 import { assertActiveGroupMember, INVITATION_TTL_MS, requireGroupAdmin, validateInvitees } from './authorization.ts';
 import { attachmentScopeFromKey } from '../attachments.ts';
-import { GROUP_CALL_LIMIT_MESSAGE, MAX_GROUP_CALL_PARTICIPANTS, groupCallHistoryEntry, groupCallTimelineMessage } from '../../../shared/groupCalls.ts';
+import { GROUP_CALL_LIMIT_MESSAGE, GROUP_CALL_MESSAGE_PREFIX, MAX_GROUP_CALL_PARTICIPANTS, groupCallHistoryEntry, groupCallTimelineMessage } from '../../../shared/groupCalls.ts';
 
 type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
 type ConversationRow = typeof conversationsTable.$inferSelect;
@@ -597,7 +597,7 @@ function createPgConversationStore(db: Database): ConversationStore {
           .limit(Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
         const callCursor = before ? beforeMessageId
           ? or(lt(callsTable.createdAt, new Date(before)), and(eq(callsTable.createdAt, new Date(before)),
-            lt(sql<string>`${callsTable.callId}::text`, beforeMessageId)))
+            lt(sql<string>`${GROUP_CALL_MESSAGE_PREFIX} || ${callsTable.callId}::text`, beforeMessageId)))
           : lt(callsTable.createdAt, new Date(before)) : undefined;
         const callRows = await tx.select({ call: callsTable, participant: callParticipantsTable })
           .from(callsTable).innerJoin(callParticipantsTable, and(
@@ -905,6 +905,9 @@ function createPgConversationStore(db: Database): ConversationStore {
     },
 
     async saveMessage(message) {
+      if (message.messageId.startsWith(GROUP_CALL_MESSAGE_PREFIX)) {
+        throw new ConversationStoreError('forbidden', 'group call timeline IDs are reserved');
+      }
       return db.transaction(async (tx) => {
         const [conversation] = await tx
           .select()
@@ -1065,29 +1068,30 @@ function createPgConversationStore(db: Database): ConversationStore {
       const status = sql<string>`case when ${callParticipantsTable.acceptedAt} is null
         and (${callsTable.status} = 'ended' or ${callParticipantsTable.status} in ('declined', 'left'))
         then 'missed' else ${callsTable.status} end`;
-      const where = and(eq(callParticipantsTable.userId, userId), eq(membersTable.userId, userId),
-        isNull(membersTable.leftAt), isNull(membersTable.removedAt), isNull(conversationsTable.deletedAt),
-        gte(callsTable.createdAt, membersTable.joinedAt), statusFilter ? eq(status, statusFilter) : undefined);
+      const where = and(eq(callParticipantsTable.userId, userId), sql`exists (
+        select 1 from ${membersTable} where ${membersTable.conversationId} = ${callsTable.conversationId}
+        and ${membersTable.userId} = ${userId} and ${membersTable.joinedAt} <= ${callsTable.createdAt}
+        and (${membersTable.leftAt} is null or ${membersTable.leftAt} >= ${callsTable.createdAt})
+        and (${membersTable.removedAt} is null or ${membersTable.removedAt} >= ${callsTable.createdAt})
+      )`, statusFilter ? eq(status, statusFilter) : undefined);
       const query = () => db.select({ call: callsTable, participant: callParticipantsTable, name: conversationsTable.name })
         .from(callsTable)
         .innerJoin(callParticipantsTable, eq(callParticipantsTable.callId, callsTable.callId))
-        .innerJoin(conversationsTable, eq(conversationsTable.conversationId, callsTable.conversationId))
-        .innerJoin(membersTable, eq(membersTable.conversationId, callsTable.conversationId)).where(where);
+        .innerJoin(conversationsTable, eq(conversationsTable.conversationId, callsTable.conversationId)).where(where);
       const [rows, totals] = await Promise.all([
         query().orderBy(desc(callsTable.updatedAt), desc(callsTable.createdAt), desc(callsTable.callId)).limit(limit).offset(offset),
         db.select({ value: count() }).from(callsTable)
           .innerJoin(callParticipantsTable, eq(callParticipantsTable.callId, callsTable.callId))
-          .innerJoin(conversationsTable, eq(conversationsTable.conversationId, callsTable.conversationId))
-          .innerJoin(membersTable, eq(membersTable.conversationId, callsTable.conversationId)).where(where),
+          .innerJoin(conversationsTable, eq(conversationsTable.conversationId, callsTable.conversationId)).where(where),
       ]);
       return { calls: rows.map(({ call, participant, name }) =>
         groupCallHistoryEntry(toCall(call), toCallParticipant(participant), name)), total: Number(totals[0]?.value ?? 0) };
     },
 
-    async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [] }) {
+    async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [], canInvite }) {
       return db.transaction(async (tx) => {
         const [conversation] = await tx
-          .select({ conversationId: conversationsTable.conversationId })
+          .select()
           .from(conversationsTable)
           .where(and(eq(conversationsTable.conversationId, conversationId), isNull(conversationsTable.deletedAt)))
           .for('update')
@@ -1102,10 +1106,13 @@ function createPgConversationStore(db: Database): ConversationStore {
         if (members.some(({ userId }) => excluded.has(userId))) {
           throw new ConversationStoreError('forbidden', 'All current members must be reachable to start a group call');
         }
-        const invitees = members
-          .filter(({ userId }) => userId !== initiatorId && !excluded.has(userId));
+        const invitees = members.filter(({ userId }) => userId !== initiatorId);
         if (invitees.length === 0) return null;
-        const now = new Date();
+        if (canInvite && (await Promise.all(invitees.map(({ userId }) => canInvite(userId)))).includes(false)) {
+          throw new ConversationStoreError('forbidden', 'All current members must be reachable to start a group call');
+        }
+        await checkBlocks(tx, initiatorId, invitees.map(({ userId }) => userId));
+        const now = activityTime(conversation);
         const [call] = await tx
           .insert(callsTable)
           .values({

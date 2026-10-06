@@ -18,7 +18,7 @@ import { ConversationStoreError } from './types.ts';
 import type { GroupInvitation, GroupMembershipEvent } from './types.ts';
 import { activeGroupMember, assertActiveGroupMember, INVITATION_TTL_MS, requireGroupAdmin, validateInvitees } from './authorization.ts';
 import { attachmentScopeFromKey } from '../attachments.ts';
-import { GROUP_CALL_LIMIT_MESSAGE, MAX_GROUP_CALL_PARTICIPANTS, groupCallHistoryEntry, groupCallTimelineMessage } from '../../../shared/groupCalls.ts';
+import { GROUP_CALL_LIMIT_MESSAGE, GROUP_CALL_MESSAGE_PREFIX, MAX_GROUP_CALL_PARTICIPANTS, groupCallHistoryEntry, groupCallTimelineMessage } from '../../../shared/groupCalls.ts';
 
 const MAX_GROUP_MEMBERS = 16;
 
@@ -641,6 +641,9 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
     },
 
     async saveMessage(message) {
+      if (message.messageId.startsWith(GROUP_CALL_MESSAGE_PREFIX)) {
+        throw new ConversationStoreError('forbidden', 'group call timeline IDs are reserved');
+      }
       const member = requireActiveMember(message.conversationId, message.senderId);
       if (message.attachment && attachmentScopeFromKey(message.attachment.url.trim()) !== `group_${message.conversationId}`) {
         throw new ConversationStoreError('forbidden', 'attachment must belong to this group');
@@ -711,9 +714,11 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
     async listCallHistory({ userId, statusFilter, limit, offset = 0 }) {
       const history = [...calls.values()].flatMap(call => {
         const conversation = conversations.get(call.conversationId);
-        const member = listMembers(call.conversationId).find(person => person.userId === userId);
+        const member = [...members.values()].find(person => person.conversationId === call.conversationId &&
+          person.userId === userId && person.joinedAt <= call.createdAt &&
+          (!person.leftAt || person.leftAt >= call.createdAt) && (!person.removedAt || person.removedAt >= call.createdAt));
         const participant = callParticipants.get(callParticipantKey(call.callId, userId));
-        if (!conversation || conversation.deletedAt || !member || !participant || call.createdAt < member.joinedAt) return [];
+        if (!conversation || !member || !participant) return [];
         const entry = groupCallHistoryEntry(call, participant, conversation.name);
         return !statusFilter || entry.status === statusFilter ? [entry] : [];
       }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) ||
@@ -721,19 +726,32 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       return { calls: history.slice(offset, offset + limit), total: history.length };
     },
 
-    async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [] }) {
+    async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [], canInvite: canReach }) {
       const conversation = conversations.get(conversationId);
       if (!conversation || conversation.deletedAt !== null) return null;
-      requireActiveMember(conversationId, initiatorId);
-      if (listMembers(conversationId).length > MAX_GROUP_CALL_PARTICIPANTS) {
-        throw new ConversationStoreError('group_call_full', GROUP_CALL_LIMIT_MESSAGE);
-      }
       const excluded = new Set(excludedUserIds);
-      if (listMembers(conversationId).some(({ userId }) => excluded.has(userId))) {
-        throw new ConversationStoreError('forbidden', 'All current members must be reachable to start a group call');
-      }
-      const invitees = listMembers(conversationId)
-        .filter(({ userId }) => userId !== initiatorId && !excluded.has(userId));
+      let version: number;
+      let invitees: ConversationMember[];
+      do {
+        requireActiveMember(conversationId, initiatorId);
+        version = conversation.membershipVersion;
+        const active = listMembers(conversationId);
+        if (active.length > MAX_GROUP_CALL_PARTICIPANTS) {
+          throw new ConversationStoreError('group_call_full', GROUP_CALL_LIMIT_MESSAGE);
+        }
+        if (active.some(({ userId }) => excluded.has(userId))) {
+          throw new ConversationStoreError('forbidden', 'All current members must be reachable to start a group call');
+        }
+        invitees = active.filter(({ userId }) => userId !== initiatorId);
+        const reachable = await Promise.all(invitees.map(async ({ userId }) =>
+          (await canInvite(initiatorId, userId)) && (!canReach || await canReach(userId))));
+        if (conversation.deletedAt) return null;
+        // An asynchronous visibility check must not admit an unchecked newcomer.
+        if (conversation.membershipVersion !== version) continue;
+        if (reachable.includes(false)) {
+          throw new ConversationStoreError('forbidden', 'All current members must be reachable to start a group call');
+        }
+      } while (conversation.membershipVersion !== version);
       if (invitees.length === 0) return null;
       // Membership versions may advance several times in one millisecond.
       // Keep the snapshot inside every invited member's history interval.
