@@ -543,6 +543,7 @@ function createServer(opts: CreateServerOptions = {}) {
       for (const callId of await state.conversationStore.listExpiredCallIds(now)) {
         const change = await state.conversationStore.expireCall(callId, now);
         if (!change) continue;
+        state.telemetry.recordGroupCallSnapshot(change.call, change.participants);
         await fanoutConversationEvent(io, state, {
           conversationId: change.call.conversationId,
           eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,

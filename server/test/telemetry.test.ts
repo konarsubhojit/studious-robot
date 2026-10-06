@@ -761,6 +761,49 @@ test('group-call telemetry tracks participant counts, joins, peer failures, and 
   assert.equal(snap.derived.call_participant_join_rate, 0.5);
 });
 
+test('conversation group-call snapshots record accepted peers and partial failure', () => {
+  const telemetry = createTelemetry();
+  const createdAt = new Date(Date.now() - 2_000).toISOString();
+  const call = {
+    callId: 'conversation-group-call',
+    initiatorId: 'initiator',
+    createdAt,
+    status: 'ringing',
+  };
+  telemetry.recordGroupCallSnapshot(call, [
+    { userId: 'initiator', status: 'accepted', acceptedAt: createdAt },
+    { userId: 'peer-a', status: 'ringing', acceptedAt: null },
+    { userId: 'peer-b', status: 'ringing', acceptedAt: null },
+    { userId: 'peer-c', status: 'ringing', acceptedAt: null },
+  ]);
+  telemetry.recordGroupCallSnapshot(
+    { ...call, status: 'active' },
+    [
+      { userId: 'initiator', status: 'accepted', acceptedAt: createdAt },
+      { userId: 'peer-a', status: 'accepted', acceptedAt: new Date(Date.now() - 1_000).toISOString() },
+      { userId: 'peer-b', status: 'declined', acceptedAt: null },
+      { userId: 'peer-c', status: 'ringing', acceptedAt: null },
+    ]
+  );
+  telemetry.recordGroupCallSnapshot(
+    { ...call, status: 'ended' },
+    [
+      { userId: 'initiator', status: 'left', acceptedAt: createdAt },
+      { userId: 'peer-a', status: 'left', acceptedAt: new Date(Date.now() - 1_000).toISOString() },
+      { userId: 'peer-b', status: 'declined', acceptedAt: null },
+      { userId: 'peer-c', status: 'declined', acceptedAt: null },
+    ]
+  );
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_participants_per_call.max, 4);
+  assert.equal(snap.histograms.call_participant_join_latency_ms.count, 2);
+  assert.equal(snap.counters.call_participants_joined_total, 2);
+  assert.equal(snap.counters.call_peer_connection_failures_total, 2);
+  assert.equal(snap.counters.calls_partially_degraded_total, 1);
+  assert.equal(snap.derived.call_participant_join_rate, 0.5);
+});
+
 test('call_connect_latency_ms is observed for a call this process never saw accepted', () => {
   const telemetry = createTelemetry();
   const answeredAt = new Date(Date.now() - 3_000).toISOString();

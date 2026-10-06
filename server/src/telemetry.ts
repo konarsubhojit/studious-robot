@@ -116,6 +116,10 @@ export type Telemetry = {
       joinedAt?: string | null;
     }[];
   }) => void;
+  recordGroupCallSnapshot: (
+    call: { callId: string; initiatorId: string; createdAt: string; status: string },
+    participants: { userId: string; status: string; acceptedAt: string | null }[]
+  ) => void;
   recordRtcBufferOutcome: (outcome: RtcBufferOutcome, count?: number) => void;
   recordRtcRelay: (eventName: string, recipients: number | null, isHeartbeat?: boolean) => void;
   recordSignalingError: (code?: string, eventName?: string) => void;
@@ -308,10 +312,10 @@ function createTelemetry(): Telemetry {
     calls_in_call: 0, // successfully reached in_call
     calls_ended: 0, // reached terminal ended state
     calls_failed: 0, // ended with endReason=failed
-    call_participants_total: 0,
-    call_participants_joined_total: 0,
-    call_peer_connection_failures_total: 0,
-    calls_partially_degraded_total: 0,
+    call_participants_total: 0, // call initiators plus each invited peer
+    call_participants_joined_total: 0, // participants that accepted/joined
+    call_peer_connection_failures_total: 0, // invited peers that did not join
+    calls_partially_degraded_total: 0, // terminal calls with joined and failed peers
     call_setup_failures_total: 0,
     socket_reconnects_total: 0,
     call_stats_received_total: 0,
@@ -553,6 +557,28 @@ function createTelemetry(): Telemetry {
     if (isNewCall && isTerminalStatus(call.status)) {
       finishCallParticipants(call.callId);
     }
+  }
+
+  function recordGroupCallSnapshot(
+    call: { callId: string; initiatorId: string; createdAt: string; status: string },
+    participants: { userId: string; status: string; acceptedAt: string | null }[]
+  ) {
+    recordCallParticipants({
+      callId: call.callId,
+      callerId: call.initiatorId,
+      createdAt: call.createdAt,
+      status: call.status,
+      participants: participants.map((participant) => ({
+        userId: participant.userId,
+        state: participant.status === 'accepted'
+          ? 'joined'
+          : participant.status === 'left' && participant.acceptedAt
+            ? 'left'
+            : participant.status,
+        joinedAt: participant.acceptedAt,
+      })),
+    });
+    if (isTerminalStatus(call.status)) finishCallParticipants(call.callId);
   }
 
   function finishCallParticipants(callId: string) {
@@ -1055,6 +1081,7 @@ function createTelemetry(): Telemetry {
     recordCallCreated,
     recordCallTransition,
     recordCallParticipants,
+    recordGroupCallSnapshot,
     recordRtcBufferOutcome,
     recordRtcRelay,
     recordSignalingError,

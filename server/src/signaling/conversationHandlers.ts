@@ -344,6 +344,7 @@ function registerConversationHandlers(
         acknowledgeError(socket, ack, eventName, ERROR_CODES.NOT_FOUND, 'group not found or has no reachable members', state);
         return;
       }
+      state.telemetry.recordGroupCallSnapshot(change.call, change.participants);
       state.auditLog.record({
         event: 'conversation.call.started',
         actor: initiatorId,
@@ -396,6 +397,7 @@ function registerConversationHandlers(
           return;
         }
         if (change.expired) {
+          state.telemetry.recordGroupCallSnapshot(change.call, change.participants);
           await fanoutConversationEvent(io, state, {
             conversationId: change.call.conversationId,
             eventName: SERVER_EVENTS.CONVERSATION_CALL_UPDATED,
@@ -411,6 +413,7 @@ function registerConversationHandlers(
           acknowledgeError(socket, ack, eventName, ERROR_CODES.BAD_REQUEST, 'group call expired', state);
           return;
         }
+        state.telemetry.recordGroupCallSnapshot(change.call, change.participants);
         state.auditLog.record({
           event: `conversation.call.${action === 'accept' ? 'accepted' : action === 'decline' ? 'declined' : 'left'}`,
           actor: actorId,

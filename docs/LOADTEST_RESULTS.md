@@ -30,3 +30,31 @@ delay or prove that request never reached the server.
 The harness at the time lacked the timeout sweeper now present in
 `tools/loadrig/rig.mjs`; do not compare its completion accounting directly with
 a new run without accounting for that difference.
+
+## 2026-10-06: local mixed group-call signaling smoke
+
+Run against the current checkout on one Node 24 process with in-memory stores
+(`stateAffinity: sticky`), eight simulated websocket users, no message traffic,
+and no database or real media. The rig used a 2-second ramp, 20-second hold,
+12 call attempts/minute, 1-second call hold, a 50% group-call target, and four
+participants per requested group call. This is a signaling-path smoke test, not
+a server capacity or production baseline.
+
+| Metric | Measured |
+|---|---:|
+| connected / connectFail | 8 / 0 |
+| call attempts / 1:1 ended | 5 / 2 |
+| group started / in-call / ended | 3 / 3 / 3 |
+| requested group participants / largest group size | 12 / 4 |
+| group peers not joined | 1 |
+| mesh offer/answer relays acknowledged / expected | 30 / 30 |
+| errors / pending calls at teardown | `{}` / 0 |
+| rig RSS | 87 MB |
+
+The largest group size **measured successfully in this run was 4 total
+participants** (initiator included); this is the test's measured ceiling, not a
+claim that four is the server's hard limit. A full four-person mesh generated
+`4 × (4 − 1) = 12` offer/answer signaling messages at setup. Across three
+groups, one had a peer that did not join, giving 30 acknowledged messages
+against 30 expected for the joined peer sets. The rig sends synthetic SDP and
+does not establish real peer connections or measure media quality.

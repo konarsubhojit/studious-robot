@@ -33,6 +33,8 @@ test('loadConfig defaults call generation off', () => {
   assert.equal(config.callsPerMin, 0);
   assert.equal(config.callHoldSecs, 10);
   assert.equal(config.callAnswerRate, 100);
+  assert.equal(config.groupCallRate, 0);
+  assert.equal(config.groupCallSize, 4);
   assert.equal(config.maxInFlightCalls, 500);
 });
 
@@ -43,11 +45,15 @@ test('loadConfig accepts call generation dials', () => {
     CALLS_PER_MIN: '12',
     CALL_HOLD_SECS: '3',
     CALL_ANSWER_RATE: '75',
+    GROUP_CALL_RATE: '25',
+    GROUP_CALL_SIZE: '4',
   });
 
   assert.equal(config.callsPerMin, 12);
   assert.equal(config.callHoldSecs, 3);
   assert.equal(config.callAnswerRate, 75);
+  assert.equal(config.groupCallRate, 25);
+  assert.equal(config.groupCallSize, 4);
   assert.equal(config.maxInFlightCalls, 50);
 });
 
@@ -67,6 +73,18 @@ test('loadConfig rejects invalid call generation dials', () => {
   assert.throws(
     () => loadConfig({ ...baseEnv, CALL_ANSWER_RATE: '50.5' }),
     /CALL_ANSWER_RATE must be an integer >= 0/
+  );
+  assert.throws(
+    () => loadConfig({ ...baseEnv, GROUP_CALL_RATE: '101' }),
+    /GROUP_CALL_RATE must be an integer between 0 and 100/
+  );
+  assert.throws(
+    () => loadConfig({ ...baseEnv, GROUP_CALL_SIZE: '2' }),
+    /GROUP_CALL_SIZE must be an integer >= 3/
+  );
+  assert.throws(
+    () => loadConfig({ ...baseEnv, USERS: '4', GROUP_CALL_RATE: '1', GROUP_CALL_SIZE: '5' }),
+    /GROUP_CALL_SIZE must not exceed USERS/
   );
 });
 
