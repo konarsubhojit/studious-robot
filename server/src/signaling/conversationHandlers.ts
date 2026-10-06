@@ -5,7 +5,7 @@ import { userRoom } from '../lib/state.ts';
 import { isDirectoryVisibleAsync, filterVisible } from '../security.ts';
 import { ConversationStoreError } from '../conversationStore.ts';
 import { checkGroupAdmissionRate } from '../domain/groupAdmission.ts';
-import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
+import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, groupNegotiationId } from '../../../shared/index.ts';
 import { acknowledgeError, acknowledgeSuccess, parseInboundPayload, requireSocketSession, validateSignalingVersion } from './ack.ts';
 
 function rejectStoreError(
@@ -485,11 +485,18 @@ function registerConversationHandlers(
           acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN, 'sender and peer must be active call participants', state);
           return;
         }
+        const negotiationId = groupNegotiationId(change.participants, userId, peerId);
+        if (parsed.negotiationId !== negotiationId) {
+          acknowledgeError(socket, ack, eventName, ERROR_CODES.FORBIDDEN,
+            'stale group negotiation; refresh call membership', state);
+          return;
+        }
         io.to(userRoom(peerId)).emit(eventName, {
           version: SIGNALING_VERSION,
           callId,
           peerId: userId,
           fromUserId: userId,
+          negotiationId,
           ...(dataKey ? { [dataKey]: parsed[dataKey] } : {}),
         });
         acknowledgeSuccess(socket, ack, eventName, { callId, peerId });

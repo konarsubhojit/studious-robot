@@ -64,3 +64,23 @@ test('participant gates and inconsistent/malformed snapshots are rejected', () =
     .toThrow('Inconsistent');
   expect(() => parseGroupCallSnapshot({ ...start(), participants: [{ userId: 'alice', status: 'muted' }] })).toThrow();
 });
+
+test('mock live rejoin rotates admission, clears departure, and preserves other participants', () => {
+  const accepted = transitionMockGroupCall(start(), 'bob', 'accept', now);
+  const left = transitionMockGroupCall(accepted, 'bob', 'leave', now);
+  const rejoined = transitionMockGroupCall(left, 'bob', 'accept', now);
+  expect(rejoined.participants[1]).toMatchObject({ status: 'accepted', leftAt: null });
+  expect(Date.parse(rejoined.participants[1].acceptedAt!)).toBeGreaterThan(Date.parse(accepted.participants[1].acceptedAt!));
+  expect(rejoined.participants[0]).toEqual(accepted.participants[0]);
+  expect(rejoined.call.status).toBe('active');
+});
+
+test('mock admission has the same four-person mesh ceiling as the stores', () => {
+  const conversation = createMockGroup('alice', 'Team', ['bob', 'carol', 'dave', 'eve'], 'capacity');
+  let snapshot = startMockGroupCall(conversation, 'alice', 'capacity-call', 'video', now);
+  for (const id of ['bob', 'carol', 'dave']) snapshot = transitionMockGroupCall(snapshot, id, 'accept', now);
+  expect(() => transitionMockGroupCall(snapshot, 'eve', 'accept', now)).toThrow('up to 4 participants');
+  snapshot = transitionMockGroupCall(snapshot, 'bob', 'leave', now);
+  snapshot = transitionMockGroupCall(snapshot, 'eve', 'accept', now);
+  expect(() => transitionMockGroupCall(snapshot, 'bob', 'accept', now)).toThrow('full');
+});

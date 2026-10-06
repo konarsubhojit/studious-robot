@@ -40,6 +40,16 @@ function Button({ label, onPress, disabled, testID, styles }: {
   </Pressable>;
 }
 
+function participantLabels(person: GroupCallSnapshot['participants'][number], self: boolean) {
+  return self ? {
+    mute: 'Toggle microphone mute', accept: person.status === 'ringing' ? 'Join call' : 'Rejoin call',
+    decline: 'Decline group call', leave: 'Leave call',
+  } : {
+    mute: `Simulate mute ${person.userId}`, accept: `Simulate accept ${person.userId}`,
+    decline: `Simulate decline ${person.userId}`, leave: `Simulate leave ${person.userId}`,
+  };
+}
+
 function Participant({ person, self, localMock, muted, ended, busy, capacityReached, onMute, onAction, styles }: {
   person: GroupCallSnapshot['participants'][number]; self: boolean; localMock: boolean; muted: boolean;
   ended: boolean; busy: boolean; capacityReached: boolean; onMute: () => void;
@@ -47,32 +57,41 @@ function Participant({ person, self, localMock, muted, ended, busy, capacityReac
 }) {
   const terminal = ended || person.status === 'left' || person.status === 'declined';
   const controls = self || localMock;
-  const labels = self ? {
-    mute: 'Toggle preview mute', accept: 'Accept (local preview)', decline: 'Decline group call', leave: 'Leave preview',
-  } : {
-    mute: `Simulate mute ${person.userId}`, accept: `Simulate accept ${person.userId}`,
-    decline: `Simulate decline ${person.userId}`, leave: `Simulate leave ${person.userId}`,
-  };
+  const labels = participantLabels(person, self);
   return <View style={styles.participant} testID={`group-participant-${person.userId}`}>
     <Text style={styles.name}>{self ? 'You' : person.userId}</Text>
-    <Text style={styles.text}>{person.status === 'left' ? 'Left preview' : person.status}</Text>
+    <Text style={styles.text}>{localMock && person.status === 'left' ? 'Left preview' : person.status}</Text>
     <Text style={styles.text}>{localMock ? (muted ? 'Muted (simulated)' : 'Unmuted (simulated)') :
       (muted ? 'Muted' : 'Unmuted')}</Text>
     {controls ? <Button styles={styles} disabled={terminal || busy} testID={`group-call-mute-${person.userId}`}
       label={labels.mute} onPress={onMute} /> : null}
-    {controls && person.status === 'ringing' ? <View>
-      <Button styles={styles} disabled={terminal || busy || capacityReached} testID={`group-call-accept-${person.userId}`}
+    {controls && person.status !== 'accepted' ? <View>
+      <Button styles={styles} disabled={ended || busy || capacityReached} testID={`group-call-accept-${person.userId}`}
         label={labels.accept} onPress={() => onAction('accept')} />
+      {person.status === 'ringing' ?
       <Button styles={styles} disabled={terminal || busy} testID={`group-call-decline-${person.userId}`}
-        label={labels.decline} onPress={() => onAction('decline')} />
+        label={labels.decline} onPress={() => onAction('decline')} /> : null}
     </View> : null}
-    {controls && (person.status === 'accepted' || person.status === 'left') ? <Button styles={styles}
+    {controls && person.status === 'accepted' ? <Button styles={styles}
       disabled={terminal || busy} testID={`group-call-leave-${person.userId}`}
       label={labels.leave} onPress={() => onAction('leave')} /> : null}
   </View>;
 }
 
-/** Lifecycle states are authoritative; mute remains a separate, local-only media placeholder. */
+function MediaControls({ visible, styles, disabled, isVideoEnabled, isScreenSharing, onVideo, onScreen }: {
+  visible: boolean; styles: Styles; disabled: boolean; isVideoEnabled: boolean; isScreenSharing: boolean;
+  onVideo: () => void; onScreen: () => void;
+}) {
+  if (!visible) return null;
+  return <View>
+    <Button styles={styles} label={isVideoEnabled ? 'Turn camera off' : 'Turn camera on'}
+      testID="group-call-toggle-video" disabled={disabled || isScreenSharing} onPress={onVideo} />
+    <Button styles={styles} label={isScreenSharing ? 'Stop sharing screen' : 'Share screen'}
+      testID="group-call-toggle-screen" disabled={disabled} onPress={onScreen} />
+  </View>;
+}
+
+/** Server lifecycle is authoritative; mock media controls remain local-only. */
 export default function GroupCallPreview({
   visible, onClose, conversationId, currentUserId, localMock, snapshot, actions,
   callPeers = {}, activeSpeakerId = null, localStream = null,
@@ -93,7 +112,7 @@ export default function GroupCallPreview({
       actions.joinMedia?.(conversationId);
       joinedCallIdRef.current = snapshot.callId;
     }
-    if (!snapshot || snapshot.call.status === 'ended') joinedCallIdRef.current = null;
+    if (!snapshot || snapshot.call.status === 'ended' || self?.status !== 'accepted') joinedCallIdRef.current = null;
   }, [actions, conversationId, currentUserId, localMock, snapshot, visible]);
   const run = async (action: () => Promise<unknown>) => {
     if (busy) return;
@@ -119,6 +138,8 @@ export default function GroupCallPreview({
   const ended = snapshot?.call.status === 'ended';
   const acceptedCount = snapshot?.participants.filter(person => person.status === 'accepted').length ?? 0;
   const capacityReached = acceptedCount >= 4;
+  const canControlMedia = !localMock && !ended &&
+    snapshot?.participants.some(person => person.userId === currentUserId && person.status === 'accepted');
   const streamUrl = (stream: WebrtcMediaStream | null | undefined) =>
     (stream as any)?.toURL?.() ?? null;
   const mediaParticipants = snapshot?.participants.map(person => {
@@ -136,7 +157,7 @@ export default function GroupCallPreview({
       isScreenSharing: self ? isScreenSharing : peer?.isScreenSharing ?? false,
     };
   }) ?? [];
-  return <Sheet visible={visible} onClose={onClose} title="Group call preview"
+  return <Sheet visible={visible} onClose={onClose} title={localMock ? 'Group call preview' : 'Group call'}
     subtitle={localMock ? 'Local mock signaling — no actual media, microphone, camera, or WebRTC.' :
       'Group call mesh media connects accepted participants. Starting or accepting notifies other participants; calls support up to four connected people.'}
     testID="group-call-preview">
@@ -144,18 +165,22 @@ export default function GroupCallPreview({
       {snapshot.call.mediaType} · {snapshot.call.status} (signaling)
     </Text> : null}
     {!snapshot || ended ? <View>
-      <Button styles={styles} label="Start audio signaling preview" disabled={busy} testID="group-call-start-audio"
+      <Button styles={styles} label={localMock ? 'Start audio signaling preview' : 'Start audio call'} disabled={busy} testID="group-call-start-audio"
         onPress={() => { void run(async () => {
           await actions.start(conversationId, 'audio');
           actions.joinMedia?.(conversationId);
         }); }} />
-      <Button styles={styles} label="Start video signaling preview" disabled={busy} testID="group-call-start-video"
+      <Button styles={styles} label={localMock ? 'Start video signaling preview' : 'Start video call'} disabled={busy} testID="group-call-start-video"
         onPress={() => { void run(async () => {
           await actions.start(conversationId, 'video');
           actions.joinMedia?.(conversationId);
         }); }} />
     </View> : null}
     {snapshot ? <CallParticipantGrid participants={mediaParticipants} activeSpeakerId={activeSpeakerId} /> : null}
+    <MediaControls visible={Boolean(canControlMedia)} styles={styles} disabled={busy || !localStream}
+      isVideoEnabled={isVideoEnabled} isScreenSharing={isScreenSharing}
+      onVideo={() => { void run(async () => { await actions.toggleVideo?.(); }); }}
+      onScreen={() => { void run(async () => { await actions.toggleScreenShare?.(); }); }} />
     {snapshot && capacityReached && snapshot.participants.some(person => person.status === 'ringing') ? (
       <Text style={styles.text} accessibilityRole="alert" testID="group-call-capacity">
         Group call is full; mesh calls support up to four participants.
@@ -164,7 +189,9 @@ export default function GroupCallPreview({
     <ScrollView>
       <View style={styles.grid}>
         {snapshot?.participants.map(person => <Participant key={person.userId} person={person}
-          self={person.userId === currentUserId} localMock={localMock} muted={Boolean(muted[person.userId])}
+          self={person.userId === currentUserId} localMock={localMock}
+          muted={localMock ? Boolean(muted[person.userId])
+            : person.userId === currentUserId ? isMuted : Boolean(callPeers[person.userId]?.isMuted)}
           ended={Boolean(ended)} busy={busy} capacityReached={capacityReached} styles={styles}
           onMute={() => localMock
             ? setMuted(previous => ({ ...previous, [person.userId]: !previous[person.userId] }))
@@ -173,8 +200,8 @@ export default function GroupCallPreview({
       </View>
     </ScrollView>
     {error ? <Text style={styles.text} accessibilityRole="alert">{error}</Text> : null}
-    <Button styles={styles} label="Close preview" disabled={busy} onPress={onClose} />
-    <Text style={styles.secondary}>Closing this sheet does not leave the call. Use Leave preview to signal departure.</Text>
+    <Button styles={styles} label="Close" disabled={busy} onPress={onClose} />
+    <Text style={styles.secondary}>Closing this sheet does not leave the call. Use Leave call to signal departure.</Text>
   </Sheet>;
 }
 

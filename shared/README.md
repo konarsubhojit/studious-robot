@@ -70,9 +70,22 @@ After deletion, explicit-key retries return the tombstone under the same server
 ID/timestamp. Erased body/attachment fields are no longer comparable, but the
 retained sender, destination, type and reply reference still must match.
 
-Call and RTC events remain peer-to-peer; multi-party call routing is not part of
-this revision. These schemas freeze the wire shapes only; group event handlers
-and client support are separate follow-up work.
+Group calls use the separate `conversation.call.start/accept/decline/leave`
+room lifecycle and `conversation.call.updated` snapshots, not replicated direct
+call records. Participants may accept/rejoin while the room is live and they
+remain conversation members. The first media topology is a four-person mesh;
+five–six participants require the future SFU described in
+[`docs/group-call-topology.md`](../docs/group-call-topology.md).
+
+V3 RTC offer/answer/ICE payloads have an additive `negotiationId` field. It is
+optional for unchanged direct calls but required by the group relay, as it is
+for `group.call.restart-request` and `group.call.media-state`. In mesh, use
+`groupNegotiationId(participants, localUserId, peerId)` from the shared package;
+the server validates it against both participants' current `acceptedAt` epochs
+and relays it unchanged. Rejoin advances the admission epoch, invalidating old
+SDP/ICE and control events even when a client missed the leave snapshot.
+Membership authorization is independent of this identity. Future SFU endpoint
+negotiations can supply their own identity without altering the field's meaning.
 
 ## Usage
 

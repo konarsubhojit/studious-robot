@@ -11,7 +11,7 @@ import type { PeerTrackEvent, WebrtcMediaStream } from '../../src/hooks/useCallF
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 import { registerCrashContext } from '../../src/crashReporting';
 import { startScreenCapture } from '../../src/screenShare';
-import { CALL_RECOVERY_BUDGET_MS, SIGNALING_VERSION } from '../../../shared';
+import { CALL_RECOVERY_BUDGET_MS, CLIENT_EVENTS, SIGNALING_VERSION } from '../../../shared';
 import { fetchPeerProfile } from '../../src/profile/fetchPeerProfile';
 import { createMockGroup } from '../../src/chat/groupMockAdapter';
 import { startMockGroupCall, transitionMockGroupCall } from '../../src/chat/groupCallAdapter';
@@ -1057,6 +1057,127 @@ describe('rehydrateCallFromPush', () => {
     expect(resultRef.current.activeGroupConversationId).toBe(conversation.conversationId);
     expect(require('../../src/navigation/navigationRef').openGroupConversation)
       .toHaveBeenCalledWith(conversation.conversationId);
+    await act(async () => { tree.unmount(); });
+  });
+
+  async function setupNativeGroup(captureState: string) {
+    const conversation = createMockGroup('alice', 'Team', ['bob', 'carol'], 'group-native');
+    const snapshot = startMockGroupCall(
+      conversation, 'alice', 'group-native-call', 'video', '2026-10-03T06:00:00Z',
+    );
+    conversation.localMock = false;
+    mockInitialChatSnapshot = { conversations: [conversation], messagesByPeer: {}, outbox: [] };
+    const audio = { kind: 'audio', enabled: true, stop: jest.fn() };
+    const video = { kind: 'video', enabled: true, stop: jest.fn() };
+    const stream = {
+      getTracks: () => [audio, video], getAudioTracks: () => [audio], getVideoTracks: () => [video],
+    };
+    let finishCapture!: (value: typeof stream) => void;
+    const capture = captureState === 'pending' ? new Promise<typeof stream>(resolve => { finishCapture = resolve; })
+      : Promise.resolve(stream);
+    const permissions = require('../../src/permissions').ensureCallPermissions;
+    let finishPermission!: (value: { ok: boolean; message?: string }) => void;
+    require('react-native-webrtc').mediaDevices.getUserMedia.mockReturnValue(capture);
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/groups/calls/')) return { ok: true, status: 200, json: async () => snapshot };
+      if (url.includes('/calls/')) return { ok: false, status: 404, json: async () => ({}) };
+      if (url.includes('/conversations')) return { ok: true, status: 200, json: async () => ({ conversations: [conversation] }) };
+      return { ok: true, status: 201, json: async () => ({ sessionId: 'native-session', userId: 'alice' }) };
+    }) as any;
+    const { resultRef, tree } = await renderHook();
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    await flushAsyncEffects();
+    if (captureState === 'permission-denied') permissions.mockResolvedValueOnce({ ok: false, message: 'Microphone denied' });
+    if (captureState === 'permission-pending') permissions.mockReturnValueOnce(
+      new Promise(resolve => { finishPermission = resolve; }),
+    );
+    const audioRouting = require('../../src/audioRouting');
+    audioRouting.startAudioSession.mockClear();
+    const callService = require('../../src/callService');
+    callService.startCallService.mockClear();
+    const io = require('socket.io-client').io as jest.Mock;
+    const socket = io.mock.results[io.mock.results.length - 1].value;
+    await act(async () => { await socket.on.mock.calls.find(([event]: any) => event === 'connect')[1](); });
+    await act(async () => { await resultRef.current.rehydrateCallFromPush(snapshot.callId); });
+    await flushAsyncEffects();
+    return { resultRef, tree, conversation, snapshot, audioRouting, callService, socket, stream, audio, video, finishCapture, finishPermission };
+  }
+
+  test.each(['ready', 'pending'])('real group media starts native audio and releases %s capture on local leave without entering direct call state', async captureState => {
+    const { resultRef, tree, conversation, snapshot, audioRouting, callService, stream, audio, video, finishCapture } = await setupNativeGroup(captureState);
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(resultRef.current.activeGroupCallId).toBe(snapshot.callId);
+    expect(audioRouting.startAudioSession).toHaveBeenCalledTimes(1);
+    if (captureState === 'ready') expect(callService.startCallService).toHaveBeenCalledWith('video');
+    else expect(callService.startCallService).not.toHaveBeenCalled();
+    expect(resultRef.current.localStream).toBe(captureState === 'ready' ? stream : null);
+    // Acquiring local AV must not wait for a second participant to accept.
+    expect(require('react-native-webrtc').mediaDevices.getUserMedia).toHaveBeenCalledWith({
+      audio: true, video: { facingMode: 'user' },
+    });
+    await act(async () => { resultRef.current.groupCallActions.leaveMedia(conversation.conversationId); });
+    if (captureState === 'pending') await act(async () => { finishCapture(stream); });
+    expect(audioRouting.stopAudioSession).toHaveBeenCalled();
+    expect(audio.stop).toHaveBeenCalledTimes(1);
+    expect(video.stop).toHaveBeenCalledTimes(1);
+    expect(callService.stopCallService).toHaveBeenCalled();
+    if (captureState === 'pending') expect(callService.startCallService).not.toHaveBeenCalled();
+    expect(resultRef.current.localStream).toBeNull();
+    await act(async () => { tree.unmount(); });
+  });
+
+  test.each(['permission-denied', 'permission-pending'])('does not start a group foreground service with %s microphone access', async captureState => {
+    const { resultRef, tree, conversation, callService, finishPermission } = await setupNativeGroup(captureState);
+    expect(resultRef.current.activeGroupCallId).not.toBeNull();
+    expect(resultRef.current.localStream).toBeNull();
+    expect(callService.startCallService).not.toHaveBeenCalled();
+    expect(require('react-native-webrtc').mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    await act(async () => { resultRef.current.groupCallActions.leaveMedia(conversation.conversationId); });
+    if (captureState === 'permission-pending') await act(async () => { finishPermission({ ok: false }); });
+    expect(callService.startCallService).not.toHaveBeenCalled();
+    await act(async () => { tree.unmount(); });
+  });
+
+  test('starts the group foreground service only after pending capture succeeds', async () => {
+    const { resultRef, tree, stream, finishCapture, callService } = await setupNativeGroup('pending');
+    expect(callService.startCallService).not.toHaveBeenCalled();
+    await act(async () => { finishCapture(stream); });
+    expect(resultRef.current.localStream).toBe(stream);
+    expect(callService.startCallService).toHaveBeenCalledWith('video');
+    await act(async () => { resultRef.current.groupCallActions.leaveMedia(); });
+    await act(async () => { tree.unmount(); });
+  });
+
+  test.each(['hangup', 'dismiss', 'leave-failure'])('group PiP %s signals participant leave and releases capture', async action => {
+    const { resultRef, tree, snapshot, callService, socket, stream, audio, video } = await setupNativeGroup('ready');
+    socket.emit.mockImplementation((event: string, _payload: any, ack: any) => {
+      if (event !== CLIENT_EVENTS.CONVERSATION_CALL_LEAVE) return;
+      if (action === 'leave-failure') ack({ ok: false, error: { code: 'offline', message: 'offline' } });
+      else {
+        const left = transitionMockGroupCall(snapshot, 'alice', 'leave', '2026-10-03T06:03:00Z');
+        ack({ ok: true, call: left.call, participants: left.participants });
+      }
+    });
+    const compactCall = (useCompactCallView as jest.Mock).mock.calls.at(-1)!;
+    expect(compactCall[0].current).toBe(true);
+    await act(async () => { compactCall[1].onToggleMute(); });
+    expect(resultRef.current.isMuted).toBe(true);
+    expect(require('../../src/mediaControls').setTrackEnabled).toHaveBeenCalledWith(stream, 'audio', false);
+    await act(async () => {
+      if (action === 'dismiss') compactCall[1].onPictureInPictureClosed();
+      else compactCall[1].onEndCall();
+    });
+    expect(socket.emit).toHaveBeenCalledWith(CLIENT_EVENTS.CONVERSATION_CALL_LEAVE, {
+      version: SIGNALING_VERSION, callId: snapshot.callId,
+    }, expect.any(Function));
+    expect(socket.emit.mock.calls.some(([event]: any) => event === CLIENT_EVENTS.CALL_END)).toBe(false);
+    expect(resultRef.current.activeGroupCallId).toBeNull();
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(resultRef.current.localStream).toBeNull();
+    expect(audio.stop).toHaveBeenCalledTimes(1);
+    expect(video.stop).toHaveBeenCalledTimes(1);
+    expect(callService.stopCallService).toHaveBeenCalled();
+    expect((global.fetch as jest.Mock).mock.calls.some(([url]) => url.includes('/end'))).toBe(false);
     await act(async () => { tree.unmount(); });
   });
 

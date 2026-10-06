@@ -152,3 +152,74 @@ Before enabling group calls broadly:
 
 No group-call hardware, TURN-load or SFU-capacity result is asserted by this
 decision record.
+
+## 8. Room lifecycle and first mesh implementation (#523)
+
+The existing `conversation.call.*` room snapshots are authoritative. A room
+keeps its participant set while live: `accept` admits a ringing, left or
+declined participant who is still a conversation member; accepting an already
+accepted participant is idempotent. Admission (including rejoin) checks the
+four-person ceiling inside the PostgreSQL conversation/call locks. Leaving
+changes only that participant; the room ends after no ringing or accepted
+participants remain. Ended rooms cannot be rejoined. Invite ringing deadlines
+still apply; an expired/declined invitation can join a room that remains live.
+
+Each admitted pair gets a `negotiationId` derived from the ordered participant
+IDs and their server-issued `acceptedAt` admission epochs. Rejoin advances the
+epoch and clears `leftAt`. SDP, ICE, restart requests and media-state updates
+must name the current pair identity; the relay checks both active conversation
+membership and accepted room membership and rejects stale or self-targeted
+signals. This identity is a routing/staleness guard, not an authentication
+credential. Direct calls do not require the additive field and retain their
+existing state machine and versioned relay behavior.
+
+Mobile creates one peer connection per accepted remote participant, sharing one
+local AV capture. The lower user ID offers; a ready responder can request a
+fresh offer if the initial offer arrived before room/media startup. ICE received
+during startup does not force a second capture. Description operations are
+serialized per pair; duplicate offers reuse the answer, and readiness requests
+resend an outstanding offer without rotating its ICE credentials. ICE received
+during asynchronous capture/peer creation waits for that connection, then waits
+for its remote description (bounded to 128 queued candidates per peer). Pending
+creation rechecks room admission, connection availability and teardown epoch
+after asynchronous work. A changed pair identity recreates only that peer, even
+if the intervening leave snapshot was missed. Local leave/unmount cancels pending
+creation; remote leave does not stop the remaining connections or local capture.
+Native in-call audio routing and the foreground call service also cover real
+group calls without moving the direct-call state machine out of idle. Existing
+microphone, camera and screen-share controls use the shared capture/senders;
+local leave releases capture and native audio ownership. Local mock previews
+never acquire device media. The preview provides Join/Rejoin while a room is
+live, subject to capacity.
+
+**Scope boundary:** three- and four-person mesh calls are implemented in this
+iteration. The epic's five–six-person goal requires a **future SFU**; no SFU,
+recording or simulcast is implemented, and the cap remains four.
+
+### Validation and release checklist
+
+Automated coverage includes all three pairs' offer/answer and bidirectional ICE
+relay, current/stale pair authorization, independent peer teardown/recreation,
+delayed capture cancellation, queued startup ICE, admission idempotency and
+concurrent four-person capacity in memory and PostgreSQL stores. Native audio
+ownership/capture release and the preview's rejoin control are exercised with
+mocks; direct signaling/media regression tests remain separate.
+
+Physical iOS/Android devices are **not available in this implementation
+environment**. Automated signaling and mocked WebRTC results do not establish
+working physical-device bidirectional AV. Before release, record results for:
+
+- Three real devices: all six directed audio/video paths, microphone mute,
+  camera disable/enable/switch, speaker/earpiece/Bluetooth routing and screen
+  sharing; repeat after each participant (including the initiator) leaves and
+  rejoins while the other two continue talking.
+- Four devices and simultaneous fifth/sixth admission attempts: at most four
+  accepted participants, a clear full-call response, and no surviving-pair
+  disruption. Retry rejoin both before and after a slot becomes available.
+- Slow permission/capture startup, denial/retry, disconnect during startup,
+  reconnect with missed leave snapshots, background/foreground and TURN-only
+  paths; confirm no stopped-call microphone/camera or stale peer remains.
+- Direct audio/video calls before and after a group call, including mute,
+  camera controls, negotiated-SDP verification and full teardown.
+- The sustained-device, thermal/network and TURN-cost checks in §7. Treat
+  five–six-person calls as blocked on the SFU follow-up, not as a mesh test mode.

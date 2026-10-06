@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import GroupDirectorySheet from '../../src/components/GroupDirectorySheet';
 import GroupConversationScreen from '../../src/components/GroupConversationScreen';
+import GroupCallPreview from '../../src/components/GroupCallPreview';
 import ChatListScreen from '../../src/components/ChatListScreen';
 import SearchScreen, { SEARCH_DEBOUNCE_MS } from '../../src/components/SearchScreen';
 import { createMockGroup } from '../../src/chat/groupMockAdapter';
@@ -281,6 +282,12 @@ test('participant grid is explicitly media-free and shows individual mute/leave 
   await act(async () => { tree.update(<GroupConversationScreen {...props} />); });
   expect(text(tree)).toContain('Left preview');
   expect(find(tree, 'group-call-mute-alice').props.disabled).toBe(true);
+  expect(find(tree, 'group-call-accept-alice').props.disabled).toBe(false);
+  await act(async () => { find(tree, 'group-call-accept-alice').props.onPress(); });
+  expect(props.callActions.transition).toHaveBeenLastCalledWith('mock-group-1', 'accept');
+  props.callSnapshot = transitionMockGroupCall(props.callSnapshot, 'alice', 'accept', '2026-10-03T06:03:00Z');
+  await act(async () => { tree.update(<GroupConversationScreen {...props} />); });
+  expect(find(tree, 'group-call-leave-alice').props.disabled).toBe(false);
   expect(props.actions.leave).not.toHaveBeenCalled();
   expect(props.onSend).not.toHaveBeenCalled();
 });
@@ -331,6 +338,34 @@ test('remote preview uses participant snapshots and only self lifecycle controls
   expect(props.callActions.toggleMute).toHaveBeenCalledTimes(1);
   expect(text(tree)).toContain('Unmuted · ringing');
   expect(props.callActions.transition).toHaveBeenCalledTimes(1);
+});
+
+test('live group sheet exposes the existing native camera/screen controls and reflects actual microphone state', async () => {
+  const conversation = createMockGroup('alice', 'Team', ['bob', 'carol'], 'live-controls');
+  const snapshot = startMockGroupCall(conversation, 'alice', 'live-controls-call', 'video', '2026-10-03T06:00:00Z');
+  const actions = {
+    start: jest.fn(), transition: jest.fn(), simulate: jest.fn(), joinMedia: jest.fn(),
+    toggleMute: jest.fn(), toggleVideo: jest.fn(async () => {}), toggleScreenShare: jest.fn(async () => {}),
+  };
+  const props = {
+    visible: true, onClose: jest.fn(), conversationId: conversation.conversationId!, currentUserId: 'alice',
+    localMock: false, snapshot, actions, localStream: {} as any, isMuted: true, isVideoEnabled: true,
+  };
+  const tree = await render(<GroupCallPreview {...props} />);
+  expect(find(tree, 'group-call-mute-alice').props.disabled).toBe(false);
+  const selfLabels = find(tree, 'group-participant-alice').findAll(node => typeof node.type === 'string')
+    .flatMap(node => node.children.filter(child => typeof child === 'string')).join('');
+  expect(selfLabels).toContain('Muted');
+  expect(selfLabels).not.toContain('Unmuted');
+  await act(async () => { find(tree, 'group-call-toggle-video').props.onPress(); });
+  expect(actions.toggleVideo).toHaveBeenCalledTimes(1);
+  await act(async () => { find(tree, 'group-call-toggle-screen').props.onPress(); });
+  expect(actions.toggleScreenShare).toHaveBeenCalledTimes(1);
+  await act(async () => { tree.update(<GroupCallPreview {...props} isScreenSharing />); });
+  expect(find(tree, 'group-call-toggle-video').props.disabled).toBe(true);
+  await act(async () => { tree.update(<GroupCallPreview {...props} localMock />); });
+  expect(tree.root.findAll(node => node.props.testID === 'group-call-toggle-video')).toHaveLength(0);
+  expect(tree.root.findAll(node => node.props.testID === 'group-call-toggle-screen')).toHaveLength(0);
 });
 
 test('call preview explicitly starts lifecycle signaling and displays request failures inside the sheet', async () => {

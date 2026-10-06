@@ -39,7 +39,7 @@ const PARTICIPANT_TRANSITIONS: Record<
   'accept' | 'decline' | 'leave',
   Partial<Record<GroupCallParticipant['status'], GroupCallParticipant['status']>>
 > = {
-  accept: { ringing: 'accepted' },
+  accept: { ringing: 'accepted', left: 'accepted', declined: 'accepted' },
   decline: { ringing: 'declined' },
   leave: { ringing: 'left', accepted: 'left' },
 };
@@ -1141,7 +1141,7 @@ function createPgConversationStore(db: Database): ConversationStore {
         ) {
           return expireLockedCall(call, tx, now);
         }
-        if (action === 'accept' && participant.status === 'ringing') {
+        if (action === 'accept' && participant.status !== 'accepted') {
           await assertGroupCallCapacity(tx, callId);
         }
         const nextStatus =
@@ -1152,8 +1152,10 @@ function createPgConversationStore(db: Database): ConversationStore {
           .update(callParticipantsTable)
           .set({
             status: nextStatus,
-            acceptedAt: nextStatus === 'accepted' ? now : participant.acceptedAt,
-            leftAt: nextStatus === 'declined' || nextStatus === 'left' ? now : participant.leftAt,
+            acceptedAt: nextStatus === 'accepted'
+              ? new Date(Math.max(now.getTime(), (participant.acceptedAt?.getTime() ?? now.getTime()) + 1))
+              : participant.acceptedAt,
+            leftAt: nextStatus === 'accepted' ? null : now,
             updatedAt: now,
           })
           .where(and(eq(callParticipantsTable.callId, callId), eq(callParticipantsTable.userId, userId)));
