@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { eq } from 'drizzle-orm';
 import * as schema from '../db/schema.ts';
 import { createMemoryConversationStore } from '../src/conversationStore/memoryStore.ts';
 import { createPgConversationStore } from '../src/conversationStore/pgStore.ts';
@@ -57,8 +58,10 @@ async function verifyHistory(stores: ConversationStore[]) {
     await store.acceptInvitation({ conversationId, invitationId: invitation.invitationId, userId: invitation.inviteeId });
   }
   for (const excludedUserIds of [[], [ids[4]]]) {
+    let checkedVisibility = false;
     await assert.rejects(store.startCall({ conversationId, initiatorId: owner, mediaType: 'audio',
-      ringTimeoutMs: 60_000, excludedUserIds }), { code: 'group_call_full' });
+      ringTimeoutMs: 60_000, excludedUserIds, canInvite: async () => { checkedVisibility = true; return false; } }), { code: 'group_call_full' });
+    assert.equal(checkedVisibility, false, 'the ceiling counts raw membership before eligibility checks');
   }
   assert.equal((await store.listCallHistory({ userId: owner, limit: 20 })).total, 0);
   assert.deepEqual(await store.listMessages({ conversationId, userId: owner, limit: 20 }), []);
@@ -127,6 +130,59 @@ async function verifyHistory(stores: ConversationStore[]) {
   assert.deepEqual(seen, ['zz-last-message', '00000000-0000-4000-8000-000000000000', `group-call:${started.call.callId}`]);
 }
 
+async function eligibilityGroup(store: ConversationStore, prefix: string) {
+  const owner = `${prefix}-owner`;
+  const member = `${prefix}-member`;
+  const newcomer = `${prefix}-new`;
+  const group = await store.create({ creatorId: owner, name: prefix, inviteeIds: [member, newcomer] });
+  const conversationId = group.conversation.conversationId;
+  const invitation = group.invitations!.find(person => person.inviteeId === member)!;
+  await store.acceptInvitation({ conversationId, invitationId: invitation.invitationId, userId: member });
+  return { owner, member, newcomer, conversationId,
+    invitation: group.invitations!.find(person => person.inviteeId === newcomer)! };
+}
+
+test('memory retries async eligibility against concurrent membership and refuses unchecked inaccessible newcomers', async () => {
+  const store = createMemoryConversationStore();
+  const { owner, newcomer, conversationId, invitation } = await eligibilityGroup(store, 'eligibility-memory');
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const checking = new Promise<void>(resolve => { entered = resolve; });
+  const started = store.startCall({ conversationId, initiatorId: owner, mediaType: 'audio', ringTimeoutMs: 60_000,
+    canInvite: async userId => { entered(); await gate; return userId !== newcomer; } });
+  const refused = assert.rejects(started, { code: 'forbidden' });
+  await checking;
+  await store.acceptInvitation({ conversationId, userId: newcomer, invitationId: invitation.invitationId });
+  release();
+  await refused;
+  assert.equal((await store.listCallHistory({ userId: owner, limit: 20 })).total, 0);
+  assert.deepEqual(await store.listMessages({ conversationId, userId: owner, limit: 20 }), []);
+});
+
+async function verifyEligibilityLock(stores: ConversationStore[], db: Parameters<typeof createPgConversationStore>[0]) {
+  const store = stores[0];
+  const { owner, member, newcomer, conversationId, invitation } = await eligibilityGroup(store, 'eligibility-pg');
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const checking = new Promise<void>(resolve => { entered = resolve; });
+  const started = store.startCall({ conversationId, initiatorId: owner, mediaType: 'audio', ringTimeoutMs: 60_000,
+    canInvite: async userId => {
+      await db.select().from(schema.blocks).where(eq(schema.blocks.blockerId, userId));
+      entered(); await gate; return userId !== newcomer;
+    } });
+  const refused = assert.rejects(started, { code: 'forbidden' });
+  await checking;
+  await stores[1].acceptInvitation({ conversationId, userId: newcomer, invitationId: invitation.invitationId });
+  release();
+  await refused;
+  assert.equal((await store.listCallHistory({ userId: owner, limit: 20 })).total, 0);
+  const call = (await store.startCall({ conversationId, initiatorId: owner, mediaType: 'audio', ringTimeoutMs: 60_000 }))!;
+  assert.deepEqual(call.participants.map(person => person.userId).sort(), [owner, member, newcomer].sort());
+  assert.equal((await store.listCallHistory({ userId: owner, limit: 20 })).total, 1);
+}
+
 test('memory room capacity, concurrent admissions, live rejoin, membership and final teardown', async () => {
   await verifyLifecycle([createMemoryConversationStore()]);
 });
@@ -142,12 +198,20 @@ test('Postgres locks serialize capacity and rejoin across independent pools', { 
   await admin.query(`CREATE DATABASE "${databaseName}"`);
   const url = new URL(databaseUrl!);
   url.pathname = `/${databaseName}`;
-  const pools = [new Pool({ connectionString: url.toString() }), new Pool({ connectionString: url.toString() })];
+  const pools = [new Pool({ connectionString: url.toString(), max: 1 }), new Pool({ connectionString: url.toString(), max: 1 })];
   try {
     const databases = pools.map(pool => drizzle(pool, { schema }));
     await migrate(databases[0], { migrationsFolder: fileURLToPath(new URL('../db/migrations', import.meta.url)) });
     await verifyLifecycle(databases.map(db => createPgConversationStore(db)));
     await verifyHistory(databases.map(db => createPgConversationStore(db)));
+    await verifyEligibilityLock(databases.map(db => createPgConversationStore(db)), databases[0]);
+    const store = createPgConversationStore(databases[0]);
+    const blocked = await eligibilityGroup(store, 'blocked-pg');
+    await databases[0].insert(schema.blocks).values({ blockerId: blocked.member, blockeeId: blocked.owner });
+    await assert.rejects(store.startCall({ conversationId: blocked.conversationId, initiatorId: blocked.owner,
+      mediaType: 'audio', ringTimeoutMs: 60_000 }), { code: 'forbidden' });
+    assert.equal((await store.listCallHistory({ userId: blocked.owner, limit: 20 })).total, 0);
+    await databases[0].delete(schema.blocks).where(eq(schema.blocks.blockerId, blocked.member));
   } finally {
     await Promise.all(pools.map(pool => pool.end()));
     await admin.query(`DROP DATABASE "${databaseName}"`);

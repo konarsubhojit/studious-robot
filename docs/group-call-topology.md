@@ -160,8 +160,17 @@ decision record.
 The existing `conversation.call.*` room snapshots are authoritative. A room
 invites exactly the current accepted group members at start (pending group
 invitations are not membership). A blocked/unreachable member causes refusal
-rather than a partial invite set. A room keeps its participant set while live:
-joining the group midcall never adds a participant. Leaving or being removed
+rather than a partial invite set.
+
+Eligibility covers every current member, not a precomputed exclusion list.
+Memory retries after any membership-version change during asynchronous checks.
+PostgreSQL checks directory eligibility without holding a pool connection,
+then locks the conversation, checks the raw ceiling and coverage of every
+current member, retries unchecked newcomers, and checks durable symmetric blocks
+inside the transaction before inserting anything.
+
+A room keeps its participant set while live: joining the group midcall never
+adds a participant. Leaving or being removed
 revokes membership and drops that participant from the call. `accept` admits a ringing, left or
 declined participant who is still a conversation member; accepting an already
 accepted participant is idempotent. Admission (including rejoin) checks the

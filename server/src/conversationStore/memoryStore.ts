@@ -16,9 +16,9 @@ import type {
 } from './types.ts';
 import { ConversationStoreError } from './types.ts';
 import type { GroupInvitation, GroupMembershipEvent } from './types.ts';
-import { activeGroupMember, assertActiveGroupMember, INVITATION_TTL_MS, requireGroupAdmin, validateInvitees } from './authorization.ts';
+import { activeGroupMember, assertActiveGroupMember, assertGroupCallMembership, INVITATION_TTL_MS, requireGroupAdmin, validateInvitees } from './authorization.ts';
 import { attachmentScopeFromKey } from '../attachments.ts';
-import { GROUP_CALL_LIMIT_MESSAGE, GROUP_CALL_MESSAGE_PREFIX, MAX_GROUP_CALL_PARTICIPANTS, groupCallHistoryEntry, groupCallTimelineMessage } from '../../../shared/groupCalls.ts';
+import { GROUP_CALL_MESSAGE_PREFIX, MAX_GROUP_CALL_PARTICIPANTS, groupCallHistoryEntry, groupCallTimelineMessage } from '../../../shared/groupCalls.ts';
 
 const MAX_GROUP_MEMBERS = 16;
 
@@ -729,19 +729,13 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
     async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [], canInvite: canReach }) {
       const conversation = conversations.get(conversationId);
       if (!conversation || conversation.deletedAt !== null) return null;
-      const excluded = new Set(excludedUserIds);
       let version: number;
       let invitees: ConversationMember[];
       do {
         requireActiveMember(conversationId, initiatorId);
         version = conversation.membershipVersion;
         const active = listMembers(conversationId);
-        if (active.length > MAX_GROUP_CALL_PARTICIPANTS) {
-          throw new ConversationStoreError('group_call_full', GROUP_CALL_LIMIT_MESSAGE);
-        }
-        if (active.some(({ userId }) => excluded.has(userId))) {
-          throw new ConversationStoreError('forbidden', 'All current members must be reachable to start a group call');
-        }
+        assertGroupCallMembership(active, excludedUserIds);
         invitees = active.filter(({ userId }) => userId !== initiatorId);
         const reachable = await Promise.all(invitees.map(async ({ userId }) =>
           (await canInvite(initiatorId, userId)) && (!canReach || await canReach(userId))));
