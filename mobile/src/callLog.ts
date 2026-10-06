@@ -46,6 +46,7 @@ export function isMissedCall(entry: CallHistoryEntry): boolean {
 
 /** The other party in a call, from the local user's point of view. */
 export function callPeerId(entry: CallHistoryEntry): string {
+  if (entry?.kind === 'group') return '';
   return (entry?.direction === 'outgoing' ? entry?.calleeId : entry?.callerId) ?? '';
 }
 

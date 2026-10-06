@@ -34,6 +34,7 @@ const PRIMARY_ACTION_SIZE = 56;
  * screen must still attribute an entry whose direction the server omitted.
  */
 function callPeerOf(entry: CallHistoryEntry, currentUserId: string | null | undefined) {
+  if (entry.kind === 'group') return '';
   if (entry?.direction === 'outgoing') return entry?.calleeId ?? '';
   if (entry?.direction === 'incoming') return entry?.callerId ?? '';
   return entry?.callerId === currentUserId ? (entry?.calleeId ?? '') : (entry?.callerId ?? '');

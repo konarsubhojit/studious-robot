@@ -52,11 +52,13 @@ work, battery drain and thermal throttling can reduce quality or end a call,
 especially on mid-range Android phones. Lower resolution, bitrate or video
 subscriptions may help but do not remove the scaling limit.
 
-The server enforces the four-person ceiling when invitees accept, so concurrent
-accepts cannot overfill a mesh. Remaining invitees receive a clear full-call
-response and the group-call UI explains the limit. A participant grid may render
-six entries for presentation or diagnostics, but that does not raise the
-connected-mesh ceiling.
+The server rejects starting a call when the **whole current membership exceeds
+four**, including the initiator, before inserting a call or signaling anyone.
+The mobile pre-dial sheet explains this policy and disables both audio and video
+start controls; its action adapter checks it again before sending. Admission and
+rejoin still enforce the four-person ceiling under conversation/call locks,
+including for legacy oversized snapshots. A participant grid may render six
+entries for presentation or diagnostics, but does not raise the mesh ceiling.
 
 Do not raise the cap based on simulator results or signalling tests. Move to an
 SFU before offering larger calls or promising reliable multi-video on mobile.
@@ -156,7 +158,11 @@ decision record.
 ## 8. Room lifecycle and first mesh implementation (#523)
 
 The existing `conversation.call.*` room snapshots are authoritative. A room
-keeps its participant set while live: `accept` admits a ringing, left or
+invites exactly the current accepted group members at start (pending group
+invitations are not membership). A blocked/unreachable member causes refusal
+rather than a partial invite set. A room keeps its participant set while live:
+joining the group midcall never adds a participant. Leaving or being removed
+revokes membership and drops that participant from the call. `accept` admits a ringing, left or
 declined participant who is still a conversation member; accepting an already
 accepted participant is idempotent. Admission (including rejoin) checks the
 four-person ceiling inside the PostgreSQL conversation/call locks. Leaving
@@ -214,8 +220,9 @@ working physical-device bidirectional AV. Before release, record results for:
   sharing; repeat after each participant (including the initiator) leaves and
   rejoins while the other two continue talking.
 - Four devices and simultaneous fifth/sixth admission attempts: at most four
-  accepted participants, a clear full-call response, and no surviving-pair
-  disruption. Retry rejoin both before and after a slot becomes available.
+  members at call start; five/six-member groups receive a clear pre-dial refusal
+  with no partial ringing. Group newcomers cannot join an existing call.
+  Rejoin still works for invited members while the room remains live.
 - Slow permission/capture startup, denial/retry, disconnect during startup,
   reconnect with missed leave snapshots, background/foreground and TURN-only
   paths; confirm no stopped-call microphone/camera or stale peer remains.
@@ -223,3 +230,45 @@ working physical-device bidirectional AV. Before release, record results for:
   camera controls, negotiated-SDP verification and full teardown.
 - The sustained-device, thermal/network and TURN-cost checks in §7. Treat
   five–six-person calls as blocked on the SFU follow-up, not as a mesh test mode.
+
+## 9. Durable group-call history (#539)
+
+Decision: keep `group_calls` and `group_call_participants` as the source of truth,
+not another call model or duplicated timeline rows. Both group message-history
+routes (`/groups/:id/messages` and `/conversations/:id/messages`) project one
+`type: system` entry per invited call, with `messageId = callId` and stable
+creation-time ordering. The existing `(before, beforeMessageId)` cursor merges
+these entries with messages, including arbitrary non-UUID message IDs.
+
+The entry updates in place: **Joined** means the viewer has an `acceptedAt`
+(including the initiator); **Missed** means they never joined and their invite
+was declined/left or the call ended; **Ended** additionally describes the room's
+terminal state. A live pending invite reads **Ringing**. Live mobile snapshots
+use the same projection, and loading history recovers outcomes after reconnect
+or restart. PostgreSQL persistence is required for recovery after a server
+restart; the no-database memory store is intentionally ephemeral.
+
+`GET /calls` merges these durable entries with unchanged direct-call records,
+using common newest-activity ordering, status filtering, limit/offset and total.
+Group entries carry `kind: group`, `conversationId`, `groupName`, `initiatorId`,
+`callStatus` and viewer-specific `outcome`/`status`; there is no fictitious
+`calleeId`. Mobile preserves this attribution, labels the group, opens its
+conversation through Message, and never offers direct redial or contact-profile
+navigation for a group entry.
+
+History requires current active membership, an invited participant record and a
+creation time within the current membership interval. Newcomers get no old
+entries; removal/leave immediately revokes both history paths. Mixed call
+history is not cached, preventing stale cached membership authorization.
+If group persistence fails, direct-call history remains available with
+`groupHistoryUnavailable: true`; unavailable group history is not represented
+as durable success. Read-only projections are not ordinary sendable, editable,
+reactable or exportable chat messages, and do not add message unread receipts
+or a separate message-change feed.
+
+Validation covers zero-write/signal oversized refusal, exact invitation
+snapshots, newcomer exclusion, REST departure fan-out, concurrent admission and
+live rejoin, recovered joined/missed/ended history from recreated PostgreSQL
+stores, mixed-history authentication/attribution/offset pagination, group
+timeline pagination and mobile pre-dial/history rendering. Hardware/native
+media verification remains subject to the checklist above.

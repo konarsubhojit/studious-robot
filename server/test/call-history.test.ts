@@ -11,13 +11,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
+import { createMemoryConversationStore } from '../src/conversationStore/memoryStore.ts';
 import { createFakeCallsDb } from './fakeCallsDb.ts';
 import { asDatabase, closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function startServer(opts?: import('../src/createServer.ts').CreateServerOptions) {
-  const server = createServer(opts);
+  // The fake DB models direct calls only; group persistence has separate tests.
+  const server = createServer({ conversationStore: createMemoryConversationStore(), ...opts });
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
@@ -60,6 +62,23 @@ test('history: is served from the durable calls table', async () => {
     assert.equal(typeof res.body.calls[0].updatedAt, 'string');
     assert.equal(res.body.total, 1);
     assert.equal(res.body.hasMore, false);
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: group-store failure preserves direct consumers and explicitly marks incomplete history', async () => {
+  const conversationStore = createMemoryConversationStore();
+  conversationStore.listCallHistory = async () => { throw new Error('group database unavailable'); };
+  const { url, teardown } = await startServer({ conversationStore });
+  try {
+    const session = await createSession(url, 'direct-during-group-outage');
+    await postJson(url, '/calls', { calleeId: 'offline-outage-peer' }, session);
+    const response = await getJson(url, '/calls', session);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.total, 1);
+    assert.equal(response.body.calls[0].calleeId, 'offline-outage-peer');
+    assert.equal(response.body.groupHistoryUnavailable, true);
   } finally {
     await teardown();
   }

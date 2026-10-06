@@ -851,6 +851,63 @@ describe('useMessaging', () => {
     expect(snapshot.participants.map((person: any) => person.status)).toEqual(['left', 'left', 'declined']);
     expect(snapshot.participants.every((person: any) => person.callId === snapshot.callId && person.invitedAt)).toBe(true);
     expect(params.socketRef.current.emit).not.toHaveBeenCalled();
+    expect(resultRef.current.messagesByPeer[id]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ messageId: snapshot.callId, type: 'system', body: 'Group video call · Joined · Ended' }),
+    ]));
+  });
+
+  test('oversized local and remote group starts fail before signaling or partial previews', async () => {
+    const { resultRef, params } = setup();
+    let localId!: string;
+    await act(async () => {
+      localId = await resultRef.current.groupActions.create('Large', ['bob', 'carol', 'dave', 'eve']);
+      resultRef.current.handleSocketConnected();
+    });
+    const remote = createMockGroup('alice', 'Large remote', ['bob', 'carol', 'dave', 'eve'], 'remote-large');
+    await act(async () => {
+      params.socketRef.current.receive('conversation.updated', { conversation: remote.group, updatedBy: 'alice' });
+    });
+    params.socketRef.current.emit.mockClear();
+    for (const id of [localId, 'remote-large']) {
+      await expect(resultRef.current.groupCallActions.start(id, 'audio')).rejects.toThrow('up to 4 members');
+      expect(resultRef.current.groupCalls[id]).toBeUndefined();
+    }
+    expect(params.socketRef.current.emit).not.toHaveBeenCalled();
+  });
+
+  test('group newcomers cannot receive a call invite retroactively and revoked members cannot act on held snapshots', async () => {
+    const { resultRef, params } = setup();
+    const row = createMockGroup('bob', 'Team', ['alice', 'carol'], 'snapshot-team');
+    const snapshot = startMockGroupCall(row, 'bob', 'snapshot-call', 'audio', '2026-10-03T06:00:00Z');
+    await act(async () => { resultRef.current.handleSocketConnected(); });
+    await act(async () => {
+      params.socketRef.current.receive('conversation.updated', { conversation: row.group, updatedBy: 'bob' });
+      params.socketRef.current.receive('conversation.call.updated', {
+        ...snapshot, participants: snapshot.participants.filter(person => person.userId !== 'alice'),
+      });
+    });
+    expect(resultRef.current.groupCalls['snapshot-team']).toBeUndefined();
+    await act(async () => { params.socketRef.current.receive('conversation.call.updated', snapshot); });
+    expect(resultRef.current.groupCalls['snapshot-team'].participants.map((person: any) => person.userId))
+      .toEqual(['bob', 'alice', 'carol']);
+    await act(async () => {
+      params.socketRef.current.receive('conversation.updated', {
+        conversation: { ...row.group, memberIds: ['bob', 'alice', 'carol', 'dave'], membershipVersion: 2 }, updatedBy: 'bob',
+      });
+    });
+    expect(resultRef.current.groupCalls['snapshot-team'].participants.some((person: any) => person.userId === 'dave')).toBe(false);
+    await act(async () => {
+      params.socketRef.current.receive('conversation.updated', {
+        conversation: { ...row.group, memberIds: ['bob', 'carol', 'dave'], membershipVersion: 3 }, updatedBy: 'bob',
+      });
+      params.socketRef.current.receive('conversation.call.updated', {
+        ...snapshot, call: { ...snapshot.call, stateVersion: 99 },
+      });
+    });
+    params.socketRef.current.emit.mockClear();
+    await expect(resultRef.current.groupCallActions.transition('snapshot-team', 'accept')).rejects.toThrow('not a group member');
+    expect(resultRef.current.groupCalls['snapshot-team'].call.stateVersion).toBe(1);
+    expect(params.socketRef.current.emit).not.toHaveBeenCalled();
   });
 
   test('remote group lifecycle sends exact call requests and consumes authoritative versioned snapshots', async () => {

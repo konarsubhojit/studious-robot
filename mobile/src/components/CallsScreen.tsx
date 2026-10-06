@@ -85,7 +85,8 @@ function CallHistoryTrailing({
   onRedial: (entry: CallHistoryEntry) => void;
 }) {
   const modality = callMediaType(item);
-  const { name } = usePeerProfile(peerId);
+  const profile = usePeerProfile(peerId);
+  const name = item.kind === 'group' ? item.groupName || 'Group call' : profile.name;
   return (
     <View style={styles.trailing}>
       <Icon
@@ -126,20 +127,22 @@ function CallHistoryRow({
   onRedial: (entry: CallHistoryEntry) => void;
 }) {
   const peerId = callPeerId(item);
-  const { name } = usePeerProfile(peerId);
+  const profile = usePeerProfile(peerId);
+  const name = item.kind === 'group' ? item.groupName || 'Group call' : profile.name;
   const missed = isMissedCall(item);
   const durationLabel =
     item.durationSeconds != null ? formatCallDuration(item.durationSeconds) : '';
   const timeLabel = formatCallTimeOfDay(item.createdAt);
+  const conversationId = item.kind === 'group' ? item.conversationId : peerId;
   // The reciprocal of the call button in the conversation header: from
   // a call in the log, reach the conversation with the same person.
-  const actions = onMessage && peerId
+  const actions = onMessage && conversationId
     ? [{
         key: 'message',
         label: 'Message',
         accessibilityLabel: `Message ${name}`,
         testID: 'call-history-message',
-        onPress: () => onMessage(peerId),
+        onPress: () => onMessage(conversationId),
       }]
     : [];
 
@@ -158,7 +161,7 @@ function CallHistoryRow({
             item={item}
             peerId={peerId}
             missed={missed}
-            canCall={canCall}
+            canCall={canCall && item.kind !== 'group'}
             colors={colors}
             styles={styles}
             onRedial={onRedial}

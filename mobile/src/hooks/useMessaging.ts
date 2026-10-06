@@ -89,6 +89,7 @@ import {
 } from '../messaging/sendPipeline';
 import useChatSnapshotMirror from '../messaging/useChatSnapshotMirror';
 import { fetchGroupHistory, fetchHistory } from '../messaging/fetchHistory';
+import { groupCallTimelineMessage } from '../../../shared';
 import type { AttachmentRecord, ConversationRecord } from '../../../shared/signaling/schemas';
 import type { PeerProfile } from '../types/directory';
 import type { CallStatus } from '../components/StatusBanner';
@@ -1647,6 +1648,18 @@ export default function useMessaging({
     messagesByPeerRef.current = next;
     setMessagesByPeer(next);
   }, []);
+
+  useEffect(() => {
+    let next = messagesByPeerRef.current;
+    for (const [peerId, snapshot] of Object.entries(groupCalls)) {
+      const participant = snapshot.participants.find(person => person.userId === userId);
+      if (!participant) continue;
+      const message = groupCallTimelineMessage(snapshot.call, participant);
+      next = { ...next, [peerId]: [message, ...(next[peerId] ?? []).filter(row => row.messageId !== message.messageId)]
+        .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '') || b.messageId.localeCompare(a.messageId)) };
+    }
+    if (next !== messagesByPeerRef.current) commitMessageHistory(next);
+  }, [groupCalls, userId, commitMessageHistory]);
 
   const commitLiveMessage = useCallback((
     peerId: string,

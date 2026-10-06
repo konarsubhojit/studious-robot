@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SERVER_EVENTS } from '../../../shared';
+import { GROUP_CALL_LIMIT_MESSAGE, MAX_GROUP_CALL_PARTICIPANTS, SERVER_EVENTS } from '../../../shared';
 import { logWarn } from '../appLogger';
 import { createMessageId } from '../messaging/messageIdentity';
 import {
@@ -92,6 +92,7 @@ export default function useGroupCalls({ scope, userId, conversationsRef, signali
     return {
       start: async (id: string, mediaType: 'audio' | 'video' = 'audio') => {
         const row = find(id);
+        if (row.group!.memberIds.length > MAX_GROUP_CALL_PARTICIPANTS) throw new Error(GROUP_CALL_LIMIT_MESSAGE);
         const existing = held.current[id];
         if (existing && existing.call.status !== 'ended') throw new Error('A group call is already open');
         if (row.localMock) receive(startMockGroupCall(row, userId, `mock-call-${createMessageId()}`, mediaType, new Date().toISOString()));

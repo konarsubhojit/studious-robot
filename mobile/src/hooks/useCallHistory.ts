@@ -27,6 +27,10 @@ export type CallHistoryEntry = {
   callId: string;
   callerId: string;
   calleeId: string;
+  kind?: 'group';
+  conversationId?: string;
+  groupName?: string;
+  outcome?: 'joined' | 'missed' | 'ringing';
   direction: 'incoming' | 'outgoing';
   status?: string;
   endReason?: string | null;
@@ -159,9 +163,13 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
         if (!Array.isArray(data.calls)) return;
         const entries = data.calls.map((call: any) => ({
           callId: call.callId,
-          callerId: call.callerId,
-          calleeId: call.calleeId,
-          direction: call.callerId === trimmedUserId ? 'outgoing' : 'incoming',
+          callerId: call.callerId ?? call.initiatorId,
+          calleeId: call.calleeId ?? '',
+          kind: call.kind,
+          conversationId: call.conversationId,
+          groupName: call.groupName,
+          outcome: call.outcome,
+          direction: (call.callerId ?? call.initiatorId) === trimmedUserId ? 'outgoing' : 'incoming',
           status: call.status,
           endReason: call.endReason,
           createdAt: call.createdAt,

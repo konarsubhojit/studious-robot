@@ -569,6 +569,67 @@ test('REST leave and removal notify all call participants, including the departi
   }
 });
 
+async function verifyCallLog(t: Context, store: ConversationStore, restartStore: () => ConversationStore = () => store) {
+  const f = await fixture(t, { conversationStore: store });
+  const owner = await f.session('log-owner');
+  const member = await f.session('log-member');
+  const outsider = await f.session('log-outsider');
+  const group = await store.create({ name: 'Log team', creatorId: 'log-owner', inviteeIds: ['log-member'] });
+  const id = group.conversation.conversationId;
+  await store.acceptInvitation({ conversationId: id, userId: 'log-member', invitationId: group.invitations![0].invitationId });
+  const first = (await store.startCall({ conversationId: id, initiatorId: 'log-owner', mediaType: 'audio', ringTimeoutMs: 60_000 }))!;
+  await store.expireCall(first.call.callId, Date.now() + 61_000);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  const second = (await store.startCall({ conversationId: id, initiatorId: 'log-owner', mediaType: 'video', ringTimeoutMs: 60_000 }))!;
+  await store.transitionCall({ callId: second.call.callId, userId: 'log-member', action: 'accept' });
+  await store.transitionCall({ callId: second.call.callId, userId: 'log-member', action: 'leave' });
+  await store.transitionCall({ callId: second.call.callId, userId: 'log-owner', action: 'leave' });
+  await postJson(f.url, '/calls', { calleeId: 'log-ghost', mediaType: 'audio' }, owner);
+  assert.equal((await getJson(f.url, '/calls')).status, 401);
+  assert.equal((await getJson(f.url, '/calls', outsider)).body.total, 0);
+  const log = (await getJson(f.url, '/calls', owner)).body;
+  assert.equal(log.total, 3);
+  const groupEntry = log.calls.find((entry: any) => entry.callId === first.call.callId);
+  assert.equal(groupEntry.kind, 'group');
+  assert.equal(groupEntry.conversationId, id);
+  assert.equal(groupEntry.groupName, 'Log team');
+  assert.equal(groupEntry.initiatorId, 'log-owner');
+  assert.equal(groupEntry.calleeId, undefined);
+  assert.equal(log.calls.find((entry: any) => entry.kind !== 'group').calleeId, 'log-ghost');
+  const paged: string[] = [];
+  for (let offset = 0; offset < 3; offset++) {
+    const page = (await getJson(f.url, `/calls?limit=1&offset=${offset}`, owner)).body;
+    assert.equal(page.total, 3);
+    assert.equal(page.hasMore, offset < 2);
+    paged.push(page.calls[0].callId);
+  }
+  assert.deepEqual(paged, log.calls.map((entry: any) => entry.callId));
+  const missed = (await getJson(f.url, '/calls?status=missed', member)).body;
+  assert.equal(missed.total, 1);
+  assert.equal(missed.calls[0].callId, first.call.callId);
+  const timeline = (await getJson(f.url, `/conversations/${id}/messages?limit=1`, member)).body;
+  assert.equal(timeline.messages[0].type, 'system');
+  assert.equal(timeline.messages[0].body, 'Group video call · Joined · Ended');
+  assert.equal(timeline.hasMore, true);
+  const older = (await getJson(f.url, `/groups/${id}/messages?limit=1&before=${encodeURIComponent(timeline.nextCursor.before)}&beforeMessageId=${timeline.nextCursor.beforeMessageId}`, member)).body;
+  assert.equal(older.messages[0].body, 'Group audio call · Missed · Ended');
+  const restarted = await fixture(t, { conversationStore: restartStore() });
+  const restartedMember = await restarted.session('log-member');
+  const recovered = (await getJson(restarted.url, `/groups/${id}/messages`, restartedMember)).body;
+  assert.deepEqual(recovered.messages.map((entry: any) => entry.body), [
+    'Group video call · Joined · Ended', 'Group audio call · Missed · Ended',
+  ]);
+  assert.equal((await getJson(restarted.url, '/calls', restartedMember)).body.total, 2);
+  await store.removeMember({ conversationId: id, actorId: 'log-owner', userId: 'log-member' });
+  assert.equal((await getJson(f.url, '/calls', member)).body.total, 0);
+  assert.equal((await getJson(restarted.url, '/calls', restartedMember)).body.total, 0);
+  assert.equal((await getJson(f.url, `/groups/${id}/messages`, member)).status, 403);
+}
+
+test('GET /calls merges durable group attribution with direct calls, paginates and rechecks membership', async t => {
+  await verifyCallLog(t, createConversationStore());
+});
+
 test('memory store interval and race contract', async t => {
   await watermarkAndCapacity(t, createConversationStore());
 });
@@ -601,6 +662,8 @@ test('PostgreSQL migration, durable admission and transaction races', { skip: !p
   const db = drizzle(pool, { schema });
   await migrate(db, { migrationsFolder: new URL('../db/migrations', import.meta.url).pathname });
   const store = createConversationStore({ db });
+  await t.test('group call HTTP history survives server/store recreation and preserves attribution', async t =>
+    verifyCallLog(t, store, () => createConversationStore({ db })));
   await watermarkAndCapacity(t, store);
   await attachmentErasure(t, store);
   await t.test('durable cleanup survives store recreation and object storage failure', async t =>

@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useCallHistory from '../../src/hooks/useCallHistory';
 import { withDatabase } from '../../src/storage/localDatabase';
+import { callPeerId } from '../../src/callLog';
 
 const mountedTrees: renderer.ReactTestRenderer[] = [];
 beforeEach(async () => {
@@ -39,6 +40,21 @@ function setup(overrides = {}) {
 }
 
 describe('useCallHistory', () => {
+  test('group-attributed server history retains identity and outcomes without offering an ad hoc peer', async () => {
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ calls: [
+      { callId: 'group-call', kind: 'group', conversationId: 'team', groupName: 'Team',
+        initiatorId: 'bob', mediaType: 'audio', status: 'missed', outcome: 'missed' },
+      { callId: 'direct-call', callerId: 'alice', calleeId: 'carol', status: 'ended' },
+    ] }) });
+    await act(async () => { await resultRef.current.fetchCallHistory(); });
+    expect(resultRef.current.callHistory[0]).toMatchObject({
+      kind: 'group', conversationId: 'team', groupName: 'Team', outcome: 'missed', direction: 'incoming',
+    });
+    expect(callPeerId(resultRef.current.callHistory[0])).toBe('');
+    expect(callPeerId(resultRef.current.callHistory[1])).toBe('carol');
+    expect(resultRef.current.missedCallCount).toBe(1);
+  });
   test('initialises with an empty history and zero missed calls', () => {
     const { resultRef } = setup();
     expect(resultRef.current.callHistory).toEqual([]);
