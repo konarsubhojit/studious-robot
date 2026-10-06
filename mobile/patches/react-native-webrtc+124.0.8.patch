@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ScreenCaptureController.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ScreenCaptureController.java
-index c22a241..d6034d2 100644
+index 554739d..fa5a471 100644
 --- a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ScreenCaptureController.java
 +++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ScreenCaptureController.java
 @@ -11,6 +11,9 @@ import android.view.OrientationEventListener;
@@ -56,8 +56,8 @@ index c22a241..d6034d2 100644
 +        }
 +    }
 +
-     public ScreenCaptureController(Context context, int width, int height, Intent mediaProjectionPermissionResultData) {
-         super(width, height, DEFAULT_FPS);
+     public ScreenCaptureController(Context context, int width, int height, Intent mediaProjectionPermissionResultData, float resolutionScale) {
+         super((int)(width * resolutionScale), (int)(height * resolutionScale), DEFAULT_FPS);
  
 @@ -64,17 +107,21 @@ public class ScreenCaptureController extends AbstractVideoCaptureController {
  
