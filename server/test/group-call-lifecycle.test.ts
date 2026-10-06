@@ -190,6 +190,52 @@ test('memory room capacity, concurrent admissions, live rejoin, membership and f
 test('memory snapshot membership, atomic start refusal, revocation and durable paginated system history', async () => {
   await verifyHistory([createMemoryConversationStore()]);
 });
+
+async function verifyCallTimestamps(store: ConversationStore) {
+  const { owner, member, conversationId } = await eligibilityGroup(store, 'clock-history');
+  const started = (await store.startCall({ conversationId, initiatorId: owner, mediaType: 'audio', ringTimeoutMs: 60_000 }))!;
+  const accepted = (await store.transitionCall({ callId: started.call.callId, userId: member, action: 'accept' }))!;
+  assert.ok(accepted.call.updatedAt >= started.call.createdAt, 'call activity must not precede creation');
+  const participant = accepted.participants.find(person => person.userId === member)!;
+  assert.ok(participant.acceptedAt! >= participant.invitedAt, 'acceptance must not precede invitation');
+  const message = await store.saveMessage({ messageId: 'group_call', conversationId, senderId: owner,
+    recipientId: conversationId, body: 'after the call', type: 'text', createdAt: new Date().toISOString(),
+    attachment: null, replyTo: null, reactions: {}, deletedAt: null, deliveredTo: [], readAt: null });
+  assert.ok(message!.message.createdAt > started.call.createdAt, 'later messages must sort after the call');
+  const all = await store.listMessages({ conversationId, userId: owner, limit: 20 });
+  const seen: string[] = [];
+  let before: string | undefined;
+  let beforeMessageId: string | undefined;
+  for (let page = 0; page < 3; page++) {
+    const rows = await store.listMessages({ conversationId, userId: owner, limit: 1, before, beforeMessageId });
+    if (!rows.length) break;
+    seen.push(rows[0].messageId);
+    before = rows[0].createdAt;
+    beforeMessageId = rows[0].messageId;
+  }
+  assert.deepEqual(seen, all.map(row => row.messageId));
+}
+
+test('memory call history preserves chronological timestamps within one clock tick', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  await verifyCallTimestamps(createMemoryConversationStore());
+});
+
+test('memory timeline pagination uses the same ID ordering as its cursor for tied timestamps', async () => {
+  const store = createMemoryConversationStore();
+  const { owner, conversationId } = await eligibilityGroup(store, 'cursor-history');
+  const started = (await store.startCall({ conversationId, initiatorId: owner, mediaType: 'audio', ringTimeoutMs: 60_000 }))!;
+  const message = (await store.saveMessage({ messageId: 'group_call', conversationId, senderId: owner,
+    recipientId: conversationId, body: 'tied row', type: 'text', createdAt: new Date().toISOString(),
+    attachment: null, replyTo: null, reactions: {}, deletedAt: null, deliveredTo: [], readAt: null }))!;
+  // Seed a timestamp tie through the memory store's retained message reference.
+  message.message.createdAt = started.call.createdAt;
+  const first = await store.listMessages({ conversationId, userId: owner, limit: 1 });
+  assert.equal(first[0].messageId, 'group_call');
+  const second = await store.listMessages({ conversationId, userId: owner, limit: 1,
+    before: first[0].createdAt, beforeMessageId: first[0].messageId });
+  assert.equal(second[0].messageId, `group-call:${started.call.callId}`);
+});
 // Explicit test-only URL: never migrate a deployed/shared database.
 const databaseUrl = process.env.GROUP_CALL_TEST_DATABASE_URL;
 test('Postgres locks serialize capacity and rejoin across independent pools', { skip: !databaseUrl }, async () => {
@@ -212,6 +258,7 @@ test('Postgres locks serialize capacity and rejoin across independent pools', { 
       mediaType: 'audio', ringTimeoutMs: 60_000 }), { code: 'forbidden' });
     assert.equal((await store.listCallHistory({ userId: blocked.owner, limit: 20 })).total, 0);
     await databases[0].delete(schema.blocks).where(eq(schema.blocks.blockerId, blocked.member));
+    await verifyCallTimestamps(store);
   } finally {
     await Promise.all(pools.map(pool => pool.end()));
     await admin.query(`DROP DATABASE "${databaseName}"`);

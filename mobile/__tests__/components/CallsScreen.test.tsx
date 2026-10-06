@@ -144,19 +144,21 @@ describe('CallsScreen – call log', () => {
 
   test('group history displays the group and opens its conversation without contact-profile or direct-redial actions', () => {
     const onMessage = jest.fn();
+    const onOpenGroup = jest.fn();
     const onOpenProfile = jest.fn();
     const onAudioCall = jest.fn();
     const onVideoCall = jest.fn();
     const tree = render({
       callHistory: [call({ kind: 'group', conversationId: 'team-id', groupName: 'Study team',
         callerId: 'user-alice', calleeId: '', outcome: 'joined' })],
-      onMessage, onOpenProfile, onAudioCall, onVideoCall,
+      onMessage, onOpenGroup, onOpenProfile, onAudioCall, onVideoCall,
     });
     expect(tree.root.findAll((node: any) => node.props.title === 'Study team').length).toBeGreaterThan(0);
     expect(pressable(tree, 'call-history-row')).toBeUndefined();
     expect(byTestID(tree, 'call-history-redial')).toHaveLength(0);
     act(() => { pressable(tree, 'call-history-message').props.onPress(); });
-    expect(onMessage).toHaveBeenCalledWith('team-id');
+    expect(onOpenGroup).toHaveBeenCalledWith('team-id');
+    expect(onMessage).not.toHaveBeenCalled();
     expect(onOpenProfile).not.toHaveBeenCalled();
     expect(onAudioCall).not.toHaveBeenCalled();
     expect(onVideoCall).not.toHaveBeenCalled();

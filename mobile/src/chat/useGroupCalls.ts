@@ -20,10 +20,11 @@ type Params = {
   signalingRef: { current: SignalingClient | null };
   socketRef: { current: Socket | null };
   connected: boolean | null;
+  onCallUpdated?: (snapshot: GroupCallSnapshot, groupName: string) => void;
 };
 
 /** Contract-aware lifecycle adapter; no media, permissions, RTC or peer-call events. */
-export default function useGroupCalls({ scope, userId, conversationsRef, signalingRef, socketRef, connected }: Params) {
+export default function useGroupCalls({ scope, userId, conversationsRef, signalingRef, socketRef, connected, onCallUpdated }: Params) {
   const [groupCalls, setGroupCalls] = useState<Record<string, GroupCallSnapshot>>({});
   const held = useRef<Record<string, GroupCallSnapshot>>({});
   const retired = useRef(new Set<string>());
@@ -54,7 +55,8 @@ export default function useGroupCalls({ scope, userId, conversationsRef, signali
     }
     held.current = { ...held.current, [row.peerId]: snapshot };
     setGroupCalls(held.current);
-  }, [conversationsRef, userId]);
+    onCallUpdated?.(snapshot, row.group!.name);
+  }, [conversationsRef, userId, onCallUpdated]);
 
   useEffect(() => {
     if (!scope || !connected || !signalingRef.current) return undefined;

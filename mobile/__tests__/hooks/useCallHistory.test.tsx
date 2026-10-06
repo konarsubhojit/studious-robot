@@ -40,6 +40,34 @@ function setup(overrides = {}) {
 }
 
 describe('useCallHistory', () => {
+  test('partial history preserves cached groups while refreshing direct calls', async () => {
+    const { resultRef, params } = setup();
+    act(() => {
+      resultRef.current.addToHistory({ callId: 'cached-group', kind: 'group', direction: 'incoming', status: 'missed' });
+      resultRef.current.addToHistory({ callId: 'old-direct', direction: 'outgoing', status: 'ended' });
+    });
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({
+      groupHistoryUnavailable: true, calls: [{ callId: 'new-direct', callerId: 'alice', calleeId: 'bob', status: 'ended' }],
+    }) });
+    await act(async () => { await resultRef.current.fetchCallHistory(); });
+    expect(resultRef.current.callHistory.map((entry: any) => entry.callId)).toEqual(['new-direct', 'cached-group']);
+    expect(resultRef.current.missedCallCount).toBe(1);
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ calls: [] }) });
+    await act(async () => { await resultRef.current.fetchCallHistory(); });
+    expect(resultRef.current.callHistory).toEqual([]);
+  });
+
+  test('live missed outcomes become unread but repeated snapshots retain acknowledgement', () => {
+    const { resultRef } = setup();
+    const entry = { callId: 'live-group', kind: 'group', direction: 'incoming' };
+    act(() => { resultRef.current.addToHistory({ ...entry, status: 'ringing', isRead: true }); });
+    act(() => { resultRef.current.addToHistory({ ...entry, status: 'missed', isRead: false }); });
+    expect(resultRef.current.missedCallCount).toBe(1);
+    act(() => { resultRef.current.markMissedCallsRead(); });
+    act(() => { resultRef.current.addToHistory({ ...entry, status: 'missed', isRead: false }); });
+    expect(resultRef.current.missedCallCount).toBe(0);
+  });
+
   test('group-attributed server history retains identity and outcomes without offering an ad hoc peer', async () => {
     const { resultRef, params } = setup();
     params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ calls: [

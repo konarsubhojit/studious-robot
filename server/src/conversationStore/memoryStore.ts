@@ -476,7 +476,8 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
               message.messageId < beforeMessageId!))
         )
         .sort((a, b) =>
-          b.createdAt.localeCompare(a.createdAt) || b.messageId.localeCompare(a.messageId)
+          b.createdAt.localeCompare(a.createdAt) ||
+          (a.messageId < b.messageId ? 1 : a.messageId > b.messageId ? -1 : 0)
         )
         .slice(0, Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
     },
@@ -750,6 +751,7 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       // Membership versions may advance several times in one millisecond.
       // Keep the snapshot inside every invited member's history interval.
       const now = activityTime(conversation);
+      conversation.updatedAt = now;
       const call: GroupCall = {
         callId: randomUUID(),
         conversationId,
@@ -781,13 +783,13 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       const call = calls.get(callId);
       if (!call || call.status === 'ended') return null;
       requireActiveMember(call.conversationId, userId);
-      const now = new Date().toISOString();
+      const now = new Date(Math.max(Date.now(), Date.parse(call.updatedAt) + 1)).toISOString();
       const participant = callParticipants.get(callParticipantKey(callId, userId));
       if (!participant) return null;
       if (
         participant.status === 'ringing' &&
         call.ringTimeoutAt !== null &&
-        Date.parse(call.ringTimeoutAt) <= Date.parse(now)
+        Date.parse(call.ringTimeoutAt) <= Date.now()
       ) {
         const expired = await this.expireCall(callId);
         return expired ? { ...expired, expired: true } : null;
@@ -818,7 +820,7 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
       if (![...callParticipants.values()].some((participant) =>
         participant.callId === callId && participant.status === 'ringing'
       )) return null;
-      const now = new Date(nowMs).toISOString();
+      const now = new Date(Math.max(nowMs, Date.parse(call.updatedAt) + 1)).toISOString();
       for (const participant of callParticipants.values()) {
         if (participant.callId !== callId || participant.status !== 'ringing') continue;
         participant.status = 'declined';

@@ -201,6 +201,8 @@ export type UseMessagingParams = {
   storageUserId?: string;
   groupTransport?: GroupTransport;
   updateStatus: (message: string, severity?: CallStatus['severity']) => void;
+  onGroupCallUpdated?: Parameters<typeof useGroupCalls>[0]['onCallUpdated'];
+  onGroupMembershipRevoked?: () => void;
 };
 
 export default function useMessaging({
@@ -213,6 +215,8 @@ export default function useMessaging({
   storageUserId = userId,
   groupTransport = GROUP_TRANSPORT,
   updateStatus,
+  onGroupCallUpdated,
+  onGroupMembershipRevoked,
 }: UseMessagingParams) {
   const scope = dataScope(signalingUrl, storageUserId);
   const requests = useMemo(() => new RequestCoalescer(scope), [scope]);
@@ -288,6 +292,7 @@ export default function useMessaging({
   const lastLocalCreatedAtMsRef = useRef(0);
   const { groupCalls, groupCallActions, receiveGroupCallSnapshot } = useGroupCalls({
     scope, userId, conversationsRef, signalingRef, socketRef, connected: isSocketConnected,
+    onCallUpdated: onGroupCallUpdated,
   });
 
   useEffect(() => {
@@ -946,11 +951,16 @@ export default function useMessaging({
     if (!signaling || !isSocketConnected || !scope) return undefined;
     return signaling.on(SERVER_EVENTS.CONVERSATION_UPDATED, ({ conversation }: { conversation: ConversationRecord }) => {
       if (scopeRef.current !== scope) return;
+      const previous = conversationsRef.current.find(row => row.conversationId === conversation.conversationId);
       const next = applyGroupSnapshot(conversationsRef.current, conversation, userId);
       conversationsRef.current = next;
       setConversations(next);
+      if (previous?.group?.memberIds.includes(userId) &&
+          !next.find(row => row.conversationId === conversation.conversationId)?.group?.memberIds.includes(userId)) {
+        onGroupMembershipRevoked?.();
+      }
     });
-  }, [isSocketConnected, scope, signalingRef, userId]);
+  }, [isSocketConnected, scope, signalingRef, userId, onGroupMembershipRevoked]);
 
   /** Wake at the persisted conversation-head deadline, never reset it on reconnect. */
   const scheduleDrain = useCallback(() => {

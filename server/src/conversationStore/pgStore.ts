@@ -435,6 +435,7 @@ function createPgConversationStore(db: Database): ConversationStore {
     tx: Tx,
     now: Date
   ): Promise<GroupCallChange> {
+    now = new Date(Math.max(now.getTime(), call.updatedAt.getTime() + 1));
     await tx
       .update(callParticipantsTable)
       .set({ status: 'declined', leftAt: now, updatedAt: now })
@@ -1117,6 +1118,8 @@ function createPgConversationStore(db: Database): ConversationStore {
           }
           await checkBlocks(tx, initiatorId, invitees.map(({ userId }) => userId));
           const now = activityTime(conversation);
+          await tx.update(conversationsTable).set({ updatedAt: now })
+            .where(eq(conversationsTable.conversationId, conversationId));
           const [call] = await tx
             .insert(callsTable)
             .values({
@@ -1125,7 +1128,7 @@ function createPgConversationStore(db: Database): ConversationStore {
               mediaType,
               status: 'ringing',
               stateVersion: 1,
-              ringTimeoutAt: new Date(now.getTime() + ringTimeoutMs),
+              ringTimeoutAt: new Date(Date.now() + ringTimeoutMs),
               createdAt: now,
               updatedAt: now,
             })
@@ -1189,11 +1192,11 @@ function createPgConversationStore(db: Database): ConversationStore {
           .limit(1);
         if (!participant) return null;
 
-        const now = new Date();
+        const now = new Date(Math.max(Date.now(), call.updatedAt.getTime() + 1));
         if (
           participant.status === 'ringing' &&
           call.ringTimeoutAt &&
-          call.ringTimeoutAt.getTime() <= now.getTime()
+          call.ringTimeoutAt.getTime() <= Date.now()
         ) {
           return expireLockedCall(call, tx, now);
         }
