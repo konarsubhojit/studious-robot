@@ -1,4 +1,4 @@
-import { CLIENT_EVENTS, parseEventPayload } from '../../../shared';
+import { CLIENT_EVENTS, SIGNALING_VERSION, parseEventPayload } from '../../../shared';
 import {
   createMockGroup, leaveMockGroup, mutateMockMembers, renameMockGroup, sendMockGroup,
 } from '../../src/chat/groupMockAdapter';
@@ -46,7 +46,7 @@ test('rename/leave use contract validation and reject further actions after leav
 test('outbox targets exactly conversationId XOR recipientId and retains identity through restoration', () => {
   const item = queued();
   const payload = outboxSendPayload(item);
-  expect(payload).toMatchObject({ version: 2, conversationId: 'mock-group-1', messageId: 'm1' });
+  expect(payload).toMatchObject({ version: SIGNALING_VERSION, conversationId: 'mock-group-1', messageId: 'm1' });
   expect(payload).not.toHaveProperty('recipientId');
   expect(payload).not.toHaveProperty('localMock');
   expect(parseEventPayload(CLIENT_EVENTS.MESSAGE_SEND, payload, 'client').success).toBe(true);

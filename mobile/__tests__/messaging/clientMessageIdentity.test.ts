@@ -1,4 +1,4 @@
-import { CLIENT_EVENTS, SERVER_EVENTS, parseEventPayload } from '../../../shared';
+import { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION, parseEventPayload } from '../../../shared';
 import { withReconciledMessage } from '../../src/messaging/conversations';
 import { dedupeAndSort, mergeHistoryPage, patchMessage, upsertTimelineEntry } from '../../src/messaging/messageHistory';
 import { timelineEntryId } from '../../src/messaging/messageIdentity';
@@ -22,7 +22,7 @@ const confirmed = () => ({
 test('versioned send, event and durable queue carry explicit key without smuggling messageId', () => {
   const item = buildOutboxItem(input);
   const payload = outboxSendPayload(item);
-  expect(payload).toMatchObject({ clientMessageId: key, version: 2 });
+  expect(payload).toMatchObject({ clientMessageId: key, version: SIGNALING_VERSION });
   expect(payload).not.toHaveProperty('messageId');
   expect(parseEventPayload(CLIENT_EVENTS.MESSAGE_SEND, payload).success).toBe(true);
   expect(parseEventPayload(SERVER_EVENTS.MESSAGE_RECEIVED, { version: 2, message: confirmed() }).success).toBe(true);

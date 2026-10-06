@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
+import { SIGNALING_VERSION } from '../../../shared';
 import useAnswerPath from '../../src/hooks/useAnswerPath';
 
 jest.mock('../../src/appLogger', () => ({
@@ -185,7 +186,7 @@ describe('useAnswerPath', () => {
     });
 
     expect(signaling.request).toHaveBeenCalledWith('call.decline', {
-      version: 2,
+      version: SIGNALING_VERSION,
       callId: 'call-1',
     });
     expect(incomingCallNotification.dismissIncomingCallNotification).toHaveBeenCalledWith('call-1');

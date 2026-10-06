@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { AppState } from 'react-native';
 import RNFS from 'react-native-fs';
+import { SIGNALING_VERSION } from '../../../shared';
 import useMessaging from '../../src/hooks/useMessaging';
 import { createSignalingClient } from '../../src/signalingClient';
 import {
@@ -895,11 +896,11 @@ describe('useMessaging', () => {
     });
     expect(resultRef.current.groupCalls['remote-group'].callId).toBe('remote-call-next');
     expect(params.socketRef.current.emit.mock.calls.map(([event, payload]: any[]) => [event, payload])).toEqual([
-      ['conversation.call.start', { version: 2, conversationId: 'remote-group', mediaType: 'video' }],
-      ['conversation.call.leave', { version: 2, callId: 'remote-call' }],
-      ['conversation.call.accept', { version: 2, callId: 'remote-incoming' }],
-      ['conversation.call.leave', { version: 2, callId: 'remote-incoming' }],
-      ['conversation.call.decline', { version: 2, callId: 'remote-call-next' }],
+      ['conversation.call.start', { version: SIGNALING_VERSION, conversationId: 'remote-group', mediaType: 'video' }],
+      ['conversation.call.leave', { version: SIGNALING_VERSION, callId: 'remote-call' }],
+      ['conversation.call.accept', { version: SIGNALING_VERSION, callId: 'remote-incoming' }],
+      ['conversation.call.leave', { version: SIGNALING_VERSION, callId: 'remote-incoming' }],
+      ['conversation.call.decline', { version: SIGNALING_VERSION, callId: 'remote-call-next' }],
     ]);
     await expect(resultRef.current.groupCallActions.simulate('remote-group', 'bob', 'leave')).rejects.toThrow('local preview');
     params.socketRef.current.connected = false;
@@ -979,12 +980,12 @@ describe('useMessaging', () => {
     expect(resultRef.current.conversations.find((row: any) => row.peerId === id))
       .toMatchObject({ group: { membershipVersion: 5, memberIds: ['bob', 'carol'] }, left: true });
     expect(params.socketRef.current.emit.mock.calls.map(([event, payload]: any[]) => [event, payload])).toEqual([
-      ['conversation.create', { version: 2, name: 'Team', inviteeIds: ['bob', 'carol'] }],
-      ['message.send', { version: 2, conversationId: id, body: 'durable live send', clientMessageId: queuedId }],
-      ['conversation.update', { version: 2, conversationId: id, name: 'Renamed' }],
-      ['conversation.member.add', { version: 2, conversationId: id, userIds: ['dave'] }],
-      ['conversation.member.remove', { version: 2, conversationId: id, userId: 'dave' }],
-      ['conversation.leave', { version: 2, conversationId: id }],
+      ['conversation.create', { version: SIGNALING_VERSION, name: 'Team', inviteeIds: ['bob', 'carol'] }],
+      ['message.send', { version: SIGNALING_VERSION, conversationId: id, body: 'durable live send', clientMessageId: queuedId }],
+      ['conversation.update', { version: SIGNALING_VERSION, conversationId: id, name: 'Renamed' }],
+      ['conversation.member.add', { version: SIGNALING_VERSION, conversationId: id, userIds: ['dave'] }],
+      ['conversation.member.remove', { version: SIGNALING_VERSION, conversationId: id, userId: 'dave' }],
+      ['conversation.leave', { version: SIGNALING_VERSION, conversationId: id }],
     ]);
   });
 
@@ -1283,9 +1284,9 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob).toBeUndefined();
     const send = params.socketRef.current.emit.mock.calls.find((args: any[]) => args[0] === 'message.send')[1];
     const typing = params.socketRef.current.emit.mock.calls.find((args: any[]) => args[0] === 'message.typing')[1];
-    expect(send).toMatchObject({ version: 2, conversationId: 'group-live' });
+    expect(send).toMatchObject({ version: SIGNALING_VERSION, conversationId: 'group-live' });
     expect(send).not.toHaveProperty('recipientId');
-    expect(typing).toEqual({ version: 2, conversationId: 'group-live', isTyping: true });
+    expect(typing).toEqual({ version: SIGNALING_VERSION, conversationId: 'group-live', isTyping: true });
     await act(async () => { await resultRef.current.markConversationRead('group-live'); });
     const requestUrls = params.authedFetchRef.current.mock.calls
       .map(([buildRequest]: any[]) => buildRequest('sess-1').url);
@@ -2207,7 +2208,7 @@ describe('useMessaging', () => {
     expect(socketRef.current.emit).toHaveBeenCalledWith(
       'message.send',
       {
-        version: 2,
+        version: SIGNALING_VERSION,
         recipientId: 'bob',
         body: 'hi',
         clientMessageId: expect.any(String),
@@ -2279,7 +2280,7 @@ describe('useMessaging', () => {
     });
     expect(socket.emit).toHaveBeenCalledTimes(2);
     expect(socket.emit).toHaveBeenLastCalledWith('message.typing', {
-      version: 2,
+      version: SIGNALING_VERSION,
       recipientId: 'bob',
       isTyping: false,
     });
