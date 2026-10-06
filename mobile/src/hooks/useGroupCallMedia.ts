@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription } from 'react-native-webrtc';
-import { SERVER_EVENTS, CLIENT_EVENTS, SIGNALING_VERSION } from '../../../shared';
+import { SERVER_EVENTS, CLIENT_EVENTS, SIGNALING_VERSION, groupNegotiationId } from '../../../shared';
 import { logInfo, logWarn } from '../appLogger';
 import { callPeerMapReducer, INITIAL_CALL_PEERS } from '../call/callStateMachine';
 import type { CallPeerMap } from '../call/callStateMachine';
@@ -15,12 +15,14 @@ type MutableRef<T> = { current: T };
 type GroupPeerConnection = {
   userId: string;
   callId: string;
+  negotiationId: string;
   pc: PeerConnection;
   candidates: unknown[];
   isNegotiating: boolean;
   restartPending: boolean;
   restartAttempts: number;
   restartTimer: ReturnType<typeof setTimeout> | null;
+  descriptionQueue: Promise<void>;
 };
 
 type Params = {
@@ -120,9 +122,14 @@ export default function useGroupCallMedia({
   const startLocalPreviewRef = useRef(startLocalPreview);
   const ensureIceSessionIdRef = useRef(ensureIceSessionId);
   const updateStatusRef = useRef(updateStatus);
-  const localMediaStartRef = useRef<Promise<WebrtcMediaStream | null> | null>(null);
+  const localMediaStartRef = useRef<{
+    session: string;
+    promise: Promise<WebrtcMediaStream | null>;
+  } | null>(null);
   const requestedRestartRef = useRef(new Set<string>());
   const requestIceRestartRef = useRef<(entry: GroupPeerConnection) => Promise<void>>(async () => {});
+  const mediaAllowedRef = useRef(false);
+  const mediaEpochRef = useRef(0);
 
   selectedConversationRef.current = activeConversationId;
   localUserIdRef.current = userId;
@@ -134,10 +141,34 @@ export default function useGroupCallMedia({
     ? Object.values(groupCalls).find(call => call.conversationId === activeConversationId) ?? null
     : null;
   snapshotRef.current = snapshot;
-  const activeCallId = snapshot?.call.status === 'ended' ? null : snapshot?.callId ?? null;
+  const activeCallId = snapshot?.call.status !== 'ended' &&
+    snapshot?.participants.some(person => person.userId === userId && person.status === 'accepted')
+    ? snapshot.callId : null;
   const isLocalMock = Boolean(conversations.find(row =>
     row.peerId === activeConversationId && row.localMock,
   ));
+  mediaAllowedRef.current = Boolean(activeCallId && !isLocalMock && canJoin && connected);
+
+  const currentNegotiation = useCallback((peerId: string, callId: string): string | null => {
+    const current = snapshotRef.current;
+    if (!mediaAllowedRef.current || current?.callId !== callId ||
+      !current.participants.some(person => person.userId === peerId && person.status === 'accepted')) return null;
+    return groupNegotiationId(current.participants, localUserIdRef.current, peerId);
+  }, []);
+
+  const ensureLocalMedia = useCallback(() => {
+    const current = snapshotRef.current;
+    if (!current || !mediaAllowedRef.current) return Promise.resolve(null);
+    const self = current.participants.find(person => person.userId === localUserIdRef.current);
+    const session = JSON.stringify([current.callId, self?.acceptedAt]);
+    if (localMediaStartRef.current?.session !== session) {
+      localMediaStartRef.current = {
+        session,
+        promise: startLocalPreviewRef.current(current.call.mediaType === 'audio' ? 'audio' : 'video'),
+      };
+    }
+    return localMediaStartRef.current.promise;
+  }, []);
 
   const closePeer = useCallback((peerId: string) => {
     const entry = activePeerConnectionsRef.current.get(peerId);
@@ -149,14 +180,15 @@ export default function useGroupCallMedia({
     entry.pc.oniceconnectionstatechange = null;
     entry.pc.close();
     activePeerConnectionsRef.current.delete(peerId);
-    creatingPeerRef.current.delete(peerId);
     requestedRestartRef.current.delete(peerId);
     dispatchPeer({ type: 'leave', userId: peerId });
   }, [activePeerConnectionsRef]);
 
   const closeAllPeers = useCallback(() => {
+    mediaEpochRef.current += 1;
     [...activePeerConnectionsRef.current.keys()].forEach(closePeer);
     creatingPeerRef.current.clear();
+    localMediaStartRef.current = null;
     requestedRestartRef.current.clear();
     dispatchPeer({ type: 'reset' });
     setActiveSpeakerId(null);
@@ -167,22 +199,32 @@ export default function useGroupCallMedia({
     entry: GroupPeerConnection,
     payload: object,
   ) => {
-    if (!signalingRef.current || !entry.callId || !activePeerConnectionsRef.current.has(entry.userId)) return;
+    if (!signalingRef.current ||
+      activePeerConnectionsRef.current.get(entry.userId) !== entry ||
+      currentNegotiation(entry.userId, entry.callId) !== entry.negotiationId) return;
     signalingRef.current.emit(event, {
       version: SIGNALING_VERSION,
       callId: entry.callId,
       peerId: entry.userId,
+      negotiationId: entry.negotiationId,
       ...payload,
     });
-  }, [activePeerConnectionsRef, signalingRef]);
+  }, [activePeerConnectionsRef, currentNegotiation, signalingRef]);
 
   const createPeer = useCallback(async (
     remoteUserId: string,
     callId: string,
   ): Promise<GroupPeerConnection | null> => {
+    const negotiationId = currentNegotiation(remoteUserId, callId);
+    if (!negotiationId) return null;
+    const epoch = mediaEpochRef.current;
+    const creationKey = JSON.stringify([callId, epoch, negotiationId]);
+    const isCurrent = () => epoch === mediaEpochRef.current &&
+      currentNegotiation(remoteUserId, callId) === negotiationId;
     const existing = activePeerConnectionsRef.current.get(remoteUserId);
-    if (existing?.callId === callId) return existing;
-    const pending = creatingPeerRef.current.get(remoteUserId);
+    if (existing?.callId === callId && existing.negotiationId === negotiationId) return existing;
+    if (existing) closePeer(remoteUserId);
+    const pending = creatingPeerRef.current.get(creationKey);
     if (pending) return pending;
     const creation = (async () => {
       const current = snapshotRef.current;
@@ -192,22 +234,15 @@ export default function useGroupCallMedia({
         !current.participants.some(person => person.userId === localUserIdRef.current && person.status === 'accepted')
       ) return null;
 
-      let localStream = localStreamRef.current;
-      if (!localStream) {
-        if (!localMediaStartRef.current) {
-          const mediaType = current.call.mediaType === 'audio' ? 'audio' : 'video';
-          localMediaStartRef.current = startLocalPreviewRef.current(mediaType)
-            .finally(() => { localMediaStartRef.current = null; });
-        }
-        localStream = await localMediaStartRef.current;
-      }
-      if (!localStream || snapshotRef.current?.callId !== callId) return null;
+      const capturedStream = await ensureLocalMedia();
+      const localStream = localStreamRef.current ?? capturedStream;
+      if (!localStream || !isCurrent()) return null;
 
       const iceServers = await getIceServersForCall({
         signalingUrl,
         sessionId: await ensureIceSessionIdRef.current(),
       });
-      if (snapshotRef.current?.callId !== callId || !connected) return null;
+      if (!isCurrent()) return null;
       const pc = new RTCPeerConnection({
         iceServers,
         iceTransportPolicy,
@@ -225,12 +260,14 @@ export default function useGroupCallMedia({
       const entry: GroupPeerConnection = {
         userId: remoteUserId,
         callId,
+        negotiationId,
         pc,
         candidates: [],
         isNegotiating: false,
         restartPending: false,
         restartAttempts: 0,
         restartTimer: null,
+        descriptionQueue: Promise.resolve(),
       };
       activePeerConnectionsRef.current.set(remoteUserId, entry);
       dispatchPeer({ type: 'join', userId: remoteUserId });
@@ -267,21 +304,25 @@ export default function useGroupCallMedia({
       // when a participant joins an already-active mesh.
       if (compareUserIds(localUserIdRef.current, remoteUserId) < 0) {
         await createAndSendOffer(entry, false);
+      } else {
+        // The first offer may arrive before this client selects the room.
+        // Once ready, ask the deterministic offerer to negotiate again.
+        emitPeerSignal(CLIENT_EVENTS.GROUP_CALL_RESTART_REQUEST, entry, {});
       }
       return entry;
     })();
-    creatingPeerRef.current.set(remoteUserId, creation);
+    creatingPeerRef.current.set(creationKey, creation);
     try {
       return await creation;
     } finally {
-      if (creatingPeerRef.current.get(remoteUserId) === creation) {
-        creatingPeerRef.current.delete(remoteUserId);
+      if (creatingPeerRef.current.get(creationKey) === creation) {
+        creatingPeerRef.current.delete(creationKey);
       }
     }
   // The callbacks below are defined as function declarations and intentionally
   // resolve through refs for identity/session churn.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePeerConnectionsRef, connected, emitPeerSignal, iceTransportPolicy, localStreamRef, signalingUrl]);
+  }, [activePeerConnectionsRef, closePeer, currentNegotiation, emitPeerSignal, ensureLocalMedia, iceTransportPolicy, localStreamRef, signalingUrl]);
 
   async function createAndSendOffer(entry: GroupPeerConnection, iceRestart: boolean): Promise<void> {
     if (entry.isNegotiating || entry.pc.signalingState === 'closed') return;
@@ -312,6 +353,7 @@ export default function useGroupCallMedia({
     } else {
       emitPeerSignal(CLIENT_EVENTS.GROUP_CALL_RESTART_REQUEST, entry, {});
     }
+    if (activePeerConnectionsRef.current.get(entry.userId) !== entry) return;
     const delay = Math.min(1500 * 2 ** Math.max(0, entry.restartAttempts - 1), 8000);
     entry.restartTimer = setTimeout(() => {
       entry.restartTimer = null;
@@ -335,6 +377,17 @@ export default function useGroupCallMedia({
     }
   }, []);
 
+  const queueDescription = useCallback((entry: GroupPeerConnection, apply: () => Promise<void>) => {
+    const operation = entry.descriptionQueue.then(async () => {
+      if (activePeerConnectionsRef.current.get(entry.userId) !== entry ||
+        currentNegotiation(entry.userId, entry.callId) !== entry.negotiationId) return;
+      await apply();
+    });
+    // A failed description must not poison later negotiations for this pair.
+    entry.descriptionQueue = operation.catch(() => {});
+    return operation;
+  }, [activePeerConnectionsRef, currentNegotiation]);
+
   const join = useCallback((conversationId: string) => {
     setActiveConversationId(conversationId);
   }, []);
@@ -343,7 +396,9 @@ export default function useGroupCallMedia({
     if (conversationId && selectedConversationRef.current !== conversationId) return;
     setActiveConversationId(null);
     selectedConversationRef.current = null;
-  }, []);
+    mediaAllowedRef.current = false;
+    closeAllPeers();
+  }, [closeAllPeers]);
 
   useEffect(() => {
     const current = snapshot;
@@ -358,15 +413,18 @@ export default function useGroupCallMedia({
     }
     const wanted = acceptedPeerIds(current, userId).slice(0, GROUP_MESH_REMOTE_LIMIT);
     for (const peerId of [...activePeerConnectionsRef.current.keys()]) {
-      if (!wanted.includes(peerId)) closePeer(peerId);
+      const entry = activePeerConnectionsRef.current.get(peerId);
+      if (!wanted.includes(peerId) || entry?.callId !== current.callId ||
+        entry.negotiationId !== currentNegotiation(peerId, current.callId)) closePeer(peerId);
     }
     void (async () => {
+      await ensureLocalMedia();
       for (const peerId of wanted) await createPeer(peerId, current.callId);
     })().catch(error => {
       logWarn('[GroupCall] Could not establish participant media', { message: String(error) });
       updateStatusRef.current('Unable to connect to a group participant', 'warning');
     });
-  }, [activePeerConnectionsRef, canJoin, closeAllPeers, closePeer, connected, createPeer, isLocalMock, snapshot, userId]);
+  }, [activePeerConnectionsRef, canJoin, closeAllPeers, closePeer, connected, createPeer, currentNegotiation, ensureLocalMedia, isLocalMock, snapshot, userId]);
 
   useEffect(() => {
     if (!snapshot || snapshot.call.status === 'ended' || peers === INITIAL_CALL_PEERS) return;
@@ -387,17 +445,21 @@ export default function useGroupCallMedia({
       const remoteUserId = payload.peerId;
       if (
         !current || current.callId !== payload.callId ||
+        payload.negotiationId !== currentNegotiation(remoteUserId, payload.callId) ||
         !current.participants.some(person => person.userId === remoteUserId && person.status === 'accepted') ||
         compareUserIds(localUserIdRef.current, remoteUserId) <= 0
       ) return;
       try {
         const entry = await createPeer(remoteUserId, payload.callId);
-        if (!entry) return;
-        await applyRemoteDescription(entry, payload.sdp);
-        const answer = await entry.pc.createAnswer();
-        await entry.pc.setLocalDescription(answer);
-        emitPeerSignal(CLIENT_EVENTS.RTC_ANSWER, entry, {
-          sdp: entry.pc.localDescription ?? answer,
+        if (!entry || entry.negotiationId !== payload.negotiationId) return;
+        await queueDescription(entry, async () => {
+          if (entry.pc.remoteDescription?.sdp !== payload.sdp?.sdp ||
+            entry.pc.localDescription?.type !== 'answer') {
+            await applyRemoteDescription(entry, payload.sdp);
+            const answer = await entry.pc.createAnswer();
+            await entry.pc.setLocalDescription(answer);
+          }
+          emitPeerSignal(CLIENT_EVENTS.RTC_ANSWER, entry, { sdp: entry.pc.localDescription });
         });
       } catch (error) {
         logWarn('[GroupCall] Could not answer participant offer', {
@@ -408,8 +470,16 @@ export default function useGroupCallMedia({
     });
     const removeAnswer = client.on(SERVER_EVENTS.RTC_ANSWER, async payload => {
       const entry = activePeerConnectionsRef.current.get(payload.peerId);
-      if (!entry || entry.callId !== payload.callId) return;
-      try { await applyRemoteDescription(entry, payload.sdp); }
+      if (!entry || entry.callId !== payload.callId ||
+        entry.negotiationId !== payload.negotiationId ||
+        currentNegotiation(payload.peerId, payload.callId) !== payload.negotiationId) return;
+      try {
+        await queueDescription(entry, async () => {
+          if (entry.pc.remoteDescription?.sdp !== payload.sdp?.sdp) {
+            await applyRemoteDescription(entry, payload.sdp);
+          }
+        });
+      }
       catch (error) {
         logWarn('[GroupCall] Could not apply participant answer', {
           peerId: payload.peerId,
@@ -418,10 +488,13 @@ export default function useGroupCallMedia({
       }
     });
     const removeIce = client.on(SERVER_EVENTS.RTC_ICE, async payload => {
-      const entry = activePeerConnectionsRef.current.get(payload.peerId);
-      if (!entry || entry.callId !== payload.callId) return;
+      if (currentNegotiation(payload.peerId, payload.callId) !== payload.negotiationId) return;
       try {
-        if (!entry.pc.remoteDescription) entry.candidates.push(payload.candidate);
+        const entry = await createPeer(payload.peerId, payload.callId);
+        if (!entry || entry.negotiationId !== payload.negotiationId) return;
+        if (!entry.pc.remoteDescription) {
+          if (entry.candidates.length < 128) entry.candidates.push(payload.candidate);
+        }
         else await entry.pc.addIceCandidate(new RTCIceCandidate(payload.candidate as any));
       } catch (error) {
         logWarn('[GroupCall] Could not apply participant ICE candidate', {
@@ -434,11 +507,21 @@ export default function useGroupCallMedia({
       const entry = activePeerConnectionsRef.current.get(payload.peerId);
       if (
         entry && entry.callId === payload.callId &&
+        entry.negotiationId === payload.negotiationId &&
+        currentNegotiation(payload.peerId, payload.callId) === payload.negotiationId &&
         compareUserIds(localUserIdRef.current, entry.userId) < 0
-      ) void requestIceRestartRef.current(entry);
+      ) {
+        if (entry.pc.signalingState === 'have-local-offer' && entry.pc.localDescription) {
+          // Resend the outstanding offer instead of replacing its ICE
+          // credentials while the responder is still answering it.
+          emitPeerSignal(CLIENT_EVENTS.RTC_OFFER, entry, { sdp: entry.pc.localDescription });
+        } else {
+          void requestIceRestartRef.current(entry);
+        }
+      }
     });
     const removeMedia = client.on(SERVER_EVENTS.GROUP_CALL_MEDIA_STATE, payload => {
-      if (snapshotRef.current?.callId !== payload.callId) return;
+      if (currentNegotiation(payload.peerId, payload.callId) !== payload.negotiationId) return;
       dispatchPeer({
         type: 'media',
         userId: payload.peerId,
@@ -454,7 +537,7 @@ export default function useGroupCallMedia({
       removeRestart();
       removeMedia();
     };
-  }, [activePeerConnectionsRef, applyRemoteDescription, createPeer, emitPeerSignal, signalingRef]);
+  }, [activePeerConnectionsRef, applyRemoteDescription, connected, createPeer, currentNegotiation, emitPeerSignal, queueDescription, signalingRef]);
 
   useEffect(() => {
     if (!peers || !Object.keys(peers).length) return undefined;
@@ -485,6 +568,7 @@ export default function useGroupCallMedia({
   }, [activePeerConnectionsRef, peers]);
 
   useEffect(() => () => {
+    mediaAllowedRef.current = false;
     closeAllPeers();
     if (localMediaStartRef.current) {
       localMediaStartRef.current = null;

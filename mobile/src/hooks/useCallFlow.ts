@@ -702,20 +702,7 @@ export default function useCallFlow({
   });
 
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
-  useEffect(() => {
-    if (isInCall) startCallService(isVideoEnabled ? 'video' : 'audio');
-  }, [isInCall, isVideoEnabled]);
   const { isRegistered } = identity;
-  const { audioDevices, chooseAudioOutput, handleMuteToggle, isSpeakerEnabled, resetAudioRouting } =
-    useCallAudioRouting({
-      isInCall,
-      isInCallRef,
-      isMuted,
-      localStreamRef,
-      setIsMuted,
-      speakerEnabledByDefault,
-      updateStatus,
-    });
 
   // Closing the Picture-in-Picture window must end the call: leaving it running
   // invisibly gives the user no way back to it and no way to hang up. The mute
@@ -886,6 +873,34 @@ export default function useCallFlow({
     isScreenSharing,
     updateStatus,
   });
+
+  const groupMediaActive = Boolean(groupCallMedia.activeCallId && messaging.isSignalingConnected && !isCallActiveState(callPhase) &&
+    !messaging.conversations.find(row => row.peerId === groupCallMedia.activeConversationId)?.localMock);
+  const audioSessionActive = isInCall || groupMediaActive;
+  const audioSessionActiveRef = useRef(audioSessionActive);
+  audioSessionActiveRef.current = audioSessionActive;
+  const { audioDevices, chooseAudioOutput, handleMuteToggle, isSpeakerEnabled, resetAudioRouting } =
+    useCallAudioRouting({
+      isInCall: audioSessionActive,
+      isInCallRef: audioSessionActiveRef,
+      isMuted,
+      localStreamRef,
+      setIsMuted,
+      speakerEnabledByDefault,
+      updateStatus,
+    });
+  useEffect(() => {
+    if (audioSessionActive) startCallService(isVideoEnabled ? 'video' : 'audio');
+  }, [audioSessionActive, isVideoEnabled]);
+  const hadGroupMediaRef = useRef(false);
+  useEffect(() => {
+    if (hadGroupMediaRef.current && !groupMediaActive && !isCallActiveState(callPhase)) {
+      if (isScreenSharing) resetScreenShare();
+      releaseLocalMedia();
+      stopCallService();
+    }
+    hadGroupMediaRef.current = groupMediaActive;
+  }, [callPhase, groupMediaActive, isScreenSharing, releaseLocalMedia, resetScreenShare]);
 
   useEffect(() => {
     replaceOutgoingVideoTrackRef.current = async track => {

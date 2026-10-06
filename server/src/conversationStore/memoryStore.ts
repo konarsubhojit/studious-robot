@@ -41,10 +41,13 @@ function transitionGroupCallParticipant(
   now: string,
   participants: Iterable<GroupCallParticipant>,
 ): boolean {
-  if (action === 'accept' && participant.status === 'ringing') {
+  if (action === 'accept' && ['ringing', 'left', 'declined'].includes(participant.status)) {
     assertGroupCallCapacity(callId, participants);
     participant.status = 'accepted';
-    participant.acceptedAt = now;
+    participant.acceptedAt = participant.acceptedAt
+      ? new Date(Math.max(Date.parse(now), Date.parse(participant.acceptedAt) + 1)).toISOString()
+      : now;
+    participant.leftAt = null;
   } else if (action === 'decline' && participant.status === 'ringing') {
     participant.status = 'declined';
     participant.leftAt = now;
@@ -164,9 +167,10 @@ function createMemoryConversationStore(canInvite: (actorId: string, userId: stri
 
   function callChange(call: GroupCall): GroupCallChange {
     return {
-      call,
+      call: { ...call },
       participants: [...callParticipants.values()]
         .filter((participant) => participant.callId === call.callId)
+        .map(participant => ({ ...participant }))
         .sort((a, b) => a.invitedAt.localeCompare(b.invitedAt) || a.userId.localeCompare(b.userId)),
     };
   }

@@ -3,7 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import useGroupCallMedia from '../../src/hooks/useGroupCallMedia';
 import { createMockGroup } from '../../src/chat/groupMockAdapter';
 import { parseGroupCallSnapshot, startMockGroupCall, transitionMockGroupCall } from '../../src/chat/groupCallAdapter';
-import { CLIENT_EVENTS, SERVER_EVENTS } from '../../../shared';
+import { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION, groupNegotiationId } from '../../../shared';
 
 const mockPeerConnections: any[] = [];
 
@@ -19,9 +19,10 @@ jest.mock('react-native-webrtc', () => ({
       addTrack: jest.fn(),
       addTransceiver: jest.fn(),
       createOffer: jest.fn(async options => ({ type: 'offer', sdp: JSON.stringify(options ?? {}) })),
+      createAnswer: jest.fn(async () => ({ type: 'answer', sdp: 'answer' })),
       setLocalDescription: jest.fn(async description => {
         pc.localDescription = description;
-        pc.signalingState = 'have-local-offer';
+        pc.signalingState = description.type === 'offer' ? 'have-local-offer' : 'stable';
       }),
       setRemoteDescription: jest.fn(async description => { pc.remoteDescription = description; }),
       addIceCandidate: jest.fn(async () => {}),
@@ -192,6 +193,50 @@ describe('useGroupCallMedia', () => {
     expect(resultRef.current.peers.carol.connectionState).toBe('new');
     expect(signaling.listeners.has(SERVER_EVENTS.RTC_OFFER)).toBe(true);
 
+    const rejoined = transitionMockGroupCall(bobLeft, 'bob', 'accept', '2026-10-03T06:02:00Z');
+    await act(async () => {
+      tree.update(<TestHook params={{
+        ...params, groupCalls: { [conversation.peerId]: rejoined },
+      }} resultRef={resultRef} />);
+    });
+    const newBobPc = peerConnectionsRef.current.get('bob').pc;
+    expect(newBobPc).not.toBe(bobPc);
+    expect(peerConnectionsRef.current.get('carol').pc).toBe(carolPc);
+    const answer = signaling.listeners.get(SERVER_EVENTS.RTC_ANSWER)!;
+    const ice = signaling.listeners.get(SERVER_EVENTS.RTC_ICE)!;
+    await act(async () => {
+      await answer({
+        callId: snapshot.callId, peerId: 'bob',
+        negotiationId: groupNegotiationId(carolJoined.participants, 'alice', 'bob'),
+        sdp: { type: 'answer', sdp: 'stale' },
+      });
+      await ice({
+        callId: snapshot.callId, peerId: 'bob',
+        negotiationId: groupNegotiationId(carolJoined.participants, 'alice', 'bob'), candidate: {},
+      });
+    });
+    expect(newBobPc.setRemoteDescription).not.toHaveBeenCalled();
+    expect(newBobPc.addIceCandidate).not.toHaveBeenCalled();
+    await act(async () => {
+      await answer({
+        callId: snapshot.callId, peerId: 'bob',
+        negotiationId: groupNegotiationId(rejoined.participants, 'alice', 'bob'),
+        sdp: { type: 'answer', sdp: 'fresh' },
+      });
+    });
+    expect(newBobPc.setRemoteDescription).toHaveBeenCalledTimes(1);
+    // A receiver may miss the intermediate leave snapshot during reconnect.
+    const missedLeave = transitionMockGroupCall(rejoined, 'bob', 'leave', '2026-10-03T06:03:00Z');
+    const missedRejoin = transitionMockGroupCall(missedLeave, 'bob', 'accept', '2026-10-03T06:04:00Z');
+    await act(async () => {
+      tree.update(<TestHook params={{
+        ...params, groupCalls: { [conversation.peerId]: missedRejoin },
+      }} resultRef={resultRef} />);
+    });
+    expect(newBobPc.close).toHaveBeenCalledTimes(1);
+    expect(peerConnectionsRef.current.get('bob').pc).not.toBe(newBobPc);
+    expect(peerConnectionsRef.current.get('carol').pc).toBe(carolPc);
+
     await act(async () => { tree.unmount(); });
     expect(carolPc.close).toHaveBeenCalledTimes(1);
   });
@@ -240,6 +285,109 @@ describe('useGroupCallMedia', () => {
     expect(signaling.emitted.some(message =>
       message.event === CLIENT_EVENTS.RTC_OFFER,
     )).toBe(false);
+    const payload = {
+      callId: snapshot.callId, peerId: 'alice',
+      negotiationId: groupNegotiationId(snapshot.participants, 'alice', 'zara'),
+    };
+    await act(async () => {
+      await signaling.listeners.get(SERVER_EVENTS.RTC_ICE)!({ ...payload, candidate: { candidate: 'early' } });
+      await signaling.listeners.get(SERVER_EVENTS.RTC_OFFER)!({
+        ...payload, sdp: { type: 'offer', sdp: 'remote-av' },
+      });
+    });
+    expect(mockPeerConnections[0].addIceCandidate).toHaveBeenCalledWith({ candidate: 'early' });
+    expect(signaling.emitted).toContainEqual({
+      event: CLIENT_EVENTS.RTC_ANSWER,
+      payload: { version: SIGNALING_VERSION, ...payload, sdp: { type: 'answer', sdp: 'answer' } },
+    });
+    await act(async () => {
+      await Promise.all([1, 2].map(() => signaling.listeners.get(SERVER_EVENTS.RTC_OFFER)!({
+        ...payload, sdp: { type: 'offer', sdp: 'remote-av' },
+      })));
+    });
+    expect(mockPeerConnections[0].createAnswer).toHaveBeenCalledTimes(1);
+    await act(async () => { tree.unmount(); });
+  });
+
+  test.each(['leave', 'unmount', 'disconnect', 'participant-leave'])(
+    'cancels pending capture on %s without creating a stale peer', async action => {
+      const { conversation, snapshot } = activeSnapshot();
+      let finish!: (value: any) => void;
+      const capture = new Promise(resolve => { finish = resolve; });
+      const resultRef: { current: any } = { current: null };
+      const params: any = {
+        groupCalls: { [conversation.peerId]: snapshot }, conversations: [conversation], userId: 'alice',
+        localStreamRef: { current: null }, peerConnectionsRef: { current: new Map() },
+        startLocalPreview: jest.fn(() => capture), signalingRef: { current: signalingClient() },
+        signalingUrl: 'https://signal.example', ensureIceSessionId: jest.fn(async () => null),
+        iceTransportPolicy: 'all', connected: true, canJoin: true,
+        isMuted: false, isVideoEnabled: true, isScreenSharing: false, updateStatus: jest.fn(),
+      };
+      let tree!: renderer.ReactTestRenderer;
+      act(() => { tree = renderer.create(<TestHook params={params} resultRef={resultRef} />); });
+      await act(async () => { resultRef.current.join(conversation.conversationId); });
+      expect(params.startLocalPreview).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        if (action === 'leave') resultRef.current.leave();
+        else if (action === 'unmount') tree.unmount();
+        else tree.update(<TestHook params={{
+          ...params,
+          ...(action === 'disconnect' ? { connected: false } : {
+            groupCalls: { [conversation.peerId]: transitionMockGroupCall(snapshot, 'bob', 'leave', '2026-10-03T06:02:00Z') },
+          }),
+        }} resultRef={resultRef} />);
+      });
+      await act(async () => { finish(stream()); });
+      expect(mockPeerConnections).toHaveLength(0);
+      expect(params.peerConnectionsRef.current.size).toBe(0);
+      if (action !== 'unmount') await act(async () => { tree.unmount(); });
+    },
+  );
+
+  test('queues ICE while capture is pending and starts media only once for the mesh', async () => {
+    const { conversation, snapshot } = activeSnapshot();
+    const joined = transitionMockGroupCall(snapshot, 'carol', 'accept', '2026-10-03T06:00:02Z');
+    let finish!: (value: any) => void;
+    const capture = new Promise(resolve => { finish = resolve; });
+    const signaling = signalingClient();
+    const resultRef: { current: any } = { current: null };
+    const localStream = {
+      getTracks: () => [{ kind: 'audio' }, { kind: 'video' }],
+      getVideoTracks: () => [{ kind: 'video' }],
+    };
+    const params: any = {
+      groupCalls: { [conversation.peerId]: joined }, conversations: [conversation], userId: 'alice',
+      localStreamRef: { current: null }, peerConnectionsRef: { current: new Map() },
+      startLocalPreview: jest.fn(() => capture), signalingRef: { current: signaling },
+      signalingUrl: 'https://signal.example', ensureIceSessionId: jest.fn(async () => null),
+      iceTransportPolicy: 'all', connected: true, canJoin: true,
+      isMuted: false, isVideoEnabled: true, isScreenSharing: false, updateStatus: jest.fn(),
+    };
+    let tree!: renderer.ReactTestRenderer;
+    act(() => { tree = renderer.create(<TestHook params={params} resultRef={resultRef} />); });
+    await act(async () => { resultRef.current.join(conversation.conversationId); });
+    const negotiationId = groupNegotiationId(joined.participants, 'alice', 'bob');
+    let pendingIce!: Promise<void>;
+    await act(async () => {
+      pendingIce = signaling.listeners.get(SERVER_EVENTS.RTC_ICE)!({
+        callId: joined.callId, peerId: 'bob', negotiationId, candidate: { candidate: 'during-capture' },
+      }) as any;
+      params.localStreamRef.current = localStream;
+      finish(localStream);
+      await pendingIce;
+    });
+    expect(params.startLocalPreview).toHaveBeenCalledTimes(1);
+    expect(params.peerConnectionsRef.current.size).toBe(2);
+    expect(mockPeerConnections.every(pc => pc.addTrack.mock.calls.length === 2)).toBe(true);
+    const bob = params.peerConnectionsRef.current.get('bob');
+    await act(async () => {
+      await signaling.listeners.get(SERVER_EVENTS.RTC_ANSWER)!({
+        callId: joined.callId, peerId: 'bob', negotiationId, sdp: { type: 'answer', sdp: 'av' },
+      });
+      bob.pc.ontrack({ streams: [localStream] });
+    });
+    expect(bob.pc.addIceCandidate).toHaveBeenCalledWith({ candidate: 'during-capture' });
+    expect(resultRef.current.peers.bob.stream).toBe(localStream);
     await act(async () => { tree.unmount(); });
   });
 });

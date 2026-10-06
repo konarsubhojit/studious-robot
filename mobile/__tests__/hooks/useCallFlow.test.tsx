@@ -1060,6 +1060,56 @@ describe('rehydrateCallFromPush', () => {
     await act(async () => { tree.unmount(); });
   });
 
+  test.each(['ready', 'pending'])('real group media starts native audio and releases %s capture on local leave without entering direct call state', async captureState => {
+    const conversation = createMockGroup('alice', 'Team', ['bob', 'carol'], 'group-native');
+    const snapshot = startMockGroupCall(
+      conversation, 'alice', 'group-native-call', 'video', '2026-10-03T06:00:00Z',
+    );
+    conversation.localMock = false;
+    mockInitialChatSnapshot = { conversations: [conversation], messagesByPeer: {}, outbox: [] };
+    const audio = { kind: 'audio', enabled: true, stop: jest.fn() };
+    const video = { kind: 'video', enabled: true, stop: jest.fn() };
+    const stream = {
+      getTracks: () => [audio, video], getAudioTracks: () => [audio], getVideoTracks: () => [video],
+    };
+    let finishCapture!: (value: typeof stream) => void;
+    const capture = captureState === 'ready' ? Promise.resolve(stream)
+      : new Promise<typeof stream>(resolve => { finishCapture = resolve; });
+    require('react-native-webrtc').mediaDevices.getUserMedia.mockReturnValue(capture);
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/groups/calls/')) return { ok: true, status: 200, json: async () => snapshot };
+      if (url.includes('/calls/')) return { ok: false, status: 404, json: async () => ({}) };
+      if (url.includes('/conversations')) return { ok: true, status: 200, json: async () => ({ conversations: [conversation] }) };
+      return { ok: true, status: 201, json: async () => ({ sessionId: 'native-session', userId: 'alice' }) };
+    }) as any;
+    const { resultRef, tree } = await renderHook();
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    await flushAsyncEffects();
+    const audioRouting = require('../../src/audioRouting');
+    audioRouting.startAudioSession.mockClear();
+    const io = require('socket.io-client').io as jest.Mock;
+    const socket = io.mock.results[io.mock.results.length - 1].value;
+    await act(async () => { await socket.on.mock.calls.find(([event]: any) => event === 'connect')[1](); });
+    await act(async () => { await resultRef.current.rehydrateCallFromPush(snapshot.callId); });
+    await flushAsyncEffects();
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(resultRef.current.activeGroupCallId).toBe(snapshot.callId);
+    expect(audioRouting.startAudioSession).toHaveBeenCalledTimes(1);
+    expect(require('../../src/callService').startCallService).toHaveBeenCalledWith('video');
+    expect(resultRef.current.localStream).toBe(captureState === 'ready' ? stream : null);
+    // Acquiring local AV must not wait for a second participant to accept.
+    expect(require('react-native-webrtc').mediaDevices.getUserMedia).toHaveBeenCalledWith({
+      audio: true, video: { facingMode: 'user' },
+    });
+    await act(async () => { resultRef.current.groupCallActions.leaveMedia(conversation.conversationId); });
+    if (captureState === 'pending') await act(async () => { finishCapture(stream); });
+    expect(audioRouting.stopAudioSession).toHaveBeenCalled();
+    expect(audio.stop).toHaveBeenCalledTimes(1);
+    expect(video.stop).toHaveBeenCalledTimes(1);
+    expect(resultRef.current.localStream).toBeNull();
+    await act(async () => { tree.unmount(); });
+  });
+
   test('sets informational status for a missed call', async () => {
     const fakeCall = {
       callId: 'call-789',

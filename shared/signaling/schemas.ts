@@ -246,11 +246,11 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
 
   [CLIENT_EVENTS.RTC_OFFER]: s.union([
     s.object({ version: legacyVersionField, callId: idField, sdp: opaqueObject }),
-    s.object({ version: currentVersionField, callId: idField, peerId: idField, sdp: opaqueObject }),
+    s.object({ version: currentVersionField, callId: idField, peerId: idField, negotiationId: s.string({ min: 1, max: 1024 }).optional(), sdp: opaqueObject }),
   ]),
   [CLIENT_EVENTS.RTC_ANSWER]: s.union([
     s.object({ version: legacyVersionField, callId: idField, sdp: opaqueObject }),
-    s.object({ version: currentVersionField, callId: idField, peerId: idField, sdp: opaqueObject }),
+    s.object({ version: currentVersionField, callId: idField, peerId: idField, negotiationId: s.string({ min: 1, max: 1024 }).optional(), sdp: opaqueObject }),
   ]),
   [CLIENT_EVENTS.RTC_CANDIDATE]: s.object({
     version: legacyVersionField,
@@ -261,6 +261,7 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     version: currentVersionField,
     callId: idField,
     peerId: idField,
+    negotiationId: s.string({ min: 1, max: 1024 }).optional(),
     candidate: opaqueObject,
   }),
   [CLIENT_EVENTS.CALL_MEDIA_STATE]: s.object({
@@ -351,11 +352,13 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     version: currentVersionField,
     callId: idField,
     peerId: idField,
+    negotiationId: s.string({ min: 1, max: 1024 }).optional(),
   }),
   [CLIENT_EVENTS.GROUP_CALL_MEDIA_STATE]: s.object({
     version: currentVersionField,
     callId: idField,
     peerId: idField,
+    negotiationId: s.string({ min: 1, max: 1024 }).optional(),
     mediaState: opaqueObject,
   }),
 });
@@ -405,11 +408,11 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
   }),
   [SERVER_EVENTS.RTC_OFFER]: s.union([
     s.object({ version: legacyVersionField.optional(), callId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),
-    s.object({ version: currentVersionField, callId: idField, peerId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),
+    s.object({ version: currentVersionField, callId: idField, peerId: idField, negotiationId: s.string({ min: 1, max: 1024 }).optional(), fromUserId: s.id().optional(), sdp: opaqueObject }),
   ]),
   [SERVER_EVENTS.RTC_ANSWER]: s.union([
     s.object({ version: legacyVersionField.optional(), callId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),
-    s.object({ version: currentVersionField, callId: idField, peerId: idField, fromUserId: s.id().optional(), sdp: opaqueObject }),
+    s.object({ version: currentVersionField, callId: idField, peerId: idField, negotiationId: s.string({ min: 1, max: 1024 }).optional(), fromUserId: s.id().optional(), sdp: opaqueObject }),
   ]),
   [SERVER_EVENTS.RTC_CANDIDATE]: s.object({
     version: legacyVersionField.optional(),
@@ -421,6 +424,7 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     version: currentVersionField,
     callId: idField,
     peerId: idField,
+    negotiationId: s.string({ min: 1, max: 1024 }).optional(),
     fromUserId: s.id().optional(),
     candidate: opaqueObject,
   }),
@@ -507,12 +511,14 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     version: inboundVersionField,
     callId: idField,
     peerId: idField,
+    negotiationId: s.string({ min: 1, max: 1024 }).optional(),
     fromUserId: idField,
   }),
   [SERVER_EVENTS.GROUP_CALL_MEDIA_STATE]: s.object({
     version: inboundVersionField,
     callId: idField,
     peerId: idField,
+    negotiationId: s.string({ min: 1, max: 1024 }).optional(),
     fromUserId: idField,
     mediaState: opaqueObject,
   }),

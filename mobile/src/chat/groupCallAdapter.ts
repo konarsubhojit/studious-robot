@@ -65,15 +65,23 @@ export function transitionMockGroupCall(
   groupCallRequest(action, snapshot.callId);
   const person = snapshot.participants.find(entry => entry.userId === userId);
   if (snapshot.call.status === 'ended' || !person) throw new Error('Group call is unavailable');
-  if (action === 'leave' ? person.status !== 'accepted' : person.status !== 'ringing') {
+  if (action === 'accept' ? person.status === 'accepted'
+    : action === 'leave' ? !['accepted', 'ringing'].includes(person.status) : person.status !== 'ringing') {
     throw new Error('This participant cannot perform that call action');
+  }
+  if (action === 'accept' && snapshot.participants.filter(entry => entry.status === 'accepted').length >= 4) {
+    throw new Error('Group call is full; mesh calls support up to 4 participants');
   }
   let participants = snapshot.participants.map(entry => entry !== person ? entry : {
     ...entry, status: action === 'accept' ? 'accepted' : action === 'decline' ? 'declined' : 'left',
-    ...(action === 'accept' ? { acceptedAt: now } : {}),
-    ...(action === 'leave' ? { leftAt: now } : {}),
+    ...(action === 'accept' ? {
+      acceptedAt: person.acceptedAt
+        ? new Date(Math.max(Date.parse(now), Date.parse(person.acceptedAt) + 1)).toISOString()
+        : now,
+      leftAt: null,
+    } : { leftAt: now }),
   });
-  const ended = !participants.some(entry => entry.status === 'accepted');
+  const ended = !participants.some(entry => entry.status === 'accepted' || entry.status === 'ringing');
   if (ended) participants = participants.map(entry => entry.status === 'ringing' ? { ...entry, status: 'declined' } : entry);
   return parseGroupCallSnapshot({
     ...snapshot,

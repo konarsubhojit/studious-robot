@@ -8,7 +8,7 @@ import { describeError } from '../lib/errors.ts';
 import { verboseLog } from '../lib/verbose.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
 import { bufferRtcSignal, countBufferedRtcSignals, flushBufferedRtcSignals, isBufferableSignal } from './rtcBuffer.ts';
-import { CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS } from '../../../shared/index.ts';
+import { CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS, groupNegotiationId } from '../../../shared/index.ts';
 import { persistCallQualitySample } from '../callQuality.ts';
 
 /**
@@ -521,6 +521,7 @@ async function relayRtcSignalToPeer(options: {
   peerUserId: string;
   dataKey: string;
   value: unknown;
+  negotiationId?: string;
   isHeartbeat?: boolean;
 }): Promise<void> {
   const { currentEventName, legacyEventName } = rtcRelayEventNames(options.eventName);
@@ -528,6 +529,7 @@ async function relayRtcSignalToPeer(options: {
     callId: options.callId,
     peerId: options.userId,
     fromUserId: options.userId,
+    ...(options.negotiationId ? { negotiationId: options.negotiationId } : {}),
     [options.dataKey]: options.value,
   };
   // SDP frames are counted to confirm the target room has recipients.
@@ -575,6 +577,7 @@ async function relayGroupCallSignal(
     : null;
   if (
     !peerUserId ||
+    peerUserId === userId ||
     groupCall.call.status !== 'active' ||
     sender?.status !== 'accepted' ||
     recipient?.status !== 'accepted' ||
@@ -591,6 +594,12 @@ async function relayGroupCallSignal(
     );
     return true;
   }
+  const negotiationId = groupNegotiationId(groupCall.participants, userId, peerUserId);
+  if (parsed.negotiationId !== negotiationId) {
+    acknowledgeError(socket, ack, options.eventName, ERROR_CODES.FORBIDDEN,
+      'stale group negotiation; refresh call membership', options.state);
+    return true;
+  }
   await relayRtcSignalToPeer({
     state: options.state,
     io: options.io,
@@ -600,6 +609,7 @@ async function relayGroupCallSignal(
     peerUserId,
     dataKey: options.dataKey,
     value,
+    negotiationId,
   });
   acknowledgeSuccess(socket, ack, options.eventName, { callId });
   return true;

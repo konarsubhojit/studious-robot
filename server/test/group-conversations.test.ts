@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
-import { API_ROUTES, CLIENT_EVENTS, LEGACY_SIGNALING_VERSION, SERVER_EVENTS, SIGNALING_VERSION } from '../../shared/index.ts';
+import { API_ROUTES, CLIENT_EVENTS, LEGACY_SIGNALING_VERSION, SERVER_EVENTS, SIGNALING_VERSION, groupNegotiationId } from '../../shared/index.ts';
 import { fanoutConversationEvent } from '../src/domain/conversationFanout.ts';
 import { userProtocolRoom, userRoom } from '../src/lib/state.ts';
 import { createConversationStore, createMemoryMessageBus, createServer } from '../src/index.ts';
@@ -398,13 +398,17 @@ test('group call acceptance enforces the four-participant mesh limit without dis
       });
       assert.equal(accepted.ok, true);
     }
+    const admitted = await getJson(url, `${API_ROUTES.GROUP_CALLS}/${started.call.callId}`, sessions[0]);
+    const negotiationId = groupNegotiationId(admitted.body.participants, 'mesh-caller', 'mesh-a');
     const offerToAcceptedPeer = waitFor(invitees[0], SERVER_EVENTS.RTC_OFFER);
     const relayed = await emitWithAck(caller, CLIENT_EVENTS.RTC_OFFER, {
       version: SIGNALING_VERSION,
       callId: started.call.callId,
       peerId: 'mesh-a',
+      negotiationId,
       sdp: { type: 'offer', sdp: 'mesh-offer' },
     });
+
     assert.equal(relayed.ok, true);
     assert.equal((await offerToAcceptedPeer).peerId, 'mesh-caller');
     const offerToRingingPeer = await emitWithAck(caller, CLIENT_EVENTS.RTC_OFFER, {
@@ -449,6 +453,101 @@ test('group call acceptance enforces the four-participant mesh limit without dis
     assert.equal(offerFromOutsider.ok, false);
   } finally {
     await teardown(...sockets, ...(outsider ? [outsider] : []));
+  }
+});
+
+test('three-participant mesh relays every pair and permits live rejoin without ending other pairs', async () => {
+  const { url, teardown } = await startServer();
+  const ids = ['room-a', 'room-b', 'room-c'];
+  const sessions = await Promise.all(ids.map(id => createSession(url, id)));
+  const sockets = await Promise.all(sessions.map(session => connect(url, session, SIGNALING_VERSION)));
+  try {
+    const created = await emitWithAck(sockets[0], CLIENT_EVENTS.CONVERSATION_CREATE, {
+      version: SIGNALING_VERSION, name: 'Live mesh', inviteeIds: ids.slice(1),
+    });
+    await acceptInvitations(url, created.invitations, sessions.slice(1));
+    let snapshot = await emitWithAck(sockets[0], CLIENT_EVENTS.CONVERSATION_CALL_START, {
+      version: SIGNALING_VERSION, conversationId: created.conversation.conversationId, mediaType: 'video',
+    });
+    const callId = snapshot.call.callId;
+    for (const socket of sockets.slice(1)) {
+      snapshot = await emitWithAck(socket, CLIENT_EVENTS.CONVERSATION_CALL_ACCEPT, {
+        version: SIGNALING_VERSION, callId,
+      });
+    }
+    const relay = async (from: number, to: number, event: string, data: object, participants = snapshot.participants) => {
+      const negotiationId = groupNegotiationId(participants, ids[from], ids[to]);
+      const delivered = waitFor(sockets[to], event);
+      const ack = await emitWithAck(sockets[from], event, {
+        version: SIGNALING_VERSION, callId, peerId: ids[to], negotiationId, ...data,
+      });
+      assert.equal(ack.ok, true);
+      assert.equal((await delivered).negotiationId, negotiationId);
+    };
+    for (const [a, b] of [[0, 1], [0, 2], [1, 2]]) {
+      await relay(a, b, CLIENT_EVENTS.RTC_OFFER, { sdp: { type: 'offer', sdp: 'av-offer' } });
+      await relay(b, a, CLIENT_EVENTS.RTC_ANSWER, { sdp: { type: 'answer', sdp: 'av-answer' } });
+      await relay(a, b, CLIENT_EVENTS.RTC_ICE, { candidate: { candidate: 'a-to-b' } });
+      await relay(b, a, CLIENT_EVENTS.RTC_ICE, { candidate: { candidate: 'b-to-a' } });
+    }
+    const oldParticipants = snapshot.participants;
+    snapshot = await emitWithAck(sockets[1], CLIENT_EVENTS.CONVERSATION_CALL_LEAVE, {
+      version: SIGNALING_VERSION, callId,
+    });
+    assert.equal(snapshot.call.status, 'active');
+    await relay(0, 2, CLIENT_EVENTS.RTC_OFFER, { sdp: { type: 'offer', sdp: 'survivors' } });
+    const leftSignal = await emitWithAck(sockets[1], CLIENT_EVENTS.RTC_ICE, {
+      version: SIGNALING_VERSION, callId, peerId: ids[0],
+      negotiationId: groupNegotiationId(oldParticipants, ids[0], ids[1]), candidate: {},
+    });
+    assert.equal(leftSignal.ok, false);
+    snapshot = await emitWithAck(sockets[1], CLIENT_EVENTS.CONVERSATION_CALL_ACCEPT, {
+      version: SIGNALING_VERSION, callId,
+    });
+    assert.equal(snapshot.call.status, 'active');
+    assert.equal(snapshot.participants[1].leftAt, null);
+    assert.notEqual(snapshot.participants[1].acceptedAt, oldParticipants[1].acceptedAt);
+    for (const event of [CLIENT_EVENTS.RTC_OFFER, CLIENT_EVENTS.RTC_ANSWER, CLIENT_EVENTS.RTC_ICE]) {
+      const stale = await emitWithAck(sockets[0], event, {
+        version: SIGNALING_VERSION, callId, peerId: ids[1],
+        negotiationId: groupNegotiationId(oldParticipants, ids[0], ids[1]),
+        ...(event === CLIENT_EVENTS.RTC_ICE ? { candidate: {} } : { sdp: {} }),
+      });
+      assert.equal(stale.ok, false);
+      assert.match(stale.error.message, /stale group negotiation/);
+    }
+    await relay(0, 1, CLIENT_EVENTS.RTC_OFFER, { sdp: { type: 'offer', sdp: 'rejoined' } });
+    await relay(1, 0, CLIENT_EVENTS.RTC_ANSWER, { sdp: { type: 'answer', sdp: 'rejoined' } });
+    await relay(1, 0, CLIENT_EVENTS.GROUP_CALL_RESTART_REQUEST, {});
+    await relay(0, 1, CLIENT_EVENTS.GROUP_CALL_MEDIA_STATE, {
+      mediaState: { isMuted: true, isVideoEnabled: false, isScreenSharing: false },
+    });
+    for (const event of [CLIENT_EVENTS.GROUP_CALL_RESTART_REQUEST, CLIENT_EVENTS.GROUP_CALL_MEDIA_STATE]) {
+      const stale = await emitWithAck(sockets[0], event, {
+        version: SIGNALING_VERSION, callId, peerId: ids[1],
+        negotiationId: groupNegotiationId(oldParticipants, ids[0], ids[1]),
+        ...(event === CLIENT_EVENTS.GROUP_CALL_MEDIA_STATE ? { mediaState: {} } : {}),
+      });
+      assert.equal(stale.ok, false);
+    }
+    const duplicate = await emitWithAck(sockets[1], CLIENT_EVENTS.CONVERSATION_CALL_ACCEPT, {
+      version: SIGNALING_VERSION, callId,
+    });
+    assert.equal(duplicate.call.stateVersion, snapshot.call.stateVersion);
+    const selfSignal = await emitWithAck(sockets[0], CLIENT_EVENTS.RTC_ICE, {
+      version: SIGNALING_VERSION, callId, peerId: ids[0],
+      negotiationId: groupNegotiationId(snapshot.participants, ids[0], ids[0]), candidate: {},
+    });
+    assert.equal(selfSignal.ok, false);
+    await emitWithAck(sockets[1], CLIENT_EVENTS.CONVERSATION_LEAVE, {
+      version: SIGNALING_VERSION, conversationId: created.conversation.conversationId,
+    });
+    const removed = await emitWithAck(sockets[1], CLIENT_EVENTS.CONVERSATION_CALL_ACCEPT, {
+      version: SIGNALING_VERSION, callId,
+    });
+    assert.equal(removed.ok, false);
+  } finally {
+    await teardown(...sockets);
   }
 });
 
