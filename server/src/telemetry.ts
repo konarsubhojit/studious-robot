@@ -105,6 +105,17 @@ export type Telemetry = {
     },
     previousStatus: string
   ) => void;
+  recordCallParticipants: (call: {
+    callId: string;
+    callerId: string;
+    createdAt: string;
+    status: string;
+    participants?: {
+      userId: string;
+      state: string;
+      joinedAt?: string | null;
+    }[];
+  }) => void;
   recordRtcBufferOutcome: (outcome: RtcBufferOutcome, count?: number) => void;
   recordRtcRelay: (eventName: string, recipients: number | null, isHeartbeat?: boolean) => void;
   recordSignalingError: (code?: string, eventName?: string) => void;
@@ -260,6 +271,7 @@ function observeHistogram(h: Histogram, valueMs: number) {
     if (valueMs <= bound) {
       h.buckets[key] += 1;
     }
+
   }
 }
 
@@ -296,6 +308,10 @@ function createTelemetry(): Telemetry {
     calls_in_call: 0, // successfully reached in_call
     calls_ended: 0, // reached terminal ended state
     calls_failed: 0, // ended with endReason=failed
+    call_participants_total: 0,
+    call_participants_joined_total: 0,
+    call_peer_connection_failures_total: 0,
+    calls_partially_degraded_total: 0,
     call_setup_failures_total: 0,
     socket_reconnects_total: 0,
     call_stats_received_total: 0,
@@ -409,6 +425,10 @@ function createTelemetry(): Telemetry {
     call_duration_ms: createHistogram(LATENCY_BUCKETS_MS),
     /** Time spent ringing before a terminal outcome (for unanswered calls). */
     call_ring_duration_ms: createHistogram(LATENCY_BUCKETS_MS),
+    /** Number of participants, including the initiator, in each call. */
+    call_participants_per_call: createHistogram([2, 3, 4, 8, 16, Infinity]),
+    /** Time from call creation until each participant joins, in ms. */
+    call_participant_join_latency_ms: createHistogram(LATENCY_BUCKETS_MS),
     /** Postgres round-trip duration, in ms. */
     pg_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
     /** Redis cache round-trip duration, in ms. */
@@ -441,13 +461,23 @@ function createTelemetry(): Telemetry {
 
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
   const callTimestamps: Map<string, CallTimestamp> = new Map();
+  const callParticipantStates = new Map<string, {
+    callerId: string;
+    participants: Map<string, { joined: boolean; failed: boolean }>;
+  }>();
 
   // ─── Recording API ──────────────────────────────────────────────────────
 
   /**
    * Record a newly created call.
    */
-  function recordCallCreated(call: { callId: string; status: string; createdAt: string; }) {
+  function recordCallCreated(call: {
+    callId: string;
+    callerId?: string;
+    participants?: { userId: string; state: string; joinedAt?: string | null }[];
+    status: string;
+    createdAt: string;
+  }) {
     counters.calls_initiated += 1;
 
     const createdMs = new Date(call.createdAt).getTime();
@@ -457,6 +487,10 @@ function createTelemetry(): Telemetry {
       acceptedMs: null,
       inCallMs: null,
       endedMs: null,
+    });
+    recordCallParticipants({
+      ...call,
+      callerId: call.callerId ?? '__caller',
     });
 
     if (call.status === 'ringing') {
@@ -468,6 +502,76 @@ function createTelemetry(): Telemetry {
       counters.calls_unreachable += 1;
       counters.call_setup_failures_total += 1;
     }
+  }
+
+  function recordCallParticipants(call: {
+    callId: string;
+    callerId: string;
+    createdAt: string;
+    status: string;
+    participants?: { userId: string; state: string; joinedAt?: string | null }[];
+  }) {
+    let tracked = callParticipantStates.get(call.callId);
+    const isNewCall = !tracked;
+    if (!tracked) {
+      const participantRows = call.participants?.length
+        ? call.participants
+        : [
+            { userId: call.callerId, state: 'joined', joinedAt: call.createdAt },
+            { userId: '__callee', state: 'ringing' },
+          ];
+      const uniqueParticipants = new Map(participantRows.map((participant) => [participant.userId, participant]));
+      observeHistogram(histograms.call_participants_per_call, uniqueParticipants.size);
+      counters.call_participants_total += uniqueParticipants.size;
+      tracked = { callerId: call.callerId, participants: new Map() };
+      callParticipantStates.set(call.callId, tracked);
+    }
+    if (call.callerId) tracked.callerId = call.callerId;
+
+    const rows = call.participants?.length
+      ? call.participants
+      : [{ userId: tracked.callerId, state: 'joined', joinedAt: call.createdAt }];
+    for (const participant of rows) {
+      if (!participant.userId) continue;
+      const previous = tracked.participants.get(participant.userId) ?? { joined: false, failed: false };
+      const joined = previous.joined || participant.state === 'joined' ||
+        (participant.state === 'left' && Boolean(participant.joinedAt));
+      if (!previous.joined && joined) {
+        counters.call_participants_joined_total += 1;
+        const joinedAtMs = participant.joinedAt ? Date.parse(participant.joinedAt) : Date.now();
+        const elapsed = measureElapsedMs(call.createdAt, joinedAtMs, MAX_PLAUSIBLE_SETUP_LATENCY_MS);
+        if (elapsed.ok) observeHistogram(histograms.call_participant_join_latency_ms, elapsed.elapsedMs);
+      }
+      const failedState = ['declined', 'missed', 'busy', 'unreachable'].includes(participant.state);
+      const failed = previous.failed || (!joined && failedState);
+      if (!previous.failed && failed && participant.userId !== tracked.callerId) {
+        counters.call_peer_connection_failures_total += 1;
+      }
+      tracked.participants.set(participant.userId, { joined, failed });
+    }
+
+    if (isNewCall && isTerminalStatus(call.status)) {
+      finishCallParticipants(call.callId);
+    }
+  }
+
+  function finishCallParticipants(callId: string) {
+    const tracked = callParticipantStates.get(callId);
+    if (!tracked) return;
+    let joinedPeers = 0;
+    let failedPeers = 0;
+    for (const [userId, participant] of tracked.participants) {
+      if (userId === tracked.callerId) continue;
+      if (participant.joined) {
+        joinedPeers += 1;
+      } else if (!participant.failed) {
+        participant.failed = true;
+        counters.call_peer_connection_failures_total += 1;
+      }
+      if (participant.failed) failedPeers += 1;
+    }
+    if (joinedPeers > 0 && failedPeers > 0) counters.calls_partially_degraded_total += 1;
+    callParticipantStates.delete(callId);
   }
 
   /**
@@ -623,9 +727,26 @@ function createTelemetry(): Telemetry {
     observeRingDuration(call, ts, nowMs);
   }
 
-  function recordCallTransition(call: { callId: string; status: string; endReason?: string | null; createdAt?: string | null; answeredAt?: string | null; }, previousStatus: string) {
+  function recordCallTransition(call: {
+    callId: string;
+    callerId?: string;
+    participants?: { userId: string; state: string; joinedAt?: string | null }[];
+    status: string;
+    endReason?: string | null;
+    createdAt?: string | null;
+    answeredAt?: string | null;
+  }, previousStatus: string) {
     const ts = callTimestamps.get(call.callId);
     const nowMs = Date.now();
+    if (call.callerId && call.createdAt) {
+      recordCallParticipants(call as {
+        callId: string;
+        callerId: string;
+        createdAt: string;
+        status: string;
+        participants?: { userId: string; state: string; joinedAt?: string | null }[];
+      });
+    }
 
     switch (call.status) {
       case 'accepted':
@@ -653,6 +774,8 @@ function createTelemetry(): Telemetry {
       default:
         break;
     }
+
+    if (isTerminalStatus(call.status)) finishCallParticipants(call.callId);
 
     // Prevent unbounded growth: remove timestamps once the call reaches a
     // terminal state (all latencies that can be measured have been measured).
@@ -888,6 +1011,10 @@ function createTelemetry(): Telemetry {
       calls_initiated > 0 ? Number((calls_in_call / calls_initiated).toFixed(4)) : null;
     snap.derived.call_completion_rate =
       calls_in_call > 0 ? Number((calls_ended / calls_in_call).toFixed(4)) : null;
+    snap.derived.call_participant_join_rate =
+      snap.counters.call_participants_total > 0
+        ? Number((snap.counters.call_participants_joined_total / snap.counters.call_participants_total).toFixed(4))
+        : null;
 
     // Per-operation datastore breakdown, most expensive (by total time) first.
     snap.dbQueries = [...queryOperations.values()]
@@ -927,6 +1054,7 @@ function createTelemetry(): Telemetry {
   return {
     recordCallCreated,
     recordCallTransition,
+    recordCallParticipants,
     recordRtcBufferOutcome,
     recordRtcRelay,
     recordSignalingError,

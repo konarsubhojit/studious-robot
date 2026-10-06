@@ -73,6 +73,12 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     assert.equal(snap.counters.calls_unreachable, 0);
     assert.equal(snap.counters.calls_failed, 0);
     assert.equal(snap.counters.call_setup_failures_total, 0);
+    assert.equal(snap.counters.call_participants_total, 0);
+    assert.equal(snap.counters.call_participants_joined_total, 0);
+    assert.equal(snap.counters.call_peer_connection_failures_total, 0);
+    assert.equal(snap.counters.calls_partially_degraded_total, 0);
+    assert.ok(snap.histograms.call_participants_per_call);
+    assert.ok(snap.histograms.call_participant_join_latency_ms);
     assert.equal(snap.counters.socket_reconnects_total, 0);
     assert.equal(snap.counters.call_stats_received_total, 0);
     assert.equal(snap.counters.signaling_errors, 0);
@@ -84,6 +90,7 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     // Derived rates are null before any calls
     assert.equal(snap.derived.call_connect_rate, null);
     assert.equal(snap.derived.call_completion_rate, null);
+    assert.equal(snap.derived.call_participant_join_rate, null);
     assert.deepEqual(snap.callQuality, {
       fleet: {
         samples: 0,
@@ -176,6 +183,40 @@ test('GET /metrics increments calls_initiated and calls_ringing after a call', a
     const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_initiated, 1);
     assert.equal(res.body.counters.calls_ringing, 1);
+  } finally {
+    await teardown();
+  }
+});
+
+test('GET /metrics reports participant outcomes for a group call', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const callerSession = await createSession(url, 'group-caller');
+    const peerSessions = await Promise.all([
+      createSession(url, 'group-peer-a'),
+      createSession(url, 'group-peer-b'),
+      createSession(url, 'group-peer-c'),
+    ]);
+    const created = await postJson(url, '/calls', {
+      calleeIds: ['group-peer-a', 'group-peer-b', 'group-peer-c'],
+      mediaType: 'audio',
+    }, callerSession);
+    assert.equal(created.status, 201);
+    const callId = created.body.callId;
+
+    await postJson(url, `/calls/${callId}/join`, {}, peerSessions[0]);
+    await postJson(url, `/calls/${callId}/decline`, {}, peerSessions[1]);
+    await postJson(url, `/calls/${callId}/decline`, {}, peerSessions[2]);
+    await postJson(url, `/calls/${callId}/end`, {}, peerSessions[0]);
+    await postJson(url, `/calls/${callId}/end`, {}, callerSession);
+
+    const metrics = (await getMetricsHttp(url)).body;
+    assert.equal(metrics.histograms.call_participants_per_call.max, 4);
+    assert.equal(metrics.counters.call_participants_total, 4);
+    assert.equal(metrics.counters.call_participants_joined_total, 2);
+    assert.equal(metrics.counters.call_peer_connection_failures_total, 2);
+    assert.equal(metrics.counters.calls_partially_degraded_total, 1);
+    assert.equal(metrics.derived.call_participant_join_rate, 0.5);
   } finally {
     await teardown();
   }
@@ -683,6 +724,42 @@ function callRecord(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as any;
 }
+
+test('group-call telemetry tracks participant counts, joins, peer failures, and partial degradation', () => {
+  const telemetry = createTelemetry();
+  const createdAt = new Date(Date.now() - 2_000).toISOString();
+  const call = callRecord({
+    callId: 'group-call',
+    callerId: 'caller',
+    createdAt,
+    participants: [
+      { userId: 'caller', state: 'joined', joinedAt: createdAt },
+      { userId: 'peer-a', state: 'ringing' },
+      { userId: 'peer-b', state: 'ringing' },
+      { userId: 'peer-c', state: 'ringing' },
+    ],
+  });
+
+  telemetry.recordCallCreated(call);
+  const participants = [
+    call.participants[0],
+    { userId: 'peer-a', state: 'joined', joinedAt: new Date(Date.now() - 1_000).toISOString() },
+    { userId: 'peer-b', state: 'declined' },
+    { userId: 'peer-c', state: 'missed' },
+  ];
+  telemetry.recordCallParticipants({ ...call, status: 'accepted', participants });
+  telemetry.recordCallTransition({ ...call, status: 'ended', participants }, 'in_call');
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_participants_per_call.count, 1);
+  assert.equal(snap.histograms.call_participants_per_call.max, 4);
+  assert.equal(snap.histograms.call_participant_join_latency_ms.count, 2);
+  assert.equal(snap.counters.call_participants_total, 4);
+  assert.equal(snap.counters.call_participants_joined_total, 2);
+  assert.equal(snap.counters.call_peer_connection_failures_total, 2);
+  assert.equal(snap.counters.calls_partially_degraded_total, 1);
+  assert.equal(snap.derived.call_participant_join_rate, 0.5);
+});
 
 test('call_connect_latency_ms is observed for a call this process never saw accepted', () => {
   const telemetry = createTelemetry();

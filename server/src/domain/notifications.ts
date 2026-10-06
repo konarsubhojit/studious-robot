@@ -664,6 +664,7 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, {
   source?: string | null;
 }): void {
   updateCallPushState(state, call, previousStatus, reason);
+  state.telemetry.recordCallParticipants(call);
   if (previousStatus !== null && previousStatus !== call.status) {
     state.telemetry.recordCallTransition(call, previousStatus);
     console.log(formatCallTransitionLog(state, call, {
