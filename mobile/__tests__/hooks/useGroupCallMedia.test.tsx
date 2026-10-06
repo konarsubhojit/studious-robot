@@ -84,6 +84,95 @@ describe('useGroupCallMedia', () => {
 
   afterEach(() => { jest.useRealTimers(); });
 
+  test.each([
+    ['null', 'participant-update'], ['rejection', 'participant-update'],
+    ['null', 'offer'], ['rejection', 'offer'],
+  ])('retries %s capture on %s and retains successful deduplication', async (failure, trigger) => {
+    const { conversation, snapshot } = activeSnapshot();
+    const localStream = stream();
+    const resultRef: { current: any } = { current: null };
+    const startLocalPreview = jest.fn(async () => localStream);
+    const signaling = signalingClient();
+    if (failure === 'null') startLocalPreview.mockResolvedValueOnce(null);
+    else startLocalPreview.mockRejectedValueOnce(new Error('Temporary capture failure'));
+    const params: any = {
+      groupCalls: { [conversation.peerId]: snapshot }, conversations: [conversation], userId: 'bob',
+      localStreamRef: { current: null }, peerConnectionsRef: { current: new Map() },
+      startLocalPreview, signalingRef: { current: signaling },
+      signalingUrl: 'https://signal.example', ensureIceSessionId: jest.fn(async () => null),
+      iceTransportPolicy: 'all', connected: true, canJoin: true,
+      isMuted: false, isVideoEnabled: false, isScreenSharing: false, updateStatus: jest.fn(),
+    };
+    let tree!: renderer.ReactTestRenderer;
+    act(() => { tree = renderer.create(<TestHook params={params} resultRef={resultRef} />); });
+    await act(async () => { resultRef.current.join(conversation.conversationId); });
+    expect(startLocalPreview).toHaveBeenCalledTimes(1);
+    expect(params.peerConnectionsRef.current.size).toBe(0);
+    if (trigger === 'offer') {
+      await act(async () => {
+        await signaling.listeners.get(SERVER_EVENTS.RTC_OFFER)!({
+          callId: snapshot.callId, peerId: 'alice',
+          negotiationId: groupNegotiationId(snapshot.participants, 'bob', 'alice'),
+          sdp: { type: 'offer', sdp: 'retry' },
+        });
+      });
+      expect(startLocalPreview).toHaveBeenCalledTimes(2);
+      expect(params.peerConnectionsRef.current.size).toBe(1);
+    }
+    const joined = transitionMockGroupCall(snapshot, 'carol', 'accept', '2026-10-03T06:00:02Z');
+    await act(async () => {
+      tree.update(<TestHook params={{ ...params, groupCalls: { [conversation.peerId]: joined } }} resultRef={resultRef} />);
+    });
+    expect(startLocalPreview).toHaveBeenCalledTimes(2);
+    expect(params.peerConnectionsRef.current.size).toBe(2);
+    await act(async () => { tree.unmount(); });
+  });
+
+  test.each(['null', 'rejection'])('an older %s capture does not evict a newer admission attempt', async failure => {
+    const { conversation, snapshot } = activeSnapshot();
+    let finishOld!: (value: any) => void;
+    let rejectOld!: (reason: Error) => void;
+    let finishNew!: (value: any) => void;
+    const oldCapture = new Promise((resolve, reject) => { finishOld = resolve; rejectOld = reject; });
+    const newCapture = new Promise(resolve => { finishNew = resolve; });
+    const startLocalPreview = jest.fn().mockReturnValueOnce(oldCapture).mockReturnValue(newCapture);
+    const resultRef: { current: any } = { current: null };
+    const params: any = {
+      groupCalls: { [conversation.peerId]: snapshot }, conversations: [conversation], userId: 'alice',
+      localStreamRef: { current: null }, peerConnectionsRef: { current: new Map() },
+      startLocalPreview, signalingRef: { current: signalingClient() },
+      signalingUrl: 'https://signal.example', ensureIceSessionId: jest.fn(async () => null),
+      iceTransportPolicy: 'all', connected: true, canJoin: true,
+      isMuted: false, isVideoEnabled: false, isScreenSharing: false, updateStatus: jest.fn(),
+    };
+    let tree!: renderer.ReactTestRenderer;
+    act(() => { tree = renderer.create(<TestHook params={params} resultRef={resultRef} />); });
+    await act(async () => { resultRef.current.join(conversation.conversationId); });
+    const readmitted = {
+      ...snapshot,
+      participants: snapshot.participants.map(person =>
+        person.userId === 'alice' ? { ...person, acceptedAt: '2026-10-03T06:01:00Z' } : person,
+      ),
+    };
+    await act(async () => {
+      tree.update(<TestHook params={{ ...params, groupCalls: { [conversation.peerId]: readmitted } }} resultRef={resultRef} />);
+    });
+    expect(startLocalPreview).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      if (failure === 'null') finishOld(null);
+      else rejectOld(new Error('Old attempt failed'));
+    });
+    const joined = transitionMockGroupCall(readmitted, 'carol', 'accept', '2026-10-03T06:01:01Z');
+    await act(async () => {
+      tree.update(<TestHook params={{ ...params, groupCalls: { [conversation.peerId]: joined } }} resultRef={resultRef} />);
+    });
+    expect(startLocalPreview).toHaveBeenCalledTimes(2);
+    await act(async () => { finishNew(stream()); });
+    expect(startLocalPreview).toHaveBeenCalledTimes(2);
+    expect(params.peerConnectionsRef.current.size).toBe(2);
+    await act(async () => { tree.unmount(); });
+  });
+
   test('creates accepted peer connections independently and isolates failure, restart, and leave', async () => {
     const { conversation, snapshot } = activeSnapshot();
     const signaling = signalingClient();

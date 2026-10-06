@@ -162,10 +162,20 @@ export default function useGroupCallMedia({
     const self = current.participants.find(person => person.userId === localUserIdRef.current);
     const session = JSON.stringify([current.callId, self?.acceptedAt]);
     if (localMediaStartRef.current?.session !== session) {
-      localMediaStartRef.current = {
+      const attempt = {
         session,
-        promise: startLocalPreviewRef.current(current.call.mediaType === 'audio' ? 'audio' : 'video'),
+        promise: startLocalPreviewRef.current(current.call.mediaType === 'audio' ? 'audio' : 'video').then(
+          stream => {
+            if (!stream && localMediaStartRef.current === attempt) localMediaStartRef.current = null;
+            return stream;
+          },
+          error => {
+            if (localMediaStartRef.current === attempt) localMediaStartRef.current = null;
+            throw error;
+          },
+        ),
       };
+      localMediaStartRef.current = attempt;
     }
     return localMediaStartRef.current.promise;
   }, []);
@@ -418,7 +428,7 @@ export default function useGroupCallMedia({
         entry.negotiationId !== currentNegotiation(peerId, current.callId)) closePeer(peerId);
     }
     void (async () => {
-      await ensureLocalMedia();
+      if (!await ensureLocalMedia()) return;
       for (const peerId of wanted) await createPeer(peerId, current.callId);
     })().catch(error => {
       logWarn('[GroupCall] Could not establish participant media', { message: String(error) });

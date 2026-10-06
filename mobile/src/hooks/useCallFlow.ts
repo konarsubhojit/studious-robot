@@ -704,24 +704,6 @@ export default function useCallFlow({
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
   const { isRegistered } = identity;
 
-  // Closing the Picture-in-Picture window must end the call: leaving it running
-  // invisibly gives the user no way back to it and no way to hang up. The mute
-  // and hang-up controls the window itself offers are routed back here too —
-  // they are drawn by the system, since a PiP window cannot deliver touches to
-  // the app's own views.
-  const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef, {
-    onPictureInPictureClosed: () => endActiveCallRef.current?.('Call ended', 'info', 'ended'),
-    onToggleMute: () => handleMuteToggleRef.current?.(),
-    onEndCall: () => {
-      handleEndCallRef.current?.().catch(error =>
-        logWarn('[CallFlow] Picture-in-Picture hang up failed', {
-          message: errorMessage(error),
-        }),
-      );
-    },
-    isMuted,
-  });
-
   /**
    * Clear the persisted identity and disconnect.  After this the app returns
    * to the RegistrationScreen on next launch.
@@ -889,9 +871,43 @@ export default function useCallFlow({
       speakerEnabledByDefault,
       updateStatus,
     });
+  // Group admission precedes permission/capture. Android's microphone FGS
+  // cannot start until required media access has actually succeeded.
+  const callServiceActive = isInCall || (groupMediaActive && Boolean(localStream?.getAudioTracks().length));
   useEffect(() => {
-    if (audioSessionActive) startCallService(isVideoEnabled ? 'video' : 'audio');
-  }, [audioSessionActive, isVideoEnabled]);
+    if (callServiceActive) startCallService(isVideoEnabled ? 'video' : 'audio');
+  }, [callServiceActive, isVideoEnabled]);
+  const leaveGroupFromPip = () => {
+    const conversationId = groupCallMedia.activeConversationId;
+    if (!conversationId) return;
+    // Never keep capture alive while waiting for an acknowledgement (or on
+    // signaling failure), and never terminate the other participants' call.
+    groupCallMedia.leave(conversationId);
+    if (isScreenSharing) resetScreenShare();
+    releaseLocalMedia();
+    stopCallService();
+    void messaging.groupCallActions.transition(conversationId, 'leave').catch(error =>
+      logWarn('[CallFlow] Picture-in-Picture group leave failed', {
+        message: errorMessage(error),
+      }),
+    );
+  };
+  const { isCompactView, setIsCompactView } = useCompactCallView(audioSessionActiveRef, {
+    onPictureInPictureClosed: () => {
+      if (groupMediaActive) leaveGroupFromPip();
+      else endActiveCallRef.current?.('Call ended', 'info', 'ended');
+    },
+    onToggleMute: () => handleMuteToggleRef.current?.(),
+    onEndCall: () => {
+      if (groupMediaActive) leaveGroupFromPip();
+      else handleEndCallRef.current?.().catch(error =>
+        logWarn('[CallFlow] Picture-in-Picture hang up failed', {
+          message: errorMessage(error),
+        }),
+      );
+    },
+    isMuted,
+  });
   const hadGroupMediaRef = useRef(false);
   useEffect(() => {
     if (hadGroupMediaRef.current && !groupMediaActive && !isCallActiveState(callPhase)) {
