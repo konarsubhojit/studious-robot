@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
+import { usePeerProfile } from '../profile/ProfileContext';
 import { radius, spacing, typography } from '../theme';
-import { Sheet } from './primitives';
+import { Avatar, Sheet } from './primitives';
 import type { ThemeColors } from '../theme';
-import type { ContactRow } from '../types/directory';
+import type { ContactRow, PeerProfile } from '../types/directory';
 
 type Props = {
   visible: boolean;
@@ -14,7 +15,7 @@ type Props = {
   excludedIds?: string[];
   adding?: boolean;
   localMock?: boolean;
-  onSubmit: (name: string, userIds: string[]) => Promise<unknown>;
+  onSubmit: (name: string, userIds: string[], profiles: Record<string, PeerProfile>) => Promise<unknown>;
 };
 
 function canSaveGroup(busy: boolean, count: number, name: string, adding: boolean): boolean {
@@ -29,6 +30,16 @@ function submitLabel(busy: boolean, adding: boolean, localMock: boolean): string
   return localMock ? 'Create local group' : 'Create live group';
 }
 
+function DirectoryMember({ user, selected }: { user: ContactRow; selected: boolean }) {
+  const styles = useThemedStyles(createStyles);
+  const profile = usePeerProfile(user.userId, user);
+  return <View style={styles.personIdentity}>
+    <Text style={styles.text}>{selected ? '✓' : ''}</Text>
+    <Avatar id={user.userId} profile={user} size="sm" />
+    <Text style={styles.text}>{profile.name}</Text>
+  </View>;
+}
+
 /** Uses the same authenticated GET /users directory as the direct people picker. */
 export default function GroupDirectorySheet({
   visible, onClose, onSearchUsers, currentUserId, excludedIds = [], adding = false, localMock = true, onSubmit,
@@ -37,6 +48,7 @@ export default function GroupDirectorySheet({
   const [query, setQuery] = useState('');
   const [name, setName] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
+  const [selectedProfiles, setSelectedProfiles] = useState<Record<string, PeerProfile>>({});
   const [results, setResults] = useState<ContactRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -45,7 +57,7 @@ export default function GroupDirectorySheet({
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!visible) {
-      setQuery(''); setName(''); setSelected([]); setResults([]); setError(''); setSearchError(false);
+      setQuery(''); setName(''); setSelected([]); setSelectedProfiles({}); setResults([]); setError(''); setSearchError(false);
     }
   }, [visible]);
   useEffect(() => {
@@ -62,14 +74,23 @@ export default function GroupDirectorySheet({
     }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [visible, query, onSearchUsers, retry]);
-  const eligible = [...new Map(results.map(user => [user.userId, user])).values()]
+  const uniqueResults = new Map<string, ContactRow>();
+  results.forEach(user => {
+    const previous = uniqueResults.get(user.userId);
+    uniqueResults.set(user.userId, {
+      ...previous, ...user,
+      displayName: user.displayName ?? previous?.displayName,
+      avatarKey: user.avatarKey ?? previous?.avatarKey,
+    });
+  });
+  const eligible = [...uniqueResults.values()]
     .filter(user => user.userId !== currentUserId && !excludedIds.includes(user.userId));
   const canSubmit = canSaveGroup(busy, selected.length, name, adding);
   const submit = async () => {
     if (!canSubmit) return;
     setBusy(true); setError('');
     try {
-      await onSubmit(name.trim(), selected);
+      await onSubmit(name.trim(), selected, selectedProfiles);
       onClose();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Unable to save group');
@@ -93,11 +114,26 @@ export default function GroupDirectorySheet({
       <FlatList data={eligible} keyExtractor={user => user.userId} keyboardShouldPersistTaps="handled"
         ListEmptyComponent={!loading && !searchError ? <Text style={styles.text}>No eligible people found</Text> : undefined}
         renderItem={({ item }) => <Pressable style={styles.person} disabled={busy}
-          accessibilityRole="checkbox" accessibilityLabel={item.userId}
+          accessibilityRole="checkbox"
+          accessibilityLabel={item.displayName ? `${item.displayName} (${item.userId})` : item.userId}
           accessibilityState={{ checked: selected.includes(item.userId), disabled: busy }}
-          testID={`group-select-${item.userId}`} onPress={() => setSelected(ids =>
-            ids.includes(item.userId) ? ids.filter(id => id !== item.userId) : [...ids, item.userId])}>
-          <Text style={styles.text}>{selected.includes(item.userId) ? '✓ ' : ''}{item.userId}</Text>
+          testID={`group-select-${item.userId}`} onPress={() => {
+            if (selected.includes(item.userId)) {
+              setSelected(ids => ids.filter(id => id !== item.userId));
+              setSelectedProfiles(profiles => {
+                const next = { ...profiles };
+                delete next[item.userId];
+                return next;
+              });
+            } else {
+              setSelected(ids => [...ids, item.userId]);
+              setSelectedProfiles(profiles => ({ ...profiles, [item.userId]: {
+                ...(item.displayName !== undefined ? { displayName: item.displayName } : {}),
+                ...(item.avatarKey !== undefined ? { avatarKey: item.avatarKey } : {}),
+              } }));
+            }
+          }}>
+          <DirectoryMember user={item} selected={selected.includes(item.userId)} />
         </Pressable>} />
       {error ? <Text style={styles.text} accessibilityRole="alert">{error}</Text> : null}
       <Pressable style={styles.person} disabled={!canSubmit} accessibilityRole="button"
@@ -113,4 +149,5 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   input: { ...typography.body, color: colors.onSurface, backgroundColor: colors.surfaceControl, borderRadius: radius.md, padding: spacing.sm },
   text: { ...typography.body, color: colors.onSurface },
   person: { padding: spacing.sm, minHeight: 48, justifyContent: 'center' },
+  personIdentity: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
 });

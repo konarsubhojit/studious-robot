@@ -3,8 +3,9 @@ import { FlatList, KeyboardAvoidingView, Platform, Pressable, RefreshControl, Sc
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { describeMessagePreview } from '../../../shared';
 import { useThemedStyles } from '../ThemeContext';
+import { usePeerProfile } from '../profile/ProfileContext';
 import { radius, spacing, typography } from '../theme';
-import { Sheet } from './primitives';
+import { Avatar, Sheet } from './primitives';
 import GroupDirectorySheet from './GroupDirectorySheet';
 import GroupCallPreview from './GroupCallPreview';
 import CallParticipantGrid from './CallParticipantGrid';
@@ -25,6 +26,7 @@ const TYPING_IDLE_MS = 3000;
 
 type Styles = ReturnType<typeof createStyles>;
 type GroupActions = ChatContextValue['groupActions'];
+type CacheMemberProfiles = GroupActions['cacheMemberProfiles'];
 type GroupPreviewActions = ChatContextValue['groupPreviewActions'];
 type Props = {
   conversation: ConversationSummary;
@@ -68,11 +70,25 @@ function Action({ label, onPress, disabled = false, testID, styles }: {
 }
 
 type GroupBubbleProps = {
-  message: ChatMessage; row: ConversationSummary; currentUserId: string;
+  message: ChatMessage; row: ConversationSummary; currentUserId: string; cacheMemberProfiles: CacheMemberProfiles;
   onRetry: (id: string) => void; onDiscard?: (id: string) => void; styles: Styles;
 };
 
-function GroupDelivery({ message, row, onRetry, onDiscard, styles }: Omit<GroupBubbleProps, 'currentUserId'>) {
+function useGroupMemberProfile(row: ConversationSummary, userId: string, cacheMemberProfiles: CacheMemberProfiles) {
+  const cached = row.groupMemberProfiles?.[userId];
+  const profile = usePeerProfile(userId, cached);
+  useEffect(() => {
+    if (profile.displayName === cached?.displayName && profile.avatarKey === cached?.avatarKey) return;
+    if (profile.displayName === undefined && profile.avatarKey === undefined) return;
+    cacheMemberProfiles(row.peerId, {
+      [userId]: { displayName: profile.displayName, avatarKey: profile.avatarKey },
+    });
+  }, [cacheMemberProfiles, cached?.avatarKey, cached?.displayName, profile.avatarKey,
+    profile.displayName, row.peerId, userId]);
+  return profile;
+}
+
+function GroupDelivery({ message, row, onRetry, onDiscard, styles }: Omit<GroupBubbleProps, 'currentUserId' | 'cacheMemberProfiles'>) {
   const status = messageDeliveryState(message);
   const savedMock = row.localMock && ['sent', 'delivered', 'read'].includes(status);
   if (savedMock) return <Text style={styles.secondary} accessibilityLabel="Saved locally (mock)">Saved locally (mock)</Text>;
@@ -81,22 +97,52 @@ function GroupDelivery({ message, row, onRetry, onDiscard, styles }: Omit<GroupB
     onDiscard={onDiscard ? () => onDiscard(message.messageId) : undefined} />;
 }
 
-function GroupBubble({ message, row, currentUserId, onRetry, onDiscard, styles }: GroupBubbleProps) {
+function GroupBubble({ message, row, currentUserId, cacheMemberProfiles, onRetry, onDiscard, styles }: GroupBubbleProps) {
   const own = message.senderId === currentUserId;
-  const readers = (row.group?.memberIds ?? []).filter(id => id !== currentUserId &&
-    Date.parse(row.readByMember?.[id] ?? '') >= Date.parse(message.createdAt ?? ''));
+  const sender = useGroupMemberProfile(row, message.senderId, cacheMemberProfiles);
+  const memberIds = row.group?.memberIds ?? [];
+  const readers = (message.readBy ?? []).filter(id => id !== currentUserId && memberIds.includes(id));
   return <View style={[styles.bubble, own ? styles.ownBubble : undefined]} testID="group-message">
-    <Text style={styles.name}>{own ? 'You' : message.senderId}</Text>
+    <View style={styles.sender}>
+      <Avatar id={message.senderId} profile={sender} size="sm" testID={`group-sender-avatar-${message.messageId}`} />
+      <Text style={styles.name} accessibilityLabel={own ? 'You' : `Message from ${sender.name}`}>
+        {own ? 'You' : sender.name}
+      </Text>
+    </View>
     <Text style={styles.text}>{message.deletedAt ? 'Message deleted' :
       !message.type || message.type === 'text' ? message.body : describeMessagePreview(message)}</Text>
     {own ? <GroupDelivery message={message} row={row} styles={styles} onRetry={onRetry} onDiscard={onDiscard} /> : null}
-    {own && readers.length ? <Text style={styles.secondary}>Read by {readers.join(', ')}</Text> : null}
+    {own && readers.length ? <View style={styles.readers} testID={`group-message-readers-${message.messageId}`}>
+      <Text style={styles.secondary}>Read by </Text>
+      {readers.map((id, index) => <GroupReader key={id} userId={id} row={row}
+        cacheMemberProfiles={cacheMemberProfiles} styles={styles}
+        separator={index < readers.length - 1} />)}
+    </View> : null}
   </View>;
 }
 
-function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, actions, preview, run, busy, styles }: {
+function GroupReader({ userId, row, cacheMemberProfiles, styles, separator }: {
+  userId: string; row: ConversationSummary; cacheMemberProfiles: CacheMemberProfiles; styles: Styles; separator: boolean;
+}) {
+  const profile = useGroupMemberProfile(row, userId, cacheMemberProfiles);
+  return <Text style={styles.secondary} accessibilityLabel={`Read by ${profile.name}`}>
+    {profile.name}{separator ? ', ' : ''}
+  </Text>;
+}
+
+function GroupMemberIdentity({ userId, owner, row, cacheMemberProfiles, styles }: {
+  userId: string; owner: boolean; row: ConversationSummary; cacheMemberProfiles: CacheMemberProfiles; styles: Styles;
+}) {
+  const profile = useGroupMemberProfile(row, userId, cacheMemberProfiles);
+  return <View style={styles.sender}>
+    <Avatar id={userId} profile={profile} size="sm" testID={`group-member-avatar-${userId}`} />
+    <Text style={styles.name}>{profile.name}{owner ? ' (owner)' : ''}</Text>
+  </View>;
+}
+
+function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, onRemove, actions, preview, run, busy, styles }: {
   visible: boolean; row: ConversationSummary; currentUserId: string; onClose: () => void; onAdd: () => void;
-  onLeave: () => void; preview?: GroupPreviewActions;
+  onLeave: () => void; onRemove: (userId: string) => void; preview?: GroupPreviewActions;
   actions: GroupActions; run: (action: () => Promise<unknown>) => void; busy: boolean; styles: Styles;
 }) {
   const group = row.group!;
@@ -110,11 +156,12 @@ function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, ac
     testID="group-members-sheet">
     <ScrollView>
       {group.memberIds.map(id => <View key={id} style={styles.member}>
-        <Text style={styles.name}>{id}{id === ownerId ? ' (owner)' : ''}</Text>
+        <GroupMemberIdentity userId={id} owner={id === ownerId} row={row}
+          cacheMemberProfiles={actions.cacheMemberProfiles} styles={styles} />
         <Text style={styles.secondary}>{row.readByMember?.[id] ? `Read through ${row.readByMember[id]}` : 'No read receipt'}</Text>
         {admin && id !== ownerId ? <Action styles={styles}
           disabled={busy} label={`Remove ${id}`} testID={`group-remove-${id}`}
-          onPress={() => run(() => actions.members(row.peerId, { type: 'remove', userId: id }))} /> : null}
+          onPress={() => onRemove(id)} /> : null}
         {preview && row.localMock && !row.left && id !== currentUserId ? <View>
           {(['typing', 'read', 'message'] as const).map(action => <Action key={action} styles={styles}
             disabled={busy} label={`Simulate ${id} ${action}`} testID={`group-simulate-${id}-${action}`}
@@ -135,6 +182,24 @@ function MembersSheet({ visible, row, currentUserId, onClose, onAdd, onLeave, ac
   </Sheet>;
 }
 
+function GroupActionConfirmation({ action, busy, onCancel, onConfirm, styles }: {
+  action: { type: 'leave' } | { type: 'remove'; userId: string } | null;
+  busy: boolean; onCancel: () => void; onConfirm: () => void; styles: Styles;
+}) {
+  if (!action) return null;
+  const leaving = action.type === 'leave';
+  return <Sheet visible onClose={onCancel} title={leaving ? 'Leave group?' : `Remove ${action.userId}?`}
+    subtitle={leaving
+      ? 'You will no longer receive messages or be able to send messages in this group.'
+      : `${action.userId} will no longer be a member of this group.`}
+    testID="group-action-confirmation">
+    <Action label="Cancel" styles={styles} disabled={busy} testID="group-action-cancel" onPress={onCancel} />
+    <Action label={leaving ? 'Leave group' : `Remove ${action.userId}`} styles={styles} disabled={busy}
+      testID={leaving ? 'group-confirm-leave' : 'group-confirm-remove'}
+      onPress={onConfirm} />
+  </Sheet>;
+}
+
 export default function GroupConversationScreen({
   conversation: row, messages, currentUserId, typing, actions, preview, callSnapshot, callActions,
   callPeers, activeSpeakerId, localStream, isMuted, isVideoEnabled, isScreenSharing, onSearchUsers, onSend, onRetry, onDiscard,
@@ -147,6 +212,9 @@ export default function GroupConversationScreen({
   const [calling, setCalling] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [confirmation, setConfirmation] = useState<
+    { type: 'leave' } | { type: 'remove'; userId: string } | null
+  >(null);
   const openedCallIdRef = useRef<string | null>(null);
   const group = row.group!;
   const isMember = !row.left && group.memberIds.includes(currentUserId);
@@ -223,6 +291,16 @@ export default function GroupConversationScreen({
     const result = await onSend(draft);
     if (result) { onDraft(''); reportTyping(false); }
   });
+  const confirmGroupAction = () => {
+    const pending = confirmation;
+    if (!pending) return;
+    setConfirmation(null);
+    if (pending.type === 'leave') {
+      void run(async () => { await actions.leave(row.peerId); onBack(); });
+    } else {
+      void run(() => actions.members(row.peerId, { type: 'remove', userId: pending.userId }));
+    }
+  };
   const typists = group.memberIds.filter(id => id !== currentUserId && typing[id]);
   return <KeyboardAvoidingView style={[styles.root, { paddingTop: spacing.md + (insets?.top ?? 0) }]}
     behavior={Platform.OS === 'ios' ? 'padding' : undefined} testID="group-conversation">
@@ -244,7 +322,8 @@ export default function GroupConversationScreen({
       refreshControl={onRefresh ? <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} /> : undefined}
       ListEmptyComponent={<Text style={styles.text}>No group messages yet</Text>}
       renderItem={({ item }) => <GroupBubble message={item} row={row} currentUserId={currentUserId}
-        styles={styles} onRetry={id => { void run(() => onRetry(id)); }} onDiscard={onDiscard} />} />
+        cacheMemberProfiles={actions.cacheMemberProfiles} styles={styles}
+        onRetry={id => { void run(() => onRetry(id)); }} onDiscard={onDiscard} />} />
     {typists.length ? <Text style={styles.secondary} testID="group-typing">{typists.join(', ')} typing…</Text> : null}
     {error ? <Text style={styles.text} accessibilityRole="alert" testID="group-error">{error}</Text> : null}
     <TextInput style={styles.input} value={draft} onChangeText={text => { onDraft(text); reportTyping(Boolean(text.trim())); }}
@@ -262,11 +341,17 @@ export default function GroupConversationScreen({
     ) : null}
     <MembersSheet visible={membersVisible} row={row} currentUserId={currentUserId} actions={actions} preview={preview}
       onClose={() => setMembersVisible(false)} onAdd={() => { setMembersVisible(false); setAdding(true); }}
-      onLeave={() => { void run(async () => { await actions.leave(row.peerId); onBack(); }); }}
+      onLeave={() => setConfirmation({ type: 'leave' })}
+      onRemove={userId => setConfirmation({ type: 'remove', userId })}
       styles={styles} busy={busy} run={action => { void run(action); }} />
+    <GroupActionConfirmation action={confirmation} busy={busy} styles={styles}
+      onCancel={() => setConfirmation(null)} onConfirm={confirmGroupAction} />
     <GroupDirectorySheet visible={adding} adding onClose={() => setAdding(false)}
       onSearchUsers={onSearchUsers} currentUserId={currentUserId} excludedIds={group.memberIds}
-      onSubmit={async (_name, userIds) => actions.members(row.peerId, { type: 'add', userIds })} />
+      onSubmit={async (_name, userIds, profiles) => {
+        await actions.members(row.peerId, { type: 'add', userIds });
+        actions.cacheMemberProfiles(row.peerId, profiles);
+      }} />
     <GroupCallPreview visible={calling && isMember} onClose={() => setCalling(false)} conversationId={row.peerId}
       currentUserId={currentUserId} localMock={Boolean(row.localMock)} snapshot={callSnapshot} actions={callActions}
       callPeers={callPeers} activeSpeakerId={activeSpeakerId} localStream={localStream}
@@ -281,6 +366,8 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   name: { ...typography.body, fontWeight: '600', color: colors.onSurface },
   secondary: { ...typography.caption, color: colors.onSurfaceVariant },
   controls: { flexDirection: 'row', flexWrap: 'wrap' },
+  sender: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  readers: { flexDirection: 'row', flexWrap: 'wrap' },
   action: { minHeight: 48, justifyContent: 'center', padding: spacing.sm },
   compactCall: {
     position: 'absolute',

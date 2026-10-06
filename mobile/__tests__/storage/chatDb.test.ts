@@ -123,7 +123,13 @@ describe('chatDb', () => {
     };
     saveChatSnapshot({
       conversations: [{ peerId: group.conversationId, conversationId: group.conversationId,
-        group, localMock: true, readByMember: { bob: '2026-10-03T01:00:00Z' }, unreadCount: 3 }],
+        group, groupMemberProfiles: { bob: { displayName: 'Bobby', avatarKey: 'avatar-bob' } },
+        localMock: true, readByMember: { bob: '2026-10-03T01:00:00Z' }, unreadCount: 3 }],
+      messagesByPeer: {
+        [group.conversationId]: [{ messageId: 'group-message', conversationId: group.conversationId,
+          senderId: 'bob', recipientId: group.conversationId, body: 'group history' }],
+        bob: [{ messageId: 'direct-message', senderId: 'bob', recipientId: 'alice', body: 'direct history' }],
+      },
       outbox: [{ messageId: 'q-group', recipientId: group.conversationId, conversationId: group.conversationId,
         targetKind: 'group', localMock: true, body: 'queued group', attempts: 0 }],
     }, scope);
@@ -131,13 +137,22 @@ describe('chatDb', () => {
     resetChatDbCache();
     const restored = await loadChatSnapshot(scope);
     expect(restored.conversations[0]).toMatchObject({ group, localMock: true, unreadCount: 3,
+      groupMemberProfiles: { bob: { displayName: 'Bobby', avatarKey: 'avatar-bob' } },
       readByMember: { bob: '2026-10-03T01:00:00Z' } });
     expect(restored.outbox[0]).toMatchObject({
       messageId: 'q-group', recipientId: group.conversationId, conversationId: group.conversationId,
       targetKind: 'group', localMock: true, body: 'queued group',
     });
+    expect(restored.messagesByPeer[group.conversationId]).toMatchObject([
+      { messageId: 'group-message', recipientId: group.conversationId, body: 'group history' },
+    ]);
+    expect(restored.messagesByPeer.bob).toMatchObject([
+      { messageId: 'direct-message', recipientId: 'alice', body: 'direct history' },
+    ]);
 
-    expect((await loadChatSnapshot('https://example.test:group-bob')).outbox).toEqual([]);
+    const otherAccount = await loadChatSnapshot('https://example.test:group-bob');
+    expect(otherAccount.outbox).toEqual([]);
+    expect(otherAccount.conversations).toEqual([]);
   });
 
   test('queued group membership survives conversation retention so replay cannot become a direct send', async () => {

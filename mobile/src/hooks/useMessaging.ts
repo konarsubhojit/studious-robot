@@ -90,6 +90,7 @@ import {
 import useChatSnapshotMirror from '../messaging/useChatSnapshotMirror';
 import { fetchGroupHistory, fetchHistory } from '../messaging/fetchHistory';
 import type { AttachmentRecord, ConversationRecord } from '../../../shared/signaling/schemas';
+import type { PeerProfile } from '../types/directory';
 import type { CallStatus } from '../components/StatusBanner';
 import type { SignalingClient } from '../signalingClient';
 import type { Socket } from 'socket.io-client';
@@ -119,6 +120,7 @@ import type { CallActivity, ChatMessage, ConversationSummary, OutboxItem, Timeli
  * `isTyping: false` event is dropped (e.g. the peer's app is killed mid-type).
  */
 const TYPING_INDICATOR_TIMEOUT_MS = 6000;
+const GROUP_READ_SYNC_DEBOUNCE_MS = 100;
 
 /** How often `sendTypingIndicator(peerId, true)` may be emitted while the
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
@@ -255,6 +257,7 @@ export default function useMessaging({
   // Mirrors activeChatPeerId so the message.received socket handler never
   // reads a stale value through a captured closure.
   const activeChatPeerIdRef = useRef((null as string | null));
+  const groupReadSyncTimersRef = useRef(({} as Record<string, ReturnType<typeof setTimeout>>));
 
   // ─── Offline-first state ─────────────────────────────────────────────────
   // Durable queue of sends awaiting an ack, mirrored into the local store on
@@ -306,6 +309,8 @@ export default function useMessaging({
     socketCursorsRef.current = {};
     socketCursorScopeRef.current = scope;
     activeChatPeerIdRef.current = null;
+    Object.values(groupReadSyncTimersRef.current).forEach(clearTimeout);
+    groupReadSyncTimersRef.current = {};
     attachmentUploadMetaRef.current = {};
     clearTimeout(drainTimerRef.current ?? undefined);
     drainTimerRef.current = null;
@@ -494,11 +499,7 @@ export default function useMessaging({
     [authedFetchRef, sessionIdRef, signalingUrl, scope, requests],
   );
 
-  /**
-   * Mark every message from `peerId` as read (`POST /messages/read`) and
-   * locally zero out that conversation's unread badge without waiting for a
-   * refetch.
-   */
+  /** Mark a direct or group conversation read through the existing read endpoint. */
   const markConversationRead = useCallback(
     /** @param peerId */
     async (peerId: string) => {
@@ -507,7 +508,22 @@ export default function useMessaging({
       const group = conversationsRef.current.find(row => row.peerId === trimmedPeerId && row.group);
       if (group) {
         if (group.left || !group.group!.memberIds.includes(userId)) return;
-        // The implemented read endpoint is direct-only; group counts remain local.
+        if (!group.localMock) {
+          try {
+            const response = await authedFetchRef.current?.((sid: string) => ({
+              url: `${signalingUrl.trim()}${API_ROUTES.MESSAGES_READ}`,
+              options: {
+                method: 'POST',
+                headers: bearerAuthHeaders(sid, { 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ conversationId: group.conversationId }),
+              },
+            }));
+            if (!response?.ok || scopeRef.current !== scope) return;
+          } catch (error) {
+            logWarn('[Messaging] markGroupRead failed', { message: errorMessage(error) });
+            return;
+          }
+        }
         const next = conversationsRef.current.map(row => row.peerId !== trimmedPeerId ? row : {
           ...row, unreadCount: 0,
           readByMember: { ...row.readByMember, [userId]: new Date().toISOString() },
@@ -774,19 +790,59 @@ export default function useMessaging({
       if (scopeRef.current !== scope) throw new Error('Account changed');
       return group;
     };
+    const cacheMemberProfiles = (id: string, profiles: Record<string, PeerProfile>) => {
+      if (!scope || scopeRef.current !== scope) return;
+      const row = conversationsRef.current.find(entry => entry.peerId === id && entry.group);
+      if (!row) return;
+      const knownMemberIds = new Set(row.group!.memberIds);
+      (messagesByPeerRef.current[id] ?? []).forEach(message => knownMemberIds.add(message.senderId));
+      let changed = false;
+      const groupMemberProfiles = { ...row.groupMemberProfiles };
+      Object.entries(profiles).forEach(([memberId, profile]) => {
+        if (!knownMemberIds.has(memberId)) return;
+        const cached = groupMemberProfiles[memberId];
+        const nextProfile = {
+          ...(profile.displayName !== undefined ? { displayName: profile.displayName } : {}),
+          ...(profile.avatarKey !== undefined ? { avatarKey: profile.avatarKey } : {}),
+        };
+        if (cached?.displayName === nextProfile.displayName && cached?.avatarKey === nextProfile.avatarKey) return;
+        if (nextProfile.displayName === undefined && nextProfile.avatarKey === undefined) return;
+        groupMemberProfiles[memberId] = nextProfile;
+        changed = true;
+      });
+      if (!changed) return;
+      const next = conversationsRef.current.map(entry => entry.peerId === id
+        ? { ...entry, groupMemberProfiles } : entry);
+      conversationsRef.current = next;
+      setConversations(next);
+      saveChatSnapshot({ conversations: next }, scope);
+    };
     return {
       mode: groupTransport,
-      create: async (name: string, inviteeIds: string[]) => {
+      cacheMemberProfiles,
+      create: async (name: string, inviteeIds: string[], inviteeProfiles: Record<string, PeerProfile> = {}) => {
         const id = `mock-group-${createMessageId()}`;
         const mock = createMockGroup(userId, name, inviteeIds, id);
         if (mock.group!.memberIds.length > 16) throw new Error('Select no more than 15 other people');
+        const groupMemberProfiles = Object.fromEntries(Object.entries(inviteeProfiles)
+          .filter(([memberId, profile]) => mock.group!.memberIds.includes(memberId) &&
+            (profile.displayName !== undefined || profile.avatarKey !== undefined))
+          .map(([memberId, profile]) => [memberId, {
+            ...(profile.displayName !== undefined ? { displayName: profile.displayName } : {}),
+            ...(profile.avatarKey !== undefined ? { avatarKey: profile.avatarKey } : {}),
+          }]));
         if (groupTransport === 'live') {
           const group = await live(CLIENT_EVENTS.CONVERSATION_CREATE, {
             name: mock.group!.name, inviteeIds: mock.group!.memberIds.filter(memberId => memberId !== userId),
           });
+          cacheMemberProfiles(group.conversationId, groupMemberProfiles);
+          try { await flushChatDb(scope); }
+          catch {
+            if (scopeRef.current === scope) updateStatus('Group created, but its member identity cache could not be saved.', 'error');
+          }
           return group.conversationId;
         }
-        await commit(mock);
+        await commit({ ...mock, groupMemberProfiles });
         return id;
       },
       members: async (id: string, action: GroupMemberAction) => {
@@ -1745,6 +1801,16 @@ export default function useMessaging({
           });
         conversationsRef.current = next;
         setConversations(next);
+        if (readerId !== userId && !group.left && group.group!.memberIds.includes(userId) &&
+          activeChatPeerIdRef.current === group.peerId) {
+          clearTimeout(groupReadSyncTimersRef.current[group.peerId]);
+          groupReadSyncTimersRef.current[group.peerId] = setTimeout(() => {
+            delete groupReadSyncTimersRef.current[group.peerId];
+            if (scopeRef.current === scope && activeChatPeerIdRef.current === group.peerId) {
+              void fetchMessagesForPeer(group.peerId);
+            }
+          }, GROUP_READ_SYNC_DEBOUNCE_MS);
+        }
         return;
       }
       if (contradictsDirectConversation(readerId, conversationId)) return;
@@ -1752,7 +1818,7 @@ export default function useMessaging({
         readerId, readAt, currentUserId: userId,
       }));
     },
-    [commitMessageHistory, userId, contradictsDirectConversation],
+    [commitMessageHistory, fetchMessagesForPeer, scope, userId, contradictsDirectConversation],
   );
 
   const handleTypingEvent = useCallback(
@@ -1961,11 +2027,9 @@ export default function useMessaging({
               recipientId: undefined,
               deliveredTo: message.deliveredTo?.filter(id => id !== userId && group.group!.memberIds.includes(id)),
               readBy: message.readBy?.filter(id => id !== userId && group.group!.memberIds.includes(id)),
+              readAt: undefined,
             } : {}),
-            readAt: message.readAt ?? Object.entries(group?.readByMember ?? {}).find(([memberId, readAt]) =>
-              memberId !== userId && group?.group?.memberIds.includes(memberId) &&
-              Date.parse(readAt) >= Date.parse(message.createdAt ?? ''))?.[1],
-          }, matchedRow, isSocketConnected !== false && inFlight[matchedRow?.messageId ?? message.messageId] !== undefined),
+            }, matchedRow, isSocketConnected !== false && inFlight[matchedRow?.messageId ?? message.messageId] !== undefined),
         };
       }),
       ];

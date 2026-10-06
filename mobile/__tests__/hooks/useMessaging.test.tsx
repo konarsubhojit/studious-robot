@@ -1140,6 +1140,81 @@ describe('useMessaging', () => {
     expect(params.socketRef.current.emit).not.toHaveBeenCalled();
   });
 
+  test('group member identity snapshots persist on the account-scoped group row without avatar URLs', async () => {
+    const { resultRef, params } = setup();
+    let id!: string;
+    await act(async () => { id = await resultRef.current.groupActions.create('Team', ['bob', 'carol']); });
+    act(() => resultRef.current.groupActions.cacheMemberProfiles(id, {
+      bob: { displayName: 'Bobby', avatarKey: 'avatar-bob', avatarUrl: 'https://signed.example/avatar' } as any,
+      outsider: { displayName: 'Not a member' },
+    }));
+    const saved = (chatDb as any).__snapshot.conversations.find((row: any) => row.peerId === id);
+    expect(saved.groupMemberProfiles).toEqual({ bob: { displayName: 'Bobby', avatarKey: 'avatar-bob' } });
+    expect(saved.group).not.toHaveProperty('memberProfiles');
+    expect(params.authedFetchRef.current).not.toHaveBeenCalled();
+  });
+
+  test('live group mark-read uses the existing conversationId read endpoint', async () => {
+    const peerId = 'readable-group';
+    const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+    row.localMock = false;
+    (chatDb as any).__snapshot.conversations = [row];
+    const { resultRef, params } = setup({ groupTransport: 'live' });
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ updated: 1 }) });
+    await act(async () => { await Promise.resolve(); });
+
+    await act(async () => { await resultRef.current.markConversationRead(peerId); });
+
+    const request = params.authedFetchRef.current.mock.calls
+      .map(([buildRequest]: any[]) => buildRequest('sess-1'))
+      .find(({ url }: any) => url.includes('/messages/read'));
+    expect(request.options.method).toBe('POST');
+    expect(JSON.parse(request.options.body)).toEqual({ conversationId: peerId });
+    expect(resultRef.current.conversations[0]).toMatchObject({
+      unreadCount: 0, readByMember: { alice: expect.any(String) },
+    });
+  });
+
+  test('a live group read event refreshes active history to consume message-level readBy', async () => {
+    jest.useFakeTimers();
+    try {
+      const peerId = 'readable-group';
+      const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
+      row.localMock = false;
+      const ownMessage = {
+        messageId: 'own-message', conversationId: peerId, senderId: 'alice', recipientId: peerId,
+        body: 'per-message receipt', createdAt: '2026-10-03T06:00:00Z',
+      };
+      (chatDb as any).__snapshot.conversations = [row];
+      (chatDb as any).__snapshot.messagesByPeer = { [peerId]: [ownMessage] };
+      const { resultRef, params } = setup({ socketRef: { current: makeSocket({ connected: false }) }, groupTransport: 'live' });
+      params.authedFetchRef.current.mockResolvedValue({
+        ok: true,
+        json: async () => ({ conversationId: peerId, messages: [{ ...ownMessage, readBy: ['bob'] }], hasMore: false }),
+      });
+      await act(async () => { await Promise.resolve(); });
+      act(() => resultRef.current.setActiveChatPeerId(peerId));
+      await act(async () => { await Promise.resolve(); });
+      act(() => resultRef.current.handleMessageRead({
+        conversationId: peerId, readerId: 'bob', readAt: '2026-10-03T07:00:00Z',
+      }));
+      await act(async () => {
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({
+        messageId: ownMessage.messageId, readBy: ['bob'], deliveryState: 'read',
+      });
+      expect(params.authedFetchRef.current.mock.calls.map(([buildRequest]: any[]) => buildRequest('sess-1').url)
+        .some((url: string) => url.includes(`/conversations/${peerId}/messages?`))).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('leaving stops queued group replay and sending without dropping the failed bubble', async () => {
     const socket = makeSocket({ connected: false });
     const { resultRef } = setup({ socketRef: { current: socket } });
@@ -1214,7 +1289,11 @@ describe('useMessaging', () => {
     await act(async () => { await resultRef.current.markConversationRead('group-live'); });
     const requestUrls = params.authedFetchRef.current.mock.calls
       .map(([buildRequest]: any[]) => buildRequest('sess-1').url);
-    expect(requestUrls.some((url: string) => url.includes('/messages/read'))).toBe(false);
+    expect(requestUrls.some((url: string) => url.includes('/messages/read'))).toBe(true);
+    const readRequest = params.authedFetchRef.current.mock.calls
+      .map(([buildRequest]: any[]) => buildRequest('sess-1'))
+      .find(({ url }: any) => url.includes('/messages/read'));
+    expect(JSON.parse(readRequest.options.body)).toEqual({ conversationId: 'group-live' });
   });
 
   test('storage failure prevents mock send completion and keeps the group outbox recoverable', async () => {
@@ -1839,10 +1918,11 @@ describe('useMessaging', () => {
     { readBy: ['outsider'], expected: 'sent' },
     { readBy: ['alice', 'outsider'], expected: 'sent' },
     { readBy: ['alice', 'outsider', 'bob'], expected: 'read' },
-  ])('live group history readers $readBy yield $expected without a local read watermark', async ({ readBy, expected }) => {
+  ])('live group history trusts per-message readers $readBy over conversation read cursors', async ({ readBy, expected }) => {
     const peerId = 'live-group';
     const row = createMockGroup('alice', 'Team', ['bob', 'carol'], peerId);
     row.localMock = false;
+    row.readByMember = { bob: '2026-10-03T07:00:00Z', carol: '2026-10-03T07:00:00Z' };
     (chatDb as any).__snapshot.conversations = [row];
     const { resultRef, params } = setup({ socketRef: { current: makeSocket({ connected: false }) }, groupTransport: 'live' });
     await act(async () => {});
@@ -1851,7 +1931,8 @@ describe('useMessaging', () => {
       body: 'persisted readers', createdAt: '2026-10-03T06:00:00Z', readBy,
     }] }) });
     await act(async () => { await resultRef.current.fetchMessagesForPeer(peerId); });
-    expect(resultRef.current.conversations[0].readByMember).toBeUndefined();
+    expect(resultRef.current.conversations[0].readByMember)
+      .toEqual({ bob: '2026-10-03T07:00:00Z', carol: '2026-10-03T07:00:00Z' });
     expect(resultRef.current.messagesByPeer[peerId][0]).toMatchObject({ readBy, deliveryState: expected });
   });
 
@@ -1942,7 +2023,7 @@ describe('useMessaging', () => {
     act(() => resultRef.current.handleMessageRead({ readerId: 'bob', readAt: new Date(Date.now() + 1000).toISOString(),
       ...(kind === 'group' ? { conversationId: peerId } : {}) }));
     expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.messageId === 'server-first').deliveryState)
-      .toBe('read');
+      .toBe(kind === 'group' ? 'delivered' : 'read');
     socket.connected = false;
     act(() => resultRef.current.handleSocketDisconnected());
     expect(resultRef.current.messagesByPeer[peerId].find((message: any) => message.body !== 'first').deliveryState)

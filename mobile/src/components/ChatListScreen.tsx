@@ -21,7 +21,7 @@ import {
 import type { CallStatus } from './StatusBanner';
 import type { CallActivity, ConversationActivity } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
-import type { ContactRow, ConversationRow } from '../types/directory';
+import type { ContactRow, ConversationRow, PeerProfile } from '../types/directory';
 
 /** Number of placeholder rows shown while the conversation list loads. */
 const SKELETON_ROW_COUNT = 6;
@@ -109,7 +109,7 @@ export type ChatListScreenProps = {
   onOpenProfile?: (peerId: string) => void;
   /** Opens (or creates) a conversation with someone picked from the directory. */
   onStartChat?: (peerId: string) => void;
-  onCreateGroup?: (name: string, inviteeIds: string[]) => Promise<string>;
+  onCreateGroup?: (name: string, inviteeIds: string[], profiles: Record<string, PeerProfile>) => Promise<string>;
   onOpenGroup?: (conversationId: string) => void;
   groupTransport?: 'mock' | 'live';
   /** The signed-in user, shown as the header avatar. */
@@ -447,8 +447,8 @@ function ChatListScreen({
         visible={isGroupPickerVisible} onClose={() => setIsGroupPickerVisible(false)}
         currentUserId={currentUserId ?? ''} onSearchUsers={onSearchUsers}
         localMock={groupTransport !== 'live'}
-        onSubmit={async (name, ids) => {
-          const id = await onCreateGroup(name, ids);
+        onSubmit={async (name, ids, profiles) => {
+          const id = await onCreateGroup(name, ids, profiles);
           (onOpenGroup ?? onOpenConversation)(id);
         }} /> : null}
       <PeoplePickerSheet
