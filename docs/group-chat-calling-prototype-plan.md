@@ -17,6 +17,36 @@ exercise those paths together, resolve integration defects found in that
 exercise, and record device-level evidence. Passing unit and mocked WebRTC
 tests alone is not prototype acceptance.
 
+## Session status and handoff (2026-10-07)
+
+**State: focused automated checks are green; live prototype acceptance is not
+started.**
+
+- [x] Rechecked the group messaging and call decision records and their
+  implementation/test references.
+- [x] Refreshed the focused automated baseline: server group/call suites
+  reported 102 passed, 0 failed, and 3 skipped; the six focused mobile suites
+  reported 89 passed. These results do not establish live service or device
+  behavior.
+- [ ] Prepare the isolated live environment in §1. This session had no
+  configured test deployment, accounts, or physical devices available;
+  `adb` and `xcrun` were unavailable. Consequently `GROUP_TRANSPORT=live`,
+  persistent-service integration, and physical-device/TURN behavior remain
+  unverified.
+- [ ] Run and record the live messaging journey in §2, then the group-call
+  matrix in §3. Record failures and evidence as they occur; do not mark
+  untested cases passed.
+- [ ] Fix any observed integration defects and rerun the applicable checks in
+  §4. Complete the acceptance report in §5 only after the stated evidence is
+  collected.
+
+**Resume here:** follow [the setup guide](./SETUP.md) to provision an isolated
+PostgreSQL-backed test deployment and configure signaling, attachment, push,
+and ICE/TURN services as available. Build live-transport clients for test
+accounts, record revisions and device/network details, verify direct-chat and
+direct-call smoke paths, then continue with §2. Keep this section current with
+dated outcomes and blockers after each verification session.
+
 ## Fixed scope and constraints
 
 - Group messages remain server-readable, with the membership, history,
