@@ -161,6 +161,34 @@ test('Redis adapter reaches remote members once; bus evicts all members; offline
   }
 });
 
+test('a group blocker still has message access but receives no push preview from the blocked sender', async t => {
+  const server = await startServer();
+  const sessions = Object.fromEntries(await Promise.all(['alice', 'bob', 'carol'].map(async userId =>
+    [userId, await session(server.url, userId)])));
+  const alice = await connect(server.url, sessions.alice);
+  t.after(async () => { alice.disconnect(); await closeTestServer(server); });
+  const pushes: Array<{ channel: any; data: any }> = [];
+  t.mock.method(pushSenders, 'sendMessagePush', async (
+    channel: import('../src/push/types.ts').PushChannel,
+    data: import('../src/push/types.ts').MessagePushData
+  ) => {
+    pushes.push({ channel, data });
+    return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
+  });
+  for (const userId of ['bob', 'carol']) {
+    assert.equal((await postJson(server.url, '/devices/register', {
+      provider: 'fcm', pushToken: `${userId}-token`,
+    }, sessions[userId])).status, 200);
+  }
+  assert.equal((await postJson(server.url, '/blocks', { blockeeId: 'alice' }, sessions.bob)).status, 200);
+  const conversationId = await group(server.conversationStore, ['alice', 'bob', 'carol']);
+  const sent = await emit(alice, CLIENT_EVENTS.MESSAGE_SEND, { conversationId, body: 'still visible' });
+  assert.equal(sent.ok, true);
+  assert.equal((await server.conversationStore.getMessage(conversationId, sent.message.messageId, 'bob'))?.body,
+    'still visible');
+  assert.deepEqual(pushes.map(({ channel }) => channel.pushToken), ['carol-token']);
+});
+
 test('adapter receiver drops queued pre-rejoin messages and never duplicates delivery through the bus', async t => {
   const adapter = adapterTransport();
   const store = createConversationStore();

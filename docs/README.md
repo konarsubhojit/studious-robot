@@ -11,7 +11,7 @@
 | [Crash-reporting vendor decision](./crash-reporting-decision.md) | Selects Sentry for React Native crash reporting and records its rationale, CI configuration, and optional-module requirement. |
 | [End-to-end encryption design](./e2ee-design.md) | Threat model, subsystem impact and the go/no-go decision for end-to-end encrypted messages and attachments. |
 | [Group-call media topology](./group-call-topology.md) | Selects a bounded mesh launch, records the TURN and SFU tradeoffs, and defines a topology-neutral migration path. |
-| [Group messaging MVP](./group-messaging-mvp.md) | Bounded private-study-group product, membership, authorization, and deferred-implementation decision. |
+| [Group messaging MVP](./group-messaging-mvp.md) | Shipped bounded private-study-group implementation, membership, authorization, and server-readable decision. |
 | [Firebase setup](./FIREBASE_SETUP.md) | Configure Firebase Authentication and push delivery. |
 | [Implementation guideline](./IMPLEMENTATION_GUIDELINE.md) | Tracks remaining implementation gaps. |
 | [Load-test results](./LOADTEST_RESULTS.md) | Historical reported signaling-cluster measurements, not a current capacity baseline. |

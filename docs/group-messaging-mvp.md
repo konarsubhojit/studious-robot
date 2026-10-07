@@ -4,14 +4,24 @@ Decision record for issue **#411**, resolving the admission/history review in
 **#537**. It defines the smallest useful private group chat and deliberately
 leaves the current one-to-one path unchanged.
 
-> **Status: resolved; implementation deferral closed.** The current
+> **Status: shipped; implementation deferral closed.** The current
 > [E2EE decision](./e2ee-design.md#11-decision) is no-go for production E2EE,
-> so the group MVP is server-readable, like existing one-to-one messages. This
-> decision closes the E2EE-related deferral; group implementation must follow
-> the admission and history rules below. Revisiting E2EE requires a new,
-> recorded production go/no-go that explicitly covers group admission, history
-> visibility, and key distribution/revocation; this record must then be reviewed
-> against that decision before any encrypted-group implementation.
+> so the group MVP is server-readable, like existing one-to-one messages. The
+> implementation is in the [group API and authorization routes](../server/src/routes/groups.routes.ts),
+> [conversation stores](../server/src/conversationStore/), and mobile
+> [messaging flow](../mobile/src/hooks/useMessaging.ts) and
+> [group conversation screen](../mobile/src/components/GroupConversationScreen.tsx).
+> Server and client regression coverage is in
+> [group lifecycle](../server/test/groups.test.ts),
+> [message delivery](../server/test/group-conversations.test.ts),
+> [fan-out and block-aware push](../server/test/group-message-fanout.test.ts),
+> [account erasure](../server/test/account-deletion.test.ts), and
+> [mobile group screens](../mobile/__tests__/components/GroupScreens.test.tsx).
+> Live server groups use `GROUP_TRANSPORT=live`; the local mock remains the
+> default. Revisiting E2EE requires a new, recorded production go/no-go that
+> explicitly covers group admission, history visibility, and key
+> distribution/revocation; this record must then be reviewed against that
+> decision before any encrypted-group implementation.
 
 ## 1. Product boundary
 
@@ -193,11 +203,13 @@ Before approval, measured acceptance criteria are:
 
 ## 6. Implementation decision
 
-This record closes the prior implementation deferral. Implementation may be
-planned against the server-readable admission, history, block, and lifecycle
-decisions above, while preserving the separate one-to-one data and read path.
-If production E2EE is reconsidered, group implementation must pause for a new
+The shipped implementation follows the server-readable admission, history,
+block, and lifecycle decisions above while preserving the separate one-to-one
+data and read path. The server implementation is covered by the group API,
+store, message fan-out, and account-erasure tests linked above. The mobile
+client exposes live creation, invitation acceptance, messaging, and group
+history behind `GROUP_TRANSPORT=live`; local preview groups remain device-local.
+If production E2EE is reconsidered, encrypted-group work must pause for a new
 recorded decision that explicitly resolves group admission, pre-join history,
 and group-key distribution/revocation; this document must be reviewed against
-that decision before encrypted-group work proceeds. Implementation work should
-carry the acceptance criteria above.
+that decision first.

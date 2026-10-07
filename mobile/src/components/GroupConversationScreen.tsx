@@ -25,7 +25,7 @@ import type { ThemeColors } from '../theme';
 const TYPING_IDLE_MS = 3000;
 
 type Styles = ReturnType<typeof createStyles>;
-type GroupActions = ChatContextValue['groupActions'];
+type GroupActions = Pick<ChatContextValue['groupActions'], 'members' | 'rename' | 'leave' | 'cacheMemberProfiles'>;
 type CacheMemberProfiles = GroupActions['cacheMemberProfiles'];
 type GroupPreviewActions = ChatContextValue['groupPreviewActions'];
 type Props = {

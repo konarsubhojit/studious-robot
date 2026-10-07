@@ -838,6 +838,10 @@ GROUP_TRANSPORT=live npm start -- --reset-cache
 The creation sheet clearly labels live invitations. Existing mock groups stay
 local even with this flag; they are never automatically promoted or uploaded.
 Existing server groups discovered by REST always use live transport.
+Pending invitations for the signed-in user are included in `GET /conversations`
+and listed in Chats. Accepting one is explicit and joins the live group; only
+then can the client load messages from the member's `joined_at` watermark and
+send to that group.
 
 The server **already implements** group create/update/leave and group-call
 lifecycle handlers in `server/src/signaling/conversationHandlers.ts`. Live
@@ -879,9 +883,9 @@ active call after a cold launch and actual media remain follow-up integration wo
 The mobile client accepts validated `conversation.updated` snapshots and
 conversation-scoped message/typing/read events. Non-mock sends and typing
 target exactly `conversationId`; direct sends continue to target only
-`recipientId`. The remaining limitations are **group read synchronization,
-member add/remove, role exposure, cold-start active-call recovery, and actual
-group media**, not the existing creation/history/lifecycle handlers.
+`recipientId`. The remaining limitations are **group read synchronization, role exposure,
+cold-start active-call recovery, and actual group media**, not the existing
+creation, invitation acceptance, member add/remove, history, or messaging paths.
 The implemented `POST /messages/read` endpoint is direct-only, and REST group
 snapshots do not supply last-message or unread totals. Group unread counters
 and read watermarks are local (plus any received conversation-scoped receipts),

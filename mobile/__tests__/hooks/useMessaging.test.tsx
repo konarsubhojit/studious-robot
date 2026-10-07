@@ -1077,6 +1077,44 @@ describe('useMessaging', () => {
       .toMatchObject({ unreadCount: 3 });
   });
 
+  test('live group invitees can explicitly accept invitations and receive the server snapshot', async () => {
+    const { resultRef, params } = setup({ userId: 'bob', groupTransport: 'live' });
+    const group = {
+      ...createMockGroup('alice', 'Study team', ['bob', 'carol'], 'server-group').group!,
+      memberIds: ['alice', 'bob'],
+    };
+    const invitation = {
+      invitationId: 'invitation-1', conversationId: group.conversationId, issuerId: 'alice', inviteeId: 'bob',
+      membershipVersion: 1, createdAt: '2026-10-03T06:00:00Z', expiresAt: '2026-10-10T06:00:00Z',
+    };
+    params.authedFetchRef.current.mockImplementation(async (build: Function) => {
+      const request = build('session-token');
+      if (request.url.endsWith('/conversations')) {
+        return { ok: true, json: async () => ({
+          conversations: [], groupConversations: [], groupInvitations: [invitation],
+        }) };
+      }
+      if (request.url.endsWith('/invitations/invitation-1/accept')) {
+        return { ok: true, json: async () => ({ group: { ...group, membershipVersion: 2 } }) };
+      }
+      throw new Error(`Unexpected request ${request.url}`);
+    });
+    await act(async () => { await resultRef.current.fetchConversations(); });
+    expect(resultRef.current.groupActions.invitations).toEqual([invitation]);
+    await act(async () => {
+      await resultRef.current.groupActions.acceptInvitation(group.conversationId, invitation.invitationId);
+    });
+    expect(resultRef.current.groupActions.invitations).toEqual([]);
+    expect(resultRef.current.conversations[0]).toMatchObject({
+      peerId: group.conversationId, localMock: false, group: { memberIds: ['alice', 'bob'], membershipVersion: 2 },
+    });
+    const acceptRequest = params.authedFetchRef.current.mock.calls
+      .map(([build]: any[]) => build('session-token'))
+      .find((request: any) => request.url.endsWith('/invitations/invitation-1/accept'));
+    expect(acceptRequest.options).toMatchObject({ method: 'POST' });
+    expect(acceptRequest.options.body).toBe('{}');
+  });
+
   test('a group message arriving before REST bootstrap discovers its group without creating a direct thread', async () => {
     const { resultRef, params } = setup();
     const group = createMockGroup('alice', 'Server group', ['bob', 'carol'], 'server-group').group!;

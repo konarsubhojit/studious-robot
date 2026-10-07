@@ -22,9 +22,9 @@ import {
 import type { GroupMemberAction } from '../chat/groupMockAdapter';
 import useGroupCalls from '../chat/useGroupCalls';
 import {
-  applyGroupSnapshot, conversationAcknowledgement, GROUP_TRANSPORT, parseGroupList, remoteGroupRows,
+  applyGroupSnapshot, conversationAcknowledgement, GROUP_TRANSPORT, parseGroupInvitations, parseGroupList, remoteGroupRows,
 } from '../chat/groupTransportAdapter';
-import type { GroupTransport } from '../chat/groupTransportAdapter';
+import type { GroupInvitationSummary, GroupTransport } from '../chat/groupTransportAdapter';
 import { SIGNALING_VERSION } from '../socketProtocol';
 import { displayMessageReceivedInApp } from '../pushNotifications';
 import {
@@ -231,6 +231,7 @@ export default function useMessaging({
   const [conversations, setConversations] = useState(
     ([] as ConversationSummary[]),
   );
+  const [groupInvitations, setGroupInvitations] = useState<GroupInvitationSummary[]>([]);
   // Keyed by peerId → array of message objects, newest-first (matches the
   // server's ordering). Optimistic (pending/failed) sends are tagged inline.
   const [messagesByPeer, setMessagesByPeer] = useState(
@@ -300,6 +301,7 @@ export default function useMessaging({
     scopeRef.current = scope;
     setStateScope(scope);
     setConversations([]);
+    setGroupInvitations([]);
     setMessagesByPeer({});
     setSocketCursors({});
     setDrafts({});
@@ -446,6 +448,8 @@ export default function useMessaging({
       const next = mergePendingConversations([...groups, ...data.conversations], previous, pendingPeers);
       conversationsRef.current = next;
       setConversations(next);
+      const invitations = parseGroupInvitations(data.groupInvitations, userId);
+      if (invitations !== undefined) setGroupInvitations(invitations);
     } catch (error) {
       logWarn('[Messaging] fetchConversations failed', {
         message: errorMessage(error),
@@ -825,6 +829,7 @@ export default function useMessaging({
     };
     return {
       mode: groupTransport,
+      invitations: groupInvitations,
       cacheMemberProfiles,
       create: async (name: string, inviteeIds: string[], inviteeProfiles: Record<string, PeerProfile> = {}) => {
         const id = `mock-group-${createMessageId()}`;
@@ -867,6 +872,41 @@ export default function useMessaging({
           });
         }
       },
+      acceptInvitation: async (conversationId: string, invitationId: string) => {
+        if (!scope || scopeRef.current !== scope) throw new Error('Sign in before accepting group invitations');
+        const sessionId = sessionIdRef.current;
+        if (!sessionId) throw new Error('Sign in before accepting group invitations');
+        const response = await authedFetchRef.current?.((sid: string) => ({
+          url: `${signalingUrl.trim()}${API_ROUTES.GROUPS}/${encodeURIComponent(conversationId)}/invitations/${encodeURIComponent(invitationId)}/accept`,
+          options: {
+            method: 'POST',
+            headers: bearerAuthHeaders(sid, { 'Content-Type': 'application/json' }),
+            body: JSON.stringify({}),
+          },
+        }));
+        if (!response?.ok) {
+          const failure = await response?.json().catch(() => null);
+          throw new Error(failure?.error ?? 'Unable to accept group invitation');
+        }
+        const result = await response.json();
+        if (scopeRef.current !== scope) throw new Error('Account changed');
+        const group = conversationAcknowledgement({ conversation: result.group }, userId);
+        if (group.conversationId !== conversationId || !group.memberIds.includes(userId)) {
+          throw new Error('Server did not confirm group membership');
+        }
+        const next = applyGroupSnapshot(conversationsRef.current, group, userId);
+        conversationsRef.current = next;
+        setConversations(next);
+        setGroupInvitations(current => current.filter(invitation =>
+          invitation.invitationId !== invitationId));
+        saveChatSnapshot({ conversations: next }, scope);
+        try {
+          await flushChatDb(scope);
+        } catch {
+          if (scopeRef.current === scope) updateStatus('Group joined, but its offline cache could not be saved.', 'error');
+        }
+        return group.conversationId;
+      },
       rename: async (id: string, name: string) => {
         const row = find(id);
         const updated = renameMockGroup(row, userId, name);
@@ -900,7 +940,8 @@ export default function useMessaging({
         }
       },
     };
-  }, [scope, userId, persistOutbox, socketRef, signalingRef, groupTransport, updateStatus]);
+  }, [scope, userId, persistOutbox, socketRef, signalingRef, groupTransport, updateStatus,
+    groupInvitations, authedFetchRef, sessionIdRef, signalingUrl]);
 
   /**
    * The local-preview simulation surface, kept out of {@link groupActions} so
