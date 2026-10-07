@@ -370,7 +370,7 @@ test('group calls ring participants, record individual decisions, and end after 
   }
 });
 
-test('group call acceptance enforces the four-participant mesh limit without disturbing active peers', async () => {
+test('oversized group calls are refused before signaling; four-member calls retain authorized peer relay', async () => {
   const { url, teardown } = await startServer();
   const userIds = ['mesh-caller', 'mesh-a', 'mesh-b', 'mesh-c', 'mesh-d'];
   const sessions = await Promise.all(userIds.map(id => createSession(url, id)));
@@ -384,6 +384,23 @@ test('group call acceptance enforces the four-participant mesh limit without dis
       inviteeIds: userIds.slice(1),
     });
     await acceptInvitations(url, created.invitations, sessions.slice(1));
+    let notifications = 0;
+    const count = () => { notifications += 1; };
+    sockets.forEach(socket => socket.on(SERVER_EVENTS.CONVERSATION_CALL_UPDATED, count));
+    const refused = await emitWithAck(caller, CLIENT_EVENTS.CONVERSATION_CALL_START, {
+      version: SIGNALING_VERSION, conversationId: created.conversation.conversationId, mediaType: 'audio',
+    });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error.message, /up to 4 members/);
+    assert.equal((await getJson(url, '/calls', sessions[0])).body.total, 0);
+    assert.deepEqual((await getJson(url, `/groups/${created.conversation.conversationId}/messages`, sessions[0])).body.messages, []);
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(notifications, 0);
+    sockets.forEach(socket => socket.off(SERVER_EVENTS.CONVERSATION_CALL_UPDATED, count));
+    const departed = await emitWithAck(invitees[3], CLIENT_EVENTS.CONVERSATION_LEAVE, {
+      version: SIGNALING_VERSION, conversationId: created.conversation.conversationId,
+    });
+    assert.equal(departed.ok, true);
     const started = await emitWithAck(caller, CLIENT_EVENTS.CONVERSATION_CALL_START, {
       version: SIGNALING_VERSION,
       conversationId: created.conversation.conversationId,
@@ -424,13 +441,13 @@ test('group call acceptance enforces the four-participant mesh limit without dis
       callId: started.call.callId,
     });
     assert.equal(overCapacity.ok, false);
-    assert.match(overCapacity.error.message, /up to 4 participants/i);
+    assert.match(overCapacity.error.message, /not.*member/i);
 
     const snapshot = await getJson(url, `${API_ROUTES.GROUP_CALLS}/${started.call.callId}`, sessions[0]);
     assert.equal(snapshot.status, 200);
     assert.equal(snapshot.body.call.status, 'active');
     assert.equal(snapshot.body.participants.filter((person: any) => person.status === 'accepted').length, 4);
-    assert.equal(snapshot.body.participants.find((person: any) => person.userId === 'mesh-d').status, 'ringing');
+    assert.equal(snapshot.body.participants.some((person: any) => person.userId === 'mesh-d'), false);
     const outsiderSession = await createSession(url, 'mesh-outsider');
     outsider = await connect(url, outsiderSession, SIGNALING_VERSION);
     const hiddenSnapshot = await getJson(

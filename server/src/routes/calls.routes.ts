@@ -1,7 +1,6 @@
 import express from 'express';
 import { timingSafeEqual } from 'crypto';
 import { isBlockedAsync } from '../security.ts';
-import { callHistoryCacheKey, readCached, writeCached } from '../cache.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
 import {
@@ -206,13 +205,14 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
    *   offset – how many records to skip (default 0), for paging
    *   status – optional filter by call status (e.g. "missed", "ended")
    *
-   * History is read from the durable `calls` table (see
+   * History is read from the durable `calls` and `group_calls` tables (see
    * `domain/callHistory.ts`), so it survives a restart and is not bounded by
    * the in-memory retention window.  Records are ordered by `updatedAt`
    * descending (most recently active first).
    *
-   * Only the first page is cached: deeper pages are rare and unbounded in key
-   * space, matching how `GET /messages` treats deep pagination.
+   * Group entries have kind, conversationId, groupName and initiatorId instead
+   * of caller/callee identity. Reads recheck membership rather than caching
+   * authorization-sensitive group entries.
    */
   router.get('/calls', async (req, res) => {
     const session = await getSessionFromRequestAsync(req, state);
@@ -228,25 +228,30 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     const statusFilter = normaliseId(req.query.status) ?? null;
 
     const userId = session.userId;
-    const cacheKey = offset === 0 ? callHistoryCacheKey(userId, statusFilter, limit) : null;
-    if (cacheKey) {
-      const cached = await readCached(state, cacheKey);
-      if (cached) {
-        res.status(200).json(cached);
-        return;
-      }
-    }
-
-    const page = await readCallHistory(state, { userId, statusFilter, limit, offset });
+    // Names, membership and outcomes change independently of direct-call
+    // invalidation; read group entries freshly, including departed invitees.
+    const query = { userId, statusFilter, limit: offset + limit, offset: 0 };
+    const [direct, group] = await Promise.all([
+      readCallHistory(state, query),
+      state.conversationStore.listCallHistory(query).catch(error => {
+        console.error(`[calls] group history unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        return { calls: [], total: 0, unavailable: true };
+      }),
+    ]);
+    const calls = [...direct.calls, ...group.calls].sort((a, b) =>
+      (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt) ||
+      b.createdAt.localeCompare(a.createdAt) || b.callId.localeCompare(a.callId))
+      .slice(offset, offset + limit);
+    const total = direct.total + group.total;
 
     const payload = {
-      calls: page.calls,
-      total: page.total,
+      calls,
+      total,
       limit,
       offset,
-      hasMore: offset + page.calls.length < page.total,
+      hasMore: offset + calls.length < total,
+      ...('unavailable' in group ? { groupHistoryUnavailable: true } : {}),
     };
-    if (cacheKey) await writeCached(state, cacheKey, payload);
     res.status(200).json(payload);
   });
 

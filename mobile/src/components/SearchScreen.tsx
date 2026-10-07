@@ -93,7 +93,8 @@ export function HighlightedText({ text, term, style, numberOfLines }: { text?: s
 /**
  * Peer of a call-history entry, relative to the signed-in user.
  */
-function callPeerOf(entry: { callerId?: string; calleeId?: string; direction?: string; }, currentUserId: string | null | undefined): string {
+function callPeerOf(entry: { callerId?: string; calleeId?: string; direction?: string; kind?: string }, currentUserId: string | null | undefined): string {
+  if (entry.kind === 'group') return '';
   if (entry?.direction === 'outgoing') return entry?.calleeId ?? '';
   if (entry?.direction === 'incoming') return entry?.callerId ?? '';
   return entry?.callerId === currentUserId ? (entry?.calleeId ?? '') : (entry?.callerId ?? '');

@@ -517,6 +517,7 @@ function TabShell() {
       onMarkMissedRead={markMissedCallsRead}
       onOpenProfile={openPeerProfile}
       onMessage={openChatConversation}
+      onOpenGroup={openGroupConversation}
       onAudioCall={startAudioCallWith}
       onVideoCall={startVideoCallWith}
       onOpenSearch={openSearch}

@@ -75,9 +75,13 @@ test('mock live rejoin rotates admission, clears departure, and preserves other 
   expect(rejoined.call.status).toBe('active');
 });
 
-test('mock admission has the same four-person mesh ceiling as the stores', () => {
+test('mock start rejects the whole oversized group; legacy snapshots retain admission safety', () => {
   const conversation = createMockGroup('alice', 'Team', ['bob', 'carol', 'dave', 'eve'], 'capacity');
+  expect(() => startMockGroupCall(conversation, 'alice', 'capacity-call', 'video', now)).toThrow('up to 4 members');
+  conversation.group!.memberIds.pop();
   let snapshot = startMockGroupCall(conversation, 'alice', 'capacity-call', 'video', now);
+  snapshot = { ...snapshot, participants: [...snapshot.participants,
+    { ...snapshot.participants[0], userId: 'eve', status: 'ringing', acceptedAt: null }] };
   for (const id of ['bob', 'carol', 'dave']) snapshot = transitionMockGroupCall(snapshot, id, 'accept', now);
   expect(() => transitionMockGroupCall(snapshot, 'eve', 'accept', now)).toThrow('up to 4 participants');
   snapshot = transitionMockGroupCall(snapshot, 'bob', 'leave', now);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SERVER_EVENTS } from '../../../shared';
+import { GROUP_CALL_LIMIT_MESSAGE, MAX_GROUP_CALL_PARTICIPANTS, SERVER_EVENTS } from '../../../shared';
 import { logWarn } from '../appLogger';
 import { createMessageId } from '../messaging/messageIdentity';
 import {
@@ -20,10 +20,11 @@ type Params = {
   signalingRef: { current: SignalingClient | null };
   socketRef: { current: Socket | null };
   connected: boolean | null;
+  onCallUpdated?: (snapshot: GroupCallSnapshot, groupName: string) => void;
 };
 
 /** Contract-aware lifecycle adapter; no media, permissions, RTC or peer-call events. */
-export default function useGroupCalls({ scope, userId, conversationsRef, signalingRef, socketRef, connected }: Params) {
+export default function useGroupCalls({ scope, userId, conversationsRef, signalingRef, socketRef, connected, onCallUpdated }: Params) {
   const [groupCalls, setGroupCalls] = useState<Record<string, GroupCallSnapshot>>({});
   const held = useRef<Record<string, GroupCallSnapshot>>({});
   const retired = useRef(new Set<string>());
@@ -54,7 +55,8 @@ export default function useGroupCalls({ scope, userId, conversationsRef, signali
     }
     held.current = { ...held.current, [row.peerId]: snapshot };
     setGroupCalls(held.current);
-  }, [conversationsRef, userId]);
+    onCallUpdated?.(snapshot, row.group!.name);
+  }, [conversationsRef, userId, onCallUpdated]);
 
   useEffect(() => {
     if (!scope || !connected || !signalingRef.current) return undefined;
@@ -92,6 +94,7 @@ export default function useGroupCalls({ scope, userId, conversationsRef, signali
     return {
       start: async (id: string, mediaType: 'audio' | 'video' = 'audio') => {
         const row = find(id);
+        if (row.group!.memberIds.length > MAX_GROUP_CALL_PARTICIPANTS) throw new Error(GROUP_CALL_LIMIT_MESSAGE);
         const existing = held.current[id];
         if (existing && existing.call.status !== 'ended') throw new Error('A group call is already open');
         if (row.localMock) receive(startMockGroupCall(row, userId, `mock-call-${createMessageId()}`, mediaType, new Date().toISOString()));

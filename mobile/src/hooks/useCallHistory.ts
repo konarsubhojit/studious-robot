@@ -27,6 +27,10 @@ export type CallHistoryEntry = {
   callId: string;
   callerId: string;
   calleeId: string;
+  kind?: 'group';
+  conversationId?: string;
+  groupName?: string;
+  outcome?: 'joined' | 'missed' | 'ringing';
   direction: 'incoming' | 'outgoing';
   status?: string;
   endReason?: string | null;
@@ -126,8 +130,10 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
     }
     const resolved = withMediaType(entry, mediaTypesRef.current);
     setCallHistory(prev => {
+      const held = prev.find(e => e.callId === resolved.callId);
       const without = prev.filter(e => e.callId !== resolved.callId);
-      return [resolved, ...without].slice(0, MAX_CALL_HISTORY);
+      const isRead = resolved.isRead || (resolved.status === 'missed' && held?.status === 'missed' && held.isRead);
+      return [{ ...resolved, ...(isRead ? { isRead: true } : {}) }, ...without].slice(0, MAX_CALL_HISTORY);
     });
   }, [setCallHistory]);
 
@@ -159,9 +165,13 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
         if (!Array.isArray(data.calls)) return;
         const entries = data.calls.map((call: any) => ({
           callId: call.callId,
-          callerId: call.callerId,
-          calleeId: call.calleeId,
-          direction: call.callerId === trimmedUserId ? 'outgoing' : 'incoming',
+          callerId: call.callerId ?? call.initiatorId,
+          calleeId: call.calleeId ?? '',
+          kind: call.kind,
+          conversationId: call.conversationId,
+          groupName: call.groupName,
+          outcome: call.outcome,
+          direction: (call.callerId ?? call.initiatorId) === trimmedUserId ? 'outgoing' : 'incoming',
           status: call.status,
           endReason: call.endReason,
           createdAt: call.createdAt,
@@ -169,10 +179,15 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
           isRead: call.status !== 'missed' || Boolean(call.missedReadAt),
           mediaType: call.mediaType ?? mediaTypesRef.current[call.callId],
         }));
-        setCallHistory(previous => entries.slice(0, MAX_CALL_HISTORY).map((entry: CallHistoryEntry) => {
-          const held = previous.find(row => row.callId === entry.callId);
-          return { ...entry, isRead: Boolean(entry.isRead || held?.isRead), mediaType: entry.mediaType ?? held?.mediaType };
-        }));
+        setCallHistory(previous => {
+          const available = data.groupHistoryUnavailable
+            ? [...entries, ...previous.filter(row => row.kind === 'group')]
+            : entries;
+          return available.slice(0, MAX_CALL_HISTORY).map((entry: CallHistoryEntry) => {
+            const held = previous.find(row => row.callId === entry.callId);
+            return { ...entry, isRead: Boolean(entry.isRead || (held?.status === 'missed' && held.isRead)), mediaType: entry.mediaType ?? held?.mediaType };
+          });
+        });
       } catch (error) {
         logWarn('[CallHistory] fetchCallHistory failed', {
           message: errorMessage(error),

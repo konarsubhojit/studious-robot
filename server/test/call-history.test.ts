@@ -11,13 +11,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
+import { createMemoryConversationStore } from '../src/conversationStore/memoryStore.ts';
 import { createFakeCallsDb } from './fakeCallsDb.ts';
 import { asDatabase, closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function startServer(opts?: import('../src/createServer.ts').CreateServerOptions) {
-  const server = createServer(opts);
+  // The fake DB models direct calls only; group persistence has separate tests.
+  const server = createServer({ conversationStore: createMemoryConversationStore(), ...opts });
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
@@ -60,6 +62,48 @@ test('history: is served from the durable calls table', async () => {
     assert.equal(typeof res.body.calls[0].updatedAt, 'string');
     assert.equal(res.body.total, 1);
     assert.equal(res.body.hasMore, false);
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: group-store failure preserves direct consumers and explicitly marks incomplete history', async () => {
+  const conversationStore = createMemoryConversationStore();
+  conversationStore.listCallHistory = async () => { throw new Error('group database unavailable'); };
+  const { url, teardown } = await startServer({ conversationStore });
+  try {
+    const session = await createSession(url, 'direct-during-group-outage');
+    await postJson(url, '/calls', { calleeId: 'offline-outage-peer' }, session);
+    const response = await getJson(url, '/calls', session);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.total, 1);
+    assert.equal(response.body.calls[0].calleeId, 'offline-outage-peer');
+    assert.equal(response.body.groupHistoryUnavailable, true);
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: memory activity ties use the merged page ordering before limiting', async () => {
+  const { url, getCall, teardown } = await startServer();
+  try {
+    const session = await createSession(url, 'memory-tie-owner');
+    const first = await postJson(url, '/calls', { calleeId: 'memory-tie-first' }, session);
+    const second = await postJson(url, '/calls', { calleeId: 'memory-tie-second' }, session);
+    for (const [created, timestamp] of [[first, '2026-10-02T00:00:00.000Z'], [second, '2026-10-01T00:00:00.000Z']] as const) {
+      const call = getCall(created.body.callId)!;
+      call.createdAt = timestamp;
+      call.updatedAt = '2026-10-03T00:00:00.000Z';
+    }
+    const pageOne = await getJson(url, '/calls?limit=1', session);
+    const pageTwo = await getJson(url, '/calls?limit=1&offset=1', session);
+    assert.equal(pageOne.body.calls[0].callId, first.body.callId);
+    assert.equal(pageTwo.body.calls[0].callId, second.body.callId);
+    getCall(second.body.callId)!.createdAt = getCall(first.body.callId)!.createdAt;
+    const expected = [first.body.callId, second.body.callId].sort().reverse();
+    const tiedOne = await getJson(url, '/calls?limit=1', session);
+    const tiedTwo = await getJson(url, '/calls?limit=1&offset=1', session);
+    assert.deepEqual([tiedOne.body.calls[0].callId, tiedTwo.body.calls[0].callId], expected);
   } finally {
     await teardown();
   }

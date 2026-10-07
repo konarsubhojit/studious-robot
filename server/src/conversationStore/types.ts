@@ -168,12 +168,19 @@ export type ConversationStore = {
     action: 'add' | 'remove';
   }) => Promise<{ message: StoredMessage; recipients: string[] } | null>;
   getCall: (callId: string) => Promise<GroupCallChange | null>;
+  listCallHistory: (args: {
+    userId: string;
+    statusFilter?: string | null;
+    limit: number;
+    offset?: number;
+  }) => Promise<{ calls: import('../../../shared/groupCalls.ts').GroupCallHistoryEntry[]; total: number }>;
   startCall: (args: {
     conversationId: string;
     initiatorId: string;
     mediaType: 'audio' | 'video';
     ringTimeoutMs: number;
     excludedUserIds?: string[];
+    canInvite?: (userId: string) => Promise<boolean>;
   }) => Promise<GroupCallChange | null>;
   transitionCall: (args: {
     callId: string;

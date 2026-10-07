@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { GROUP_CALL_LIMIT_MESSAGE, MAX_GROUP_CALL_PARTICIPANTS } from '../../../shared';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
@@ -16,6 +17,7 @@ type Props = {
   conversationId: string;
   currentUserId: string;
   localMock: boolean;
+  memberCount?: number;
   snapshot?: GroupCallSnapshot;
   actions: GroupCallPreviewActions;
   callPeers?: CallPeerMap<WebrtcMediaStream>;
@@ -93,7 +95,7 @@ function MediaControls({ visible, styles, disabled, isVideoEnabled, isScreenShar
 
 /** Server lifecycle is authoritative; mock media controls remain local-only. */
 export default function GroupCallPreview({
-  visible, onClose, conversationId, currentUserId, localMock, snapshot, actions,
+  visible, onClose, conversationId, currentUserId, localMock, memberCount = 0, snapshot, actions,
   callPeers = {}, activeSpeakerId = null, localStream = null,
   isMuted = false, isVideoEnabled = false, isScreenSharing = false,
 }: Props) {
@@ -137,7 +139,8 @@ export default function GroupCallPreview({
   };
   const ended = snapshot?.call.status === 'ended';
   const acceptedCount = snapshot?.participants.filter(person => person.status === 'accepted').length ?? 0;
-  const capacityReached = acceptedCount >= 4;
+  const capacityReached = acceptedCount >= MAX_GROUP_CALL_PARTICIPANTS;
+  const tooLarge = memberCount > MAX_GROUP_CALL_PARTICIPANTS;
   const canControlMedia = !localMock && !ended &&
     snapshot?.participants.some(person => person.userId === currentUserId && person.status === 'accepted');
   const streamUrl = (stream: WebrtcMediaStream | null | undefined) =>
@@ -165,12 +168,15 @@ export default function GroupCallPreview({
       {snapshot.call.mediaType} · {snapshot.call.status} (signaling)
     </Text> : null}
     {!snapshot || ended ? <View>
-      <Button styles={styles} label={localMock ? 'Start audio signaling preview' : 'Start audio call'} disabled={busy} testID="group-call-start-audio"
+      {tooLarge ? <Text style={styles.text} accessibilityRole="alert" testID="group-call-size-limit">
+        {GROUP_CALL_LIMIT_MESSAGE}
+      </Text> : null}
+      <Button styles={styles} label={localMock ? 'Start audio signaling preview' : 'Start audio call'} disabled={busy || tooLarge} testID="group-call-start-audio"
         onPress={() => { void run(async () => {
           await actions.start(conversationId, 'audio');
           actions.joinMedia?.(conversationId);
         }); }} />
-      <Button styles={styles} label={localMock ? 'Start video signaling preview' : 'Start video call'} disabled={busy} testID="group-call-start-video"
+      <Button styles={styles} label={localMock ? 'Start video signaling preview' : 'Start video call'} disabled={busy || tooLarge} testID="group-call-start-video"
         onPress={() => { void run(async () => {
           await actions.start(conversationId, 'video');
           actions.joinMedia?.(conversationId);

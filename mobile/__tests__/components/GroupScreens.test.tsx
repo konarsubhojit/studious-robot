@@ -308,12 +308,14 @@ test('compact group call preview can reopen and dismiss back to the active speak
     .toHaveLength(0);
 });
 
-test('full mesh previews explain the four-participant limit and disable further accepts', async () => {
-  const conversation = createMockGroup('alice', 'Team', ['bob', 'carol', 'dave', 'eve'], 'mock-group-1');
+test('legacy oversized snapshots still explain the mesh limit and disable further accepts', async () => {
+  const conversation = createMockGroup('alice', 'Team', ['bob', 'carol', 'dave'], 'mock-group-1');
   let snapshot = startMockGroupCall(conversation, 'alice', 'mock-call-full', 'audio', '2026-10-03T06:00:00Z');
   for (const userId of ['bob', 'carol', 'dave']) {
     snapshot = transitionMockGroupCall(snapshot, userId, 'accept', '2026-10-03T06:01:00Z');
   }
+  snapshot = { ...snapshot, participants: [...snapshot.participants,
+    { ...snapshot.participants[0], userId: 'eve', status: 'ringing', acceptedAt: null }] };
   const props = groupProps();
   props.conversation = conversation;
   props.callSnapshot = snapshot;
@@ -322,6 +324,36 @@ test('full mesh previews explain the four-participant limit and disable further 
   expect(find(tree, 'group-call-capacity')).toBeDefined();
   expect(text(tree)).toContain('mesh calls support up to four participants');
   expect(find(tree, 'group-call-accept-eve').props.disabled).toBe(true);
+});
+
+test('oversized groups explain the policy and disable both pre-dial controls, including after a call ends', async () => {
+  const props = groupProps();
+  props.conversation.group!.memberIds.push('dave', 'eve');
+  const tree = await render(<GroupConversationScreen {...props} callSnapshot={undefined} />);
+  act(() => find(tree, 'group-open-call').props.onPress());
+  expect(text(tree)).toContain('up to 4 members, including you');
+  for (const id of ['group-call-start-audio', 'group-call-start-video']) {
+    expect(find(tree, id).props.disabled).toBe(true);
+    expect(tree.root.findAll(node => node.props.testID === id && node.props.accessibilityRole === 'button')
+      .every(node => node.props.accessibilityState.disabled)).toBe(true);
+  }
+  expect(props.callActions.start).not.toHaveBeenCalled();
+  await act(async () => { tree.update(<GroupConversationScreen {...props}
+    callSnapshot={{ ...props.callSnapshot, call: { ...props.callSnapshot.call, status: 'ended' } }} />); });
+  expect(find(tree, 'group-call-start-audio').props.disabled).toBe(true);
+  props.conversation.group!.memberIds.pop();
+  await act(async () => { tree.update(<GroupConversationScreen {...props} callSnapshot={undefined} />); });
+  expect(find(tree, 'group-call-start-audio').props.disabled).toBe(false);
+});
+
+test.each(['Missed', 'Joined'])('loaded group call system history renders %s and Ended without delivery controls', async outcome => {
+  const props = groupProps();
+  props.messages = [{ messageId: 'durable-call', senderId: 'alice', recipientId: 'mock-group-1',
+    type: 'system', body: `Group audio call · ${outcome} · Ended` }];
+  const tree = await render(<GroupConversationScreen {...props} />);
+  expect(find(tree, 'group-system-message')).toBeDefined();
+  expect(text(tree)).toContain(`Group audio call · ${outcome} · Ended`);
+  expect(tree.root.findAll(node => node.props.testID === 'group-message-sent')).toHaveLength(0);
 });
 
 test('remote preview uses participant snapshots and only self lifecycle controls with local mute', async () => {

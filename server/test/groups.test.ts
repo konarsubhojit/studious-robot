@@ -174,6 +174,34 @@ test('symmetric blocks prevent invitations but preserve accepted group access', 
   assert.equal((await getJson(f.url, `/groups/${id}/messages`, owner)).body.messages[0].body, 'still a member');
 });
 
+test('a blocked current member refuses the entire group call without partial invitations or signaling', async t => {
+  const f = await fixture(t);
+  const ids = ['blocked-call-owner', 'blocked-call-a', 'blocked-call-b'];
+  const sessions = await Promise.all(ids.map(f.session));
+  const sockets = await Promise.all(sessions.map(f.socket));
+  const created = await postJson(f.url, '/groups', { name: 'All or nothing', inviteeIds: ids.slice(1) }, sessions[0]);
+  const id = created.body.group.conversationId;
+  for (const invitation of created.body.invitations) {
+    await accept(f.url, invitation, sessions[ids.indexOf(invitation.inviteeId)]);
+  }
+  let notifications = 0;
+  sockets.forEach(socket => socket.on(SERVER_EVENTS.CONVERSATION_CALL_UPDATED, () => { notifications += 1; }));
+  for (const [blocker, blockee] of [[0, 1], [1, 0]]) {
+    assert.equal((await postJson(f.url, '/blocks', { blockeeId: ids[blockee] }, sessions[blocker])).status, 200);
+    const refused = await emit(sockets[0], CLIENT_EVENTS.CONVERSATION_CALL_START, { conversationId: id, mediaType: 'audio' });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error.message, /All current members must be reachable/);
+    assert.equal((await getJson(f.url, '/calls', sessions[0])).body.total, 0);
+    assert.deepEqual((await getJson(f.url, `/groups/${id}/messages`, sessions[0])).body.messages, []);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(notifications, 0);
+    await f.request('DELETE', `/blocks/${ids[blockee]}`, sessions[blocker]);
+  }
+  const started = await emit(sockets[0], CLIENT_EVENTS.CONVERSATION_CALL_START, { conversationId: id, mediaType: 'audio' });
+  assert.equal(started.ok, true);
+  assert.deepEqual(started.participants.map((person: any) => person.userId).sort(), ids.sort());
+});
+
 test('creation/invitation budgets are shared by REST and sockets and charged per invitee', async t => {
   const f = await fixture(t, { groupCreateRateLimit: 1, groupInviteRateLimit: 2 });
   const owner = await f.session('owner');
@@ -569,6 +597,71 @@ test('REST leave and removal notify all call participants, including the departi
   }
 });
 
+async function verifyCallLog(t: Context, store: ConversationStore, restartStore: () => ConversationStore = () => store) {
+  const f = await fixture(t, { conversationStore: store });
+  const owner = await f.session('log-owner');
+  const member = await f.session('log-member');
+  const outsider = await f.session('log-outsider');
+  const group = await store.create({ name: 'Log team', creatorId: 'log-owner', inviteeIds: ['log-member'] });
+  const id = group.conversation.conversationId;
+  await store.acceptInvitation({ conversationId: id, userId: 'log-member', invitationId: group.invitations![0].invitationId });
+  const first = (await store.startCall({ conversationId: id, initiatorId: 'log-owner', mediaType: 'audio', ringTimeoutMs: 60_000 }))!;
+  assert.equal((await getJson(f.url, '/calls', member)).body.calls[0].status, 'ringing');
+  await store.expireCall(first.call.callId, Date.now() + 61_000);
+  assert.equal((await getJson(f.url, '/calls', member)).body.calls[0].status, 'missed');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  const second = (await store.startCall({ conversationId: id, initiatorId: 'log-owner', mediaType: 'video', ringTimeoutMs: 60_000 }))!;
+  await store.transitionCall({ callId: second.call.callId, userId: 'log-member', action: 'accept' });
+  await store.transitionCall({ callId: second.call.callId, userId: 'log-member', action: 'leave' });
+  await store.transitionCall({ callId: second.call.callId, userId: 'log-owner', action: 'leave' });
+  await postJson(f.url, '/calls', { calleeId: 'log-ghost', mediaType: 'audio' }, owner);
+  assert.equal((await getJson(f.url, '/calls')).status, 401);
+  assert.equal((await getJson(f.url, '/calls', outsider)).body.total, 0);
+  const log = (await getJson(f.url, '/calls', owner)).body;
+  assert.equal(log.total, 3);
+  const groupEntry = log.calls.find((entry: any) => entry.callId === first.call.callId);
+  assert.equal(groupEntry.kind, 'group');
+  assert.equal(groupEntry.conversationId, id);
+  assert.equal(groupEntry.groupName, 'Log team');
+  assert.equal(groupEntry.initiatorId, 'log-owner');
+  assert.equal(groupEntry.calleeId, undefined);
+  assert.equal(log.calls.find((entry: any) => entry.kind !== 'group').calleeId, 'log-ghost');
+  const paged: string[] = [];
+  for (let offset = 0; offset < 3; offset++) {
+    const page = (await getJson(f.url, `/calls?limit=1&offset=${offset}`, owner)).body;
+    assert.equal(page.total, 3);
+    assert.equal(page.hasMore, offset < 2);
+    paged.push(page.calls[0].callId);
+  }
+  assert.deepEqual(paged, log.calls.map((entry: any) => entry.callId));
+  const missed = (await getJson(f.url, '/calls?status=missed', member)).body;
+  assert.equal(missed.total, 1);
+  assert.equal(missed.calls[0].callId, first.call.callId);
+  const timeline = (await getJson(f.url, `/conversations/${id}/messages?limit=1`, member)).body;
+  assert.equal(timeline.messages[0].type, 'system');
+  assert.equal(timeline.messages[0].body, 'Group video call · Joined · Ended');
+  assert.equal(timeline.hasMore, true);
+  const older = (await getJson(f.url, `/groups/${id}/messages?limit=1&before=${encodeURIComponent(timeline.nextCursor.before)}&beforeMessageId=${timeline.nextCursor.beforeMessageId}`, member)).body;
+  assert.equal(older.messages[0].body, 'Group audio call · Missed · Ended');
+  const restarted = await fixture(t, { conversationStore: restartStore() });
+  const restartedMember = await restarted.session('log-member');
+  const recovered = (await getJson(restarted.url, `/groups/${id}/messages`, restartedMember)).body;
+  assert.deepEqual(recovered.messages.map((entry: any) => entry.body), [
+    'Group video call · Joined · Ended', 'Group audio call · Missed · Ended',
+  ]);
+  assert.equal((await getJson(restarted.url, '/calls', restartedMember)).body.total, 2);
+  await store.updateName({ conversationId: id, actorId: 'log-owner', name: 'Renamed log team' });
+  assert.equal((await getJson(f.url, '/calls', member)).body.calls[0].groupName, 'Renamed log team');
+  await store.removeMember({ conversationId: id, actorId: 'log-owner', userId: 'log-member' });
+  assert.equal((await getJson(f.url, '/calls', member)).body.total, 2);
+  assert.equal((await getJson(restarted.url, '/calls', restartedMember)).body.total, 2);
+  assert.equal((await getJson(f.url, `/groups/${id}/messages`, member)).status, 403);
+}
+
+test('GET /calls merges durable group attribution with direct calls, paginates and rechecks membership', async t => {
+  await verifyCallLog(t, createConversationStore());
+});
+
 test('memory store interval and race contract', async t => {
   await watermarkAndCapacity(t, createConversationStore());
 });
@@ -601,6 +694,8 @@ test('PostgreSQL migration, durable admission and transaction races', { skip: !p
   const db = drizzle(pool, { schema });
   await migrate(db, { migrationsFolder: new URL('../db/migrations', import.meta.url).pathname });
   const store = createConversationStore({ db });
+  await t.test('group call HTTP history survives server/store recreation and preserves attribution', async t =>
+    verifyCallLog(t, store, () => createConversationStore({ db })));
   await watermarkAndCapacity(t, store);
   await attachmentErasure(t, store);
   await t.test('durable cleanup survives store recreation and object storage failure', async t =>

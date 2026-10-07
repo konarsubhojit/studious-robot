@@ -327,18 +327,12 @@ function registerConversationHandlers(
       return;
     }
     try {
-      const members = await state.conversationStore.listMembers(conversationId);
-      const excludedUserIds = (await filterVisible(members, async ({ userId }) =>
-          userId !== initiatorId &&
-          !(await isDirectoryVisibleAsync(state, initiatorId, userId))
-        ))
-        .map(({ userId }) => userId);
       const change = await state.conversationStore.startCall({
         conversationId,
         initiatorId,
         mediaType: parsed.mediaType ?? 'video',
         ringTimeoutMs: ringingTimeoutMs,
-        excludedUserIds,
+        canInvite: userId => isDirectoryVisibleAsync(state, initiatorId, userId),
       });
       if (!change) {
         acknowledgeError(socket, ack, eventName, ERROR_CODES.NOT_FOUND, 'group not found or has no reachable members', state);

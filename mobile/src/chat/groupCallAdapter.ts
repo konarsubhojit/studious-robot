@@ -1,4 +1,4 @@
-import { CLIENT_EVENTS, parseEventPayload, SERVER_EVENTS, SIGNALING_VERSION } from '../../../shared';
+import { CLIENT_EVENTS, GROUP_CALL_LIMIT_MESSAGE, MAX_GROUP_CALL_PARTICIPANTS, parseEventPayload, SERVER_EVENTS, SIGNALING_VERSION } from '../../../shared';
 import { SERVER_EVENT_SCHEMAS } from '../../../shared/signaling/schemas';
 import type { ConversationSummary } from '../messaging/types';
 
@@ -47,11 +47,12 @@ export function startMockGroupCall(
   row: ConversationSummary, userId: string, callId: string, mediaType: 'audio' | 'video', now: string,
 ): GroupCallSnapshot {
   if (!row.localMock || row.left || !row.group?.memberIds.includes(userId)) throw new Error('You are not a local group member');
+  if (row.group.memberIds.length > MAX_GROUP_CALL_PARTICIPANTS) throw new Error(GROUP_CALL_LIMIT_MESSAGE);
   groupCallRequest('start', row.group.conversationId, mediaType);
   return parseGroupCallSnapshot({
     version: SIGNALING_VERSION, conversationId: row.group.conversationId, callId,
     call: { callId, conversationId: row.group.conversationId, initiatorId: userId, mediaType,
-      status: 'ringing', stateVersion: 1, ringTimeoutAt: null },
+      status: 'ringing', stateVersion: 1, ringTimeoutAt: null, createdAt: now, updatedAt: now, endedAt: null },
     participants: row.group.memberIds.map(id => ({
       callId, userId: id, status: id === userId ? 'accepted' : 'ringing', invitedAt: now,
       acceptedAt: id === userId ? now : null, leftAt: null,
@@ -69,7 +70,7 @@ export function transitionMockGroupCall(
     : action === 'leave' ? !['accepted', 'ringing'].includes(person.status) : person.status !== 'ringing') {
     throw new Error('This participant cannot perform that call action');
   }
-  if (action === 'accept' && snapshot.participants.filter(entry => entry.status === 'accepted').length >= 4) {
+  if (action === 'accept' && snapshot.participants.filter(entry => entry.status === 'accepted').length >= MAX_GROUP_CALL_PARTICIPANTS) {
     throw new Error('Group call is full; mesh calls support up to 4 participants');
   }
   let participants = snapshot.participants.map(entry => entry !== person ? entry : {
@@ -86,6 +87,7 @@ export function transitionMockGroupCall(
   return parseGroupCallSnapshot({
     ...snapshot,
     call: { ...snapshot.call, stateVersion: snapshot.call.stateVersion + 1,
+      updatedAt: now, endedAt: ended ? now : null,
       status: ended ? 'ended' : action === 'accept' ? 'active' : snapshot.call.status },
     participants,
   });

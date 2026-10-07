@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import {
   groupCallParticipants as callParticipantsTable,
   groupCalls as callsTable,
@@ -26,8 +26,9 @@ import {
   type GroupCallParticipant,
 } from './types.ts';
 import type { GroupInvitation, GroupMembershipEvent } from './types.ts';
-import { assertActiveGroupMember, INVITATION_TTL_MS, requireGroupAdmin, validateInvitees } from './authorization.ts';
+import { assertActiveGroupMember, assertGroupCallMembership, INVITATION_TTL_MS, requireGroupAdmin, validateInvitees } from './authorization.ts';
 import { attachmentScopeFromKey } from '../attachments.ts';
+import { GROUP_CALL_MESSAGE_PREFIX, MAX_GROUP_CALL_PARTICIPANTS, groupCallHistoryEntry, groupCallTimelineMessage } from '../../../shared/groupCalls.ts';
 
 type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
 type ConversationRow = typeof conversationsTable.$inferSelect;
@@ -43,7 +44,6 @@ const PARTICIPANT_TRANSITIONS: Record<
   decline: { ringing: 'declined' },
   leave: { ringing: 'left', accepted: 'left' },
 };
-const MAX_GROUP_CALL_PARTICIPANTS = 4;
 
 async function assertGroupCallCapacity(tx: Tx, callId: string): Promise<void> {
   const accepted = await tx
@@ -435,6 +435,7 @@ function createPgConversationStore(db: Database): ConversationStore {
     tx: Tx,
     now: Date
   ): Promise<GroupCallChange> {
+    now = new Date(Math.max(now.getTime(), call.updatedAt.getTime() + 1));
     await tx
       .update(callParticipantsTable)
       .set({ status: 'declined', leftAt: now, updatedAt: now })
@@ -595,7 +596,20 @@ function createPgConversationStore(db: Database): ConversationStore {
             : and(eq(messagesTable.conversationId, conversationId), gte(messagesTable.createdAt, member.joinedAt)))
           .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
           .limit(Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
-        return rows.map(toMessage);
+        const callCursor = before ? beforeMessageId
+          ? or(lt(callsTable.createdAt, new Date(before)), and(eq(callsTable.createdAt, new Date(before)),
+            lt(sql<string>`${GROUP_CALL_MESSAGE_PREFIX} || ${callsTable.callId}::text`, beforeMessageId)))
+          : lt(callsTable.createdAt, new Date(before)) : undefined;
+        const callRows = await tx.select({ call: callsTable, participant: callParticipantsTable })
+          .from(callsTable).innerJoin(callParticipantsTable, and(
+            eq(callParticipantsTable.callId, callsTable.callId), eq(callParticipantsTable.userId, userId)))
+          .where(and(eq(callsTable.conversationId, conversationId), gte(callsTable.createdAt, new Date(member.joinedAt)), callCursor))
+          .orderBy(desc(callsTable.createdAt), desc(callsTable.callId))
+          .limit(Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
+        return [...rows.map(toMessage), ...callRows.map(({ call, participant }) =>
+          groupCallTimelineMessage(toCall(call), toCallParticipant(participant)))]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.messageId.localeCompare(a.messageId))
+          .slice(0, Math.min(Math.max(Math.floor(limit) || 1, 1), 101));
       });
     },
 
@@ -892,6 +906,9 @@ function createPgConversationStore(db: Database): ConversationStore {
     },
 
     async saveMessage(message) {
+      if (message.messageId.startsWith(GROUP_CALL_MESSAGE_PREFIX)) {
+        throw new ConversationStoreError('forbidden', 'group call timeline IDs are reserved');
+      }
       return db.transaction(async (tx) => {
         const [conversation] = await tx
           .select()
@@ -1048,47 +1065,89 @@ function createPgConversationStore(db: Database): ConversationStore {
       return call ? callChange(call) : null;
     },
 
-    async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [] }) {
-      return db.transaction(async (tx) => {
-        const [conversation] = await tx
-          .select({ conversationId: conversationsTable.conversationId })
-          .from(conversationsTable)
-          .where(and(eq(conversationsTable.conversationId, conversationId), isNull(conversationsTable.deletedAt)))
-          .for('update')
-          .limit(1);
-        if (!conversation) return null;
-        await requireActiveMember(conversationId, initiatorId, tx);
-        const excluded = new Set(excludedUserIds);
-        const invitees = (await membersFor(conversationId, tx))
-          .filter(({ userId }) => userId !== initiatorId && !excluded.has(userId));
-        if (invitees.length === 0) return null;
-        const now = new Date();
-        const [call] = await tx
-          .insert(callsTable)
-          .values({
-            conversationId,
-            initiatorId,
-            mediaType,
-            status: 'ringing',
-            stateVersion: 1,
-            ringTimeoutAt: new Date(now.getTime() + ringTimeoutMs),
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning();
-        const participants = await tx
-          .insert(callParticipantsTable)
-          .values([initiatorId, ...invitees.map(({ userId }) => userId)].map((userId) => ({
-            callId: call.callId,
-            userId,
-            status: userId === initiatorId ? 'accepted' : 'ringing',
-            invitedAt: now,
-            acceptedAt: userId === initiatorId ? now : null,
-            updatedAt: now,
-          })))
-          .returning();
-        return { call: toCall(call), participants: participants.map(toCallParticipant) };
-      });
+    async listCallHistory({ userId, statusFilter, limit, offset = 0 }) {
+      const status = sql<string>`case when ${callParticipantsTable.acceptedAt} is null
+        and (${callsTable.status} = 'ended' or ${callParticipantsTable.status} in ('declined', 'left'))
+        then 'missed' else ${callsTable.status} end`;
+      const where = and(eq(callParticipantsTable.userId, userId), sql`exists (
+        select 1 from ${membersTable} where ${membersTable.conversationId} = ${callsTable.conversationId}
+        and ${membersTable.userId} = ${userId} and ${membersTable.joinedAt} <= ${callsTable.createdAt}
+        and (${membersTable.leftAt} is null or ${membersTable.leftAt} >= ${callsTable.createdAt})
+        and (${membersTable.removedAt} is null or ${membersTable.removedAt} >= ${callsTable.createdAt})
+      )`, statusFilter ? eq(status, statusFilter) : undefined);
+      const query = () => db.select({ call: callsTable, participant: callParticipantsTable, name: conversationsTable.name })
+        .from(callsTable)
+        .innerJoin(callParticipantsTable, eq(callParticipantsTable.callId, callsTable.callId))
+        .innerJoin(conversationsTable, eq(conversationsTable.conversationId, callsTable.conversationId)).where(where);
+      const [rows, totals] = await Promise.all([
+        query().orderBy(desc(callsTable.updatedAt), desc(callsTable.createdAt), desc(callsTable.callId)).limit(limit).offset(offset),
+        db.select({ value: count() }).from(callsTable)
+          .innerJoin(callParticipantsTable, eq(callParticipantsTable.callId, callsTable.callId))
+          .innerJoin(conversationsTable, eq(conversationsTable.conversationId, callsTable.conversationId)).where(where),
+      ]);
+      return { calls: rows.map(({ call, participant, name }) =>
+        groupCallHistoryEntry(toCall(call), toCallParticipant(participant), name)), total: Number(totals[0]?.value ?? 0) };
+    },
+
+    async startCall({ conversationId, initiatorId, mediaType, ringTimeoutMs, excludedUserIds = [], canInvite }) {
+      for (;;) {
+        // Directory checks can use this same pool; do not hold a transaction
+        // connection while waiting for them. Prove coverage again under lock.
+        const snapshot = canInvite ? await membersFor(conversationId) : [];
+        if (snapshot.length) assertActiveGroupMember(snapshot.find(member => member.userId === initiatorId));
+        const reachable = new Map<string, boolean>(canInvite && snapshot.length <= MAX_GROUP_CALL_PARTICIPANTS
+          ? await Promise.all(snapshot.filter(member => member.userId !== initiatorId)
+            .map(async ({ userId }): Promise<[string, boolean]> => [userId, await canInvite(userId)]))
+          : []);
+        const result = await db.transaction(async (tx) => {
+          const [conversation] = await tx
+            .select()
+            .from(conversationsTable)
+            .where(and(eq(conversationsTable.conversationId, conversationId), isNull(conversationsTable.deletedAt)))
+            .for('update')
+            .limit(1);
+          if (!conversation) return null;
+          await requireActiveMember(conversationId, initiatorId, tx);
+          const members = await membersFor(conversationId, tx);
+          assertGroupCallMembership(members, excludedUserIds);
+          const invitees = members.filter(({ userId }) => userId !== initiatorId);
+          if (invitees.length === 0) return null;
+          if (canInvite && invitees.some(({ userId }) => !reachable.has(userId))) return 'retry' as const;
+          if (canInvite && invitees.some(({ userId }) => !reachable.get(userId))) {
+            throw new ConversationStoreError('forbidden', 'All current members must be reachable to start a group call');
+          }
+          await checkBlocks(tx, initiatorId, invitees.map(({ userId }) => userId));
+          const now = activityTime(conversation);
+          await tx.update(conversationsTable).set({ updatedAt: now })
+            .where(eq(conversationsTable.conversationId, conversationId));
+          const [call] = await tx
+            .insert(callsTable)
+            .values({
+              conversationId,
+              initiatorId,
+              mediaType,
+              status: 'ringing',
+              stateVersion: 1,
+              ringTimeoutAt: new Date(Date.now() + ringTimeoutMs),
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning();
+          const participants = await tx
+            .insert(callParticipantsTable)
+            .values([initiatorId, ...invitees.map(({ userId }) => userId)].map((userId) => ({
+              callId: call.callId,
+              userId,
+              status: userId === initiatorId ? 'accepted' : 'ringing',
+              invitedAt: now,
+              acceptedAt: userId === initiatorId ? now : null,
+              updatedAt: now,
+            })))
+            .returning();
+          return { call: toCall(call), participants: participants.map(toCallParticipant) };
+        });
+        if (result !== 'retry') return result;
+      }
     },
 
     async transitionCall({
@@ -1133,11 +1192,11 @@ function createPgConversationStore(db: Database): ConversationStore {
           .limit(1);
         if (!participant) return null;
 
-        const now = new Date();
+        const now = new Date(Math.max(Date.now(), call.updatedAt.getTime() + 1));
         if (
           participant.status === 'ringing' &&
           call.ringTimeoutAt &&
-          call.ringTimeoutAt.getTime() <= now.getTime()
+          call.ringTimeoutAt.getTime() <= Date.now()
         ) {
           return expireLockedCall(call, tx, now);
         }

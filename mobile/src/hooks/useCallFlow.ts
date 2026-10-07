@@ -12,6 +12,7 @@ import { emitEvent } from '../observability';
 import { registerCrashContext } from '../crashReporting';
 import { fetchPeerProfile } from '../profile/fetchPeerProfile';
 import { resolveDisplayName } from '../../../shared/identity';
+import { groupCallHistoryEntry } from '../../../shared/groupCalls';
 import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useCallAudioRouting from './useCallAudioRouting';
@@ -628,6 +629,21 @@ export default function useCallFlow({
     markServerUnreachable,
   } = presenceSearch;
 
+  const recordGroupCallHistory = useCallback<NonNullable<Parameters<typeof useMessaging>[0]['onGroupCallUpdated']>>((snapshot, groupName) => {
+    const participant = snapshot.participants.find(person => person.userId === userId);
+    if (!participant) return;
+    const call = snapshot.call;
+    const createdAt = typeof call.createdAt === 'string' ? call.createdAt : participant.invitedAt;
+    const entry = groupCallHistoryEntry({ ...call, createdAt,
+      updatedAt: typeof call.updatedAt === 'string' ? call.updatedAt : createdAt,
+      endedAt: typeof call.endedAt === 'string' ? call.endedAt : null,
+      mediaType: call.mediaType === 'audio' ? 'audio' : 'video',
+      status: call.status === 'ended' ? 'ended' : call.status === 'active' ? 'active' : 'ringing',
+    }, participant, groupName);
+    addToHistory({ ...entry, callerId: entry.initiatorId, calleeId: '',
+      direction: entry.initiatorId === userId ? 'outgoing' : 'incoming', isRead: entry.status !== 'missed' });
+  }, [addToHistory, userId]);
+
   const messaging = useMessaging({
     authedFetchRef,
     sessionIdRef,
@@ -637,6 +653,8 @@ export default function useCallFlow({
     userId,
     storageUserId: identity.isRegistered ? identity.authUser?.uid ?? '' : '',
     updateStatus,
+    onGroupCallUpdated: recordGroupCallHistory,
+    onGroupMembershipRevoked: refreshCallHistory,
   });
   const {
     activeChatPeerId,

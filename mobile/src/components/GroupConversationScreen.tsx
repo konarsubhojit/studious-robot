@@ -102,6 +102,9 @@ function GroupBubble({ message, row, currentUserId, cacheMemberProfiles, onRetry
   const sender = useGroupMemberProfile(row, message.senderId, cacheMemberProfiles);
   const memberIds = row.group?.memberIds ?? [];
   const readers = (message.readBy ?? []).filter(id => id !== currentUserId && memberIds.includes(id));
+  if (message.type === 'system') return <View style={styles.bubble} testID="group-system-message">
+    <Text style={styles.secondary}>{message.body}</Text>
+  </View>;
   return <View style={[styles.bubble, own ? styles.ownBubble : undefined]} testID="group-message">
     <View style={styles.sender}>
       <Avatar id={message.senderId} profile={sender} size="sm" testID={`group-sender-avatar-${message.messageId}`} />
@@ -353,6 +356,7 @@ export default function GroupConversationScreen({
         actions.cacheMemberProfiles(row.peerId, profiles);
       }} />
     <GroupCallPreview visible={calling && isMember} onClose={() => setCalling(false)} conversationId={row.peerId}
+      memberCount={row.group?.memberIds.length}
       currentUserId={currentUserId} localMock={Boolean(row.localMock)} snapshot={callSnapshot} actions={callActions}
       callPeers={callPeers} activeSpeakerId={activeSpeakerId} localStream={localStream}
       isMuted={isMuted} isVideoEnabled={isVideoEnabled} isScreenSharing={isScreenSharing} />

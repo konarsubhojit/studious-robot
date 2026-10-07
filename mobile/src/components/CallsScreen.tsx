@@ -49,6 +49,7 @@ export type CallsScreenProps = {
   onOpenProfile?: (peerId: string) => void;
   /** Open the conversation with this person; surfaced as a row swipe action. */
   onMessage?: (peerId: string) => void;
+  onOpenGroup?: (conversationId: string) => void;
   onAudioCall?: (peerId: string) => void;
   onVideoCall?: (peerId: string) => void;
   onOpenSearch?: () => void;
@@ -85,7 +86,8 @@ function CallHistoryTrailing({
   onRedial: (entry: CallHistoryEntry) => void;
 }) {
   const modality = callMediaType(item);
-  const { name } = usePeerProfile(peerId);
+  const profile = usePeerProfile(peerId);
+  const name = item.kind === 'group' ? item.groupName || 'Group call' : profile.name;
   return (
     <View style={styles.trailing}>
       <Icon
@@ -114,6 +116,7 @@ function CallHistoryRow({
   colors,
   styles,
   onMessage,
+  onOpenGroup,
   onOpenProfile,
   onRedial,
 }: {
@@ -122,24 +125,28 @@ function CallHistoryRow({
   colors: ThemeColors;
   styles: ReturnType<typeof createStyles>;
   onMessage?: (peerId: string) => void;
+  onOpenGroup?: (conversationId: string) => void;
   onOpenProfile?: (peerId: string) => void;
   onRedial: (entry: CallHistoryEntry) => void;
 }) {
   const peerId = callPeerId(item);
-  const { name } = usePeerProfile(peerId);
+  const profile = usePeerProfile(peerId);
+  const name = item.kind === 'group' ? item.groupName || 'Group call' : profile.name;
   const missed = isMissedCall(item);
   const durationLabel =
     item.durationSeconds != null ? formatCallDuration(item.durationSeconds) : '';
   const timeLabel = formatCallTimeOfDay(item.createdAt);
+  const conversationId = item.kind === 'group' ? item.conversationId : peerId;
+  const openConversation = item.kind === 'group' ? onOpenGroup : onMessage;
   // The reciprocal of the call button in the conversation header: from
   // a call in the log, reach the conversation with the same person.
-  const actions = onMessage && peerId
+  const actions = openConversation && conversationId
     ? [{
         key: 'message',
         label: 'Message',
         accessibilityLabel: `Message ${name}`,
         testID: 'call-history-message',
-        onPress: () => onMessage(peerId),
+        onPress: () => openConversation(conversationId),
       }]
     : [];
 
@@ -158,7 +165,7 @@ function CallHistoryRow({
             item={item}
             peerId={peerId}
             missed={missed}
-            canCall={canCall}
+            canCall={canCall && item.kind !== 'group'}
             colors={colors}
             styles={styles}
             onRedial={onRedial}
@@ -275,6 +282,7 @@ export default function CallsScreen({
   onMarkMissedRead,
   onOpenProfile,
   onMessage,
+  onOpenGroup,
   onAudioCall,
   onVideoCall,
   onOpenSearch,
@@ -356,6 +364,7 @@ export default function CallsScreen({
         colors={colors}
         styles={styles}
         onMessage={onMessage}
+        onOpenGroup={onOpenGroup}
         onOpenProfile={onOpenProfile}
         onRedial={redial}
       />
@@ -364,6 +373,7 @@ export default function CallsScreen({
       canCall,
       colors,
       onMessage,
+      onOpenGroup,
       onOpenProfile,
       redial,
       styles,

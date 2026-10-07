@@ -1,4 +1,5 @@
 import { ConversationStoreError, type ConversationMember, type ConversationStore } from './types.ts';
+import { GROUP_CALL_LIMIT_MESSAGE, MAX_GROUP_CALL_PARTICIPANTS } from '../../../shared/groupCalls.ts';
 
 /** The sole group access predicate. Blocks and delivery rooms are not authority. */
 export function activeGroupMember(member: ConversationMember | null | undefined): member is ConversationMember {
@@ -28,3 +29,13 @@ export function validateInvitees(actorId: string, userIds: string[]): void {
 }
 
 export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function assertGroupCallMembership(members: ConversationMember[], excludedUserIds: string[]): void {
+  if (members.length > MAX_GROUP_CALL_PARTICIPANTS) {
+    throw new ConversationStoreError('group_call_full', GROUP_CALL_LIMIT_MESSAGE);
+  }
+  const excluded = new Set(excludedUserIds);
+  if (members.some(({ userId }) => excluded.has(userId))) {
+    throw new ConversationStoreError('forbidden', 'All current members must be reachable to start a group call');
+  }
+}
