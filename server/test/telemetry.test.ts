@@ -4,10 +4,9 @@ import { io as ioClient } from 'socket.io-client';
 import { createServer, CALL_END_REASONS } from '../src/index.ts';
 import { createTelemetry } from '../src/telemetry.ts';
 import { DEFAULT_RINGING_TIMEOUT_MS } from '../src/config.ts';
-import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
+import { asDatabase, closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 import { hydrateCallsAndEventsFromDb } from '../src/callPersistence.ts';
 import { createMemoryStores } from '../src/stores/index.ts';
-import { asDatabase } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -15,7 +14,7 @@ const METRICS_TOKEN = 'test-metrics-token';
 
 test('hydration does not rebuild telemetry totals; endings retain explicit cohort scope', async () => {
   const telemetry = createTelemetry();
-  const stores = createMemoryStores();
+  const stores = Object.assign(createMemoryStores(), { telemetry });
   const row = {
     callId: 'historical-call', callerId: 'caller', calleeId: 'callee',
     status: 'ended', createdAt: new Date('2026-01-01'), updatedAt: new Date('2026-01-01'),
