@@ -10,6 +10,7 @@ import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { devices } from '../../../db/schema.ts';
 import { invalidateCache, messagesCachePrefix } from '../../cache.ts';
 import { ConversationStoreError } from '../../conversationStore/types.ts';
+import { isBlockedAsync } from '../../security.ts';
 
 async function groupPushChannels(state: import('../../stores/contracts.ts').ServerState, userId: string) {
   if (!state.db) return resolveOfflinePushChannels(state, userId).slice(0, 1);
@@ -75,6 +76,7 @@ async function notifyMember(
       .catch(error => console.error(`[messages] group delivery receipt failed: ${describeError(error)}`));
     return;
   }
+  if (groupName !== undefined && await isBlockedAsync(state, userId, message.senderId)) return;
   // Registrations on another VM need not be in this process's hot maps.
   const pushChannels = groupName !== undefined
     ? await groupPushChannels(state, userId) : resolveOfflinePushChannels(state, userId);

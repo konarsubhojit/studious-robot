@@ -7,6 +7,33 @@ import type { ConversationSummary } from '../messaging/types';
 export type GroupTransport = 'mock' | 'live';
 export const GROUP_TRANSPORT: GroupTransport = process.env.GROUP_TRANSPORT === 'live' ? 'live' : 'mock';
 
+export type GroupInvitationSummary = {
+  invitationId: string;
+  conversationId: string;
+  issuerId: string;
+  inviteeId: string;
+  membershipVersion: number;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export function parseGroupInvitations(records: unknown, userId: string): GroupInvitationSummary[] | undefined {
+  if (!Array.isArray(records)) return undefined;
+  const valid = records.every(invitation => invitation && typeof invitation === 'object' &&
+    ['invitationId', 'conversationId', 'issuerId', 'inviteeId', 'createdAt', 'expiresAt']
+      .every(key => typeof (invitation as Record<string, unknown>)[key] === 'string' &&
+        Boolean(((invitation as Record<string, unknown>)[key] as string).trim())) &&
+    (invitation as Record<string, unknown>).inviteeId === userId &&
+    Number.isInteger((invitation as Record<string, unknown>).membershipVersion) &&
+    Number.isFinite(Date.parse((invitation as Record<string, unknown>).createdAt as string)) &&
+    Number.isFinite(Date.parse((invitation as Record<string, unknown>).expiresAt as string)));
+  if (!valid) {
+    logWarn('[Groups] Ignored a malformed group invitation list');
+    return undefined;
+  }
+  return records as GroupInvitationSummary[];
+}
+
 /** The existing lifecycle handlers acknowledge with { conversation }, not a new membership protocol. */
 export function conversationAcknowledgement(ack: unknown, updatedBy: string): ConversationRecord {
   const conversation = ack && typeof ack === 'object' ? (ack as { conversation?: unknown }).conversation : undefined;

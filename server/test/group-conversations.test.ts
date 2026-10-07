@@ -117,6 +117,9 @@ test('group messages require active membership and fan out to every current memb
     assert.equal(created.ok, true);
     const conversationId = created.conversation.conversationId;
     assert.deepEqual(created.conversation.memberIds, ['alice']);
+    const invitations = await getJson(url, API_ROUTES.CONVERSATIONS, sessions[1]);
+    assert.deepEqual(invitations.body.groupInvitations.map((invitation: any) => invitation.invitationId),
+      [created.invitations[0].invitationId]);
     await acceptInvitations(url, created.invitations, sessions.slice(1, 3));
 
     const bobMessage = waitFor(bob, SERVER_EVENTS.MESSAGE_RECEIVED);

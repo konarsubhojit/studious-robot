@@ -1,4 +1,6 @@
-import { conversationAcknowledgement, GROUP_TRANSPORT, parseGroupList, remoteGroupRows } from '../../src/chat/groupTransportAdapter';
+import {
+  conversationAcknowledgement, GROUP_TRANSPORT, parseGroupInvitations, parseGroupList, remoteGroupRows,
+} from '../../src/chat/groupTransportAdapter';
 import { createMockGroup } from '../../src/chat/groupMockAdapter';
 import { mergePendingConversations } from '../../src/messaging/conversations';
 
@@ -13,6 +15,16 @@ test('transport is mock by default and validates actual server lifecycle acknowl
   // response still applies and held group rows are not mistaken for departures.
   expect(parseGroupList([{ conversationId: 'missing-fields' }], 'alice')).toBeUndefined();
   expect(parseGroupList({ conversationId: 'not-a-list' }, 'alice')).toBeUndefined();
+});
+
+test('group invitations are accepted as a list only when addressed to the signed-in user', () => {
+  const invitation = {
+    invitationId: 'invitation-1', conversationId: 'server-group', issuerId: 'alice', inviteeId: 'bob',
+    membershipVersion: 2, createdAt: '2026-10-03T06:00:00Z', expiresAt: '2026-10-10T06:00:00Z',
+  };
+  expect(parseGroupInvitations([invitation], 'bob')).toEqual([invitation]);
+  expect(parseGroupInvitations([{ ...invitation, inviteeId: 'mallory' }], 'bob')).toBeUndefined();
+  expect(parseGroupInvitations({ invitations: [invitation] }, 'bob')).toBeUndefined();
 });
 
 test('REST snapshots normalize without a peerId and preserve local message/read/unread metadata', () => {

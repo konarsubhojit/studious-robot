@@ -25,6 +25,7 @@ const API_ROUTES = Object.freeze({
   DEVICES_REVOKE_ALL: '/devices/revoke-all',
   DEVICES_PUSH_RECEIPT: '/devices/push-receipt',
   CONVERSATIONS: '/conversations',
+  GROUPS: '/groups',
   MESSAGES: '/messages',
   MESSAGES_READ: '/messages/read',
   /** Full-text message search. */

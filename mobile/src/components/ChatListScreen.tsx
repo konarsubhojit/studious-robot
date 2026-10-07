@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { describeMessagePreview } from '../../../shared';
+import { describeMessagePreview, resolveDisplayName } from '../../../shared';
 import { useThemedStyles } from '../ThemeContext';
 import { usePeerProfile } from '../profile/ProfileContext';
 import { fontScaleCaps, sizes, spacing, typography } from '../theme';
@@ -22,6 +22,7 @@ import type { CallStatus } from './StatusBanner';
 import type { CallActivity, ConversationActivity } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
 import type { ContactRow, ConversationRow, PeerProfile } from '../types/directory';
+import type { GroupInvitationSummary } from '../chat/groupTransportAdapter';
 
 /** Number of placeholder rows shown while the conversation list loads. */
 const SKELETON_ROW_COUNT = 6;
@@ -112,6 +113,8 @@ export type ChatListScreenProps = {
   onCreateGroup?: (name: string, inviteeIds: string[], profiles: Record<string, PeerProfile>) => Promise<string>;
   onOpenGroup?: (conversationId: string) => void;
   groupTransport?: 'mock' | 'live';
+  groupInvitations?: GroupInvitationSummary[];
+  onAcceptGroupInvitation?: (conversationId: string, invitationId: string) => Promise<string>;
   /** The signed-in user, shown as the header avatar. */
   currentUserId?: string;
   /** App-level status, floated over the list as a transient bar. */
@@ -297,6 +300,8 @@ function ChatListScreen({
   onCreateGroup,
   onOpenGroup,
   groupTransport = 'mock',
+  groupInvitations = [],
+  onAcceptGroupInvitation,
   currentUserId,
   drafts,
   isPeerMuted,
@@ -307,6 +312,8 @@ function ChatListScreen({
   const styles = useThemedStyles(createStyles);
   const [isPickerVisible, setIsPickerVisible] = useState(false);
   const [isGroupPickerVisible, setIsGroupPickerVisible] = useState(false);
+  const [acceptingInvitation, setAcceptingInvitation] = useState<string | null>(null);
+  const [invitationError, setInvitationError] = useState('');
 
   const startChat = onStartChat ?? onOpenConversation;
   const openPicker = useCallback(() => setIsPickerVisible(true), []);
@@ -340,6 +347,38 @@ function ChatListScreen({
     ({ item }: { item: ConversationRow; }) => renderConversationRow(item),
     [renderConversationRow],
   );
+  const invitationHeader = groupInvitations.length ? (
+    <View style={styles.groupInvitations} testID="group-invitations">
+      <Text style={styles.invitationTitle} accessibilityRole="header">Group invitations</Text>
+      {groupInvitations.map(invitation => (
+        <View key={invitation.invitationId} style={styles.invitationRow}>
+          <Text style={styles.groupActionText}>
+            Invitation from {resolveDisplayName(invitation.issuerId)} · {invitation.conversationId}
+          </Text>
+          {onAcceptGroupInvitation ? <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Accept group invitation from ${resolveDisplayName(invitation.issuerId)}`}
+            disabled={acceptingInvitation !== null}
+            accessibilityState={{ disabled: acceptingInvitation !== null }}
+            testID={`group-accept-invitation-${invitation.invitationId}`}
+            onPress={() => {
+              setAcceptingInvitation(invitation.invitationId);
+              setInvitationError('');
+              void onAcceptGroupInvitation(invitation.conversationId, invitation.invitationId).then(groupId => {
+                (onOpenGroup ?? onOpenConversation)(groupId);
+              }).catch(error => {
+                setInvitationError(error instanceof Error ? error.message : 'Unable to accept group invitation');
+              }).finally(() => setAcceptingInvitation(null));
+            }}>
+            <Text style={styles.groupActionText}>
+              {acceptingInvitation === invitation.invitationId ? 'Joining…' : 'Accept invitation'}
+            </Text>
+          </Pressable> : null}
+        </View>
+      ))}
+      {invitationError ? <Text style={styles.groupActionText} accessibilityRole="alert">{invitationError}</Text> : null}
+    </View>
+  ) : undefined;
   const getItemLayout = useCallback(
     (_data: ArrayLike<ConversationRow> | null | undefined, index: number) => ({
       length: CONVERSATION_ROW_HEIGHT,
@@ -413,6 +452,7 @@ function ChatListScreen({
         data={conversations}
         keyExtractor={item => item.conversationId ?? item.peerId}
         renderItem={renderItem}
+        ListHeaderComponent={invitationHeader}
         getItemLayout={getItemLayout}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -475,6 +515,9 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     groupAction: { minHeight: 48, paddingHorizontal: spacing.sm, justifyContent: 'center' },
     groupActionText: { ...typography.body, color: colors.onSurface },
+    groupInvitations: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+    invitationTitle: { ...typography.title, color: colors.onSurface, paddingVertical: spacing.xs },
+    invitationRow: { paddingVertical: spacing.xs, gap: spacing.xs },
     root: {
       flex: 1,
       backgroundColor: colors.background,

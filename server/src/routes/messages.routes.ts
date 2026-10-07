@@ -788,9 +788,19 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       console.error(`[messages] group conversation lookup failed: ${describeError(error)}`);
     }
 
+    let groupInvitations: Awaited<
+      ReturnType<typeof state.conversationStore.listInvitations>
+    > | undefined;
+    try {
+      groupInvitations = await state.conversationStore.listInvitations(session.userId);
+    } catch (error) {
+      console.error(`[messages] group invitation lookup failed: ${describeError(error)}`);
+    }
+
     res.status(200).json({
       conversations: visible,
       ...(groupConversations ? { groupConversations } : {}),
+      ...(groupInvitations ? { groupInvitations } : {}),
     });
   });
 

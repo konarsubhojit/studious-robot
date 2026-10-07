@@ -62,6 +62,29 @@ describe('ChatListScreen', () => {
     expect(profile).not.toHaveBeenCalled();
   });
 
+  test('accepts a pending group invitation and opens the joined group', async () => {
+    const openGroup = jest.fn();
+    const accept = jest.fn(async () => 'server-group');
+    const invitation = {
+      invitationId: 'invitation-1', conversationId: 'server-group', issuerId: 'alice', inviteeId: 'bob',
+      membershipVersion: 1, createdAt: '2026-10-03T06:00:00Z', expiresAt: '2026-10-10T06:00:00Z',
+    };
+    const tree = render({
+      conversations: [],
+      groupInvitations: [invitation],
+      onAcceptGroupInvitation: accept,
+      onOpenGroup: openGroup,
+      onOpenConversation: jest.fn(),
+    });
+    expect(findByTestId(tree, 'group-invitations')).not.toBeNull();
+    await act(async () => {
+      findByTestId(tree, 'group-accept-invitation-invitation-1').props.onPress();
+      await Promise.resolve();
+    });
+    expect(accept).toHaveBeenCalledWith('server-group', 'invitation-1');
+    expect(openGroup).toHaveBeenCalledWith('server-group');
+  });
+
   test('renders the conversation list with last message and timestamp', () => {
     const tree = render({
       conversations: [makeConversation()],

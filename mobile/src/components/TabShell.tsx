@@ -406,6 +406,8 @@ function TabShell() {
       onOpenGroup={openGroupConversation}
       onCreateGroup={groupActions.create}
       groupTransport={groupActions.mode}
+      groupInvitations={groupActions.invitations}
+      onAcceptGroupInvitation={groupActions.acceptInvitation}
       onSearchUsers={chat.searchUsers}
       onRefresh={chat.handleRefreshConversations}
       isRefreshing={chat.isRefreshingConversations}
