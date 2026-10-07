@@ -1,5 +1,6 @@
 import { addBlock } from '../security.ts';
 import { hydrateCallsAndEventsFromDb } from '../callPersistence.ts';
+import { recordHydration, type HydrationStep } from './hydration.ts';
 import { users as usersTable } from '../../db/schema.ts';
 import { devices as devicesTable } from '../../db/schema.ts';
 import { and, eq, ne } from 'drizzle-orm';
@@ -256,11 +257,13 @@ function toIsoString(value: Date | string | null | undefined): string | null {
  * @param hydrate resolves to the number of rows read
  * @param opts when `required`, rethrow the failure
  */
-async function runHydrationStep(label: string, hydrate: () => Promise<number>, { required = false }: { required?: boolean; } = {}): Promise<void> {
+async function runHydrationStep(state: Stores, step: HydrationStep, label: string, hydrate: () => Promise<number>, { required = false }: { required?: boolean; } = {}): Promise<void> {
   try {
     const count = await hydrate();
+    recordHydration(state, step, count);
     console.log(`[signaling] hydrated ${count} ${label} record(s) from DB`);
   } catch (err) {
+    recordHydration(state, step, null);
     const message = `[signaling] failed to hydrate ${label}s from DB: ${((err as any))?.message}`;
     console.error(message);
     if (required) {
@@ -351,10 +354,10 @@ async function hydrateBlocks(db: DrizzleDb, state: Stores, blocksTable: any): Pr
 async function loadPersistedStateFromDb(db: DrizzleDb | null, state: Stores): Promise<void> {
   if (!db) return;
 
-  await runHydrationStep('user', () => hydrateUsers(db, state, usersTable), { required: true });
-  await runHydrationStep('device', () => hydrateDevices(db, state, devicesTable));
+  await runHydrationStep(state, 'users', 'user', () => hydrateUsers(db, state, usersTable), { required: true });
+  await runHydrationStep(state, 'devices', 'device', () => hydrateDevices(db, state, devicesTable));
   await hydrateCallsAndEventsFromDb(db, state);
-  await runHydrationStep('block', () => hydrateBlocks(db, state, blocksTable));
+  await runHydrationStep(state, 'blocks', 'block', () => hydrateBlocks(db, state, blocksTable));
 }
 
 export {

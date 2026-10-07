@@ -489,16 +489,51 @@ but it did not migrate the database. The tracked script migrated, but lacked
 the active-service and application-health checks. **Each was half right, and
 neither was sufficient.**
 
+The supplied 2026-10-03–07 live-host evidence traces the missing installation
+back to PR #460. There were two independent migration failures: the untracked
+script had no migration step, and its production-only dependency install
+made an attempted migration fail with `sh: 1: drizzle-kit: not found`.
+The absent `call_participants` table then caused startup hydration to fail
+(`42P01`). A service can be `active` while every request fails; the old
+`/health` still returned `status: "ok"`, so deployment appeared green.
+
 The host's `npm i --omit=dev` skipped `drizzle-kit`, which is a dev dependency,
 so the migrations could not run. Redeploy now uses `npm ci`, applies migrations
 while the migration tool is present, prunes dev dependencies, restarts, checks
-that the service is active, and polls `/health`. Install the tracked script at
+that no migrations remain pending in the database journal **before restarting**,
+checks that the service is active, and polls `/health` until `status == "ok"`.
+It separately requires every hydration step to be `succeeded` (including zero
+rows) or `skipped` (no database configured). Health keeps `status: "ok"` for
+liveness during partial hydration failures; deployment must not ignore the
+per-step outcomes. They include loaded row counts and completion timestamps
+without exposing query errors or credentials.
+
+The supplied 2026-10-07 01:27 UTC deploy logs also showed metrics snapshot
+`mktemp` and log-append permission errors: the SSH deploy user could not write
+the root-owned `/var/log/robot-metrics` tree. It lacked the token supplied by
+the timer's systemd `EnvironmentFile`, producing a 401. Scheduled timer runs
+were unaffected. The 01:28:29 UTC gate reported only a counter-decrease `RESET`,
+which was the deploy itself, not a readiness test.
+
+Redeploy no longer snapshots or invokes the trend checker. Its metrics gate
+is a read-only HTTP-200 probe, run through
+`robot-deploy-metrics-probe.service`; systemd loads the root-readable
+`/etc/robot-metrics.env` and the token is never copied into CI. Plain `sudo`
+on a script does not supply that environment. Install the tracked script and
+probe at the exact paths invoked:
 the exact path CI invokes:
 
 ```bash
 sudo install -o root -g root -m 0755 \
   /home/wetalk/repos/studious-robot/deploy/redeploy.sh \
   /usr/local/bin/redeploy.sh
+sudo install -o root -g root -m 0755 \
+  /home/wetalk/repos/studious-robot/deploy/robot-deploy-metrics-probe.sh \
+  /usr/local/bin/robot-deploy-metrics-probe.sh
+sudo install -o root -g root -m 0644 \
+  /home/wetalk/repos/studious-robot/deploy/robot-deploy-metrics-probe.service \
+  /etc/systemd/system/robot-deploy-metrics-probe.service
+sudo systemctl daemon-reload
 ```
 
 After deployment, a `stateAffinity` value of `sticky` was observed on that VM,
@@ -507,6 +542,17 @@ fleet requires `shared` affinity on both VMs; sticky affinity must be resolved
 before routing fleet traffic there. Whether `sticky` is valid for a standalone
 single-VM deployment has not been confirmed, so the deploy script reports it as
 a warning rather than blocking deployment.
+
+The supplied payload (`sharedState.calls: false`, `messageBus: false`,
+`fanout.transport: "in-memory"`) establishes private state, not whether that
+topology was intentional. Confirm the traffic topology with the operator.
+For a fleet member, configure `REDIS_URL` in the root-owned service environment
+to the shared cache, grant its command/Pub/Sub permissions, and verify shared
+affinity and peer fanout before fleet traffic. For an intentionally standalone
+VM, sticky affinity is valid. `fanout.healthy: true` with no peers is only
+single-node health; a zero Redis histogram likewise proves no Redis work, not
+working fleet coordination. Redeploy reports the affinity and warns, never
+fails solely because it is sticky.
 
 ### Unattended-upgrade virtualenv failure mode
 

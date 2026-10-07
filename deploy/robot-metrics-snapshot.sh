@@ -21,6 +21,10 @@ if [ -r "$ENV_FILE" ]; then
   . "$ENV_FILE"
   set +a
 fi
+if [ -z "${DEBUG_API_TOKEN:-}" ]; then
+  printf '%s snapshot failed: DEBUG_API_TOKEN is not set (load /etc/robot-metrics.env via systemd)\n' "$now" >&2
+  exit 1
+fi
 mkdir -p "$FINAL_DIR" || exit 0
 rev="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 tmp="$(mktemp)"
@@ -29,7 +33,7 @@ final_tmp="$(mktemp "${FINAL_DIR}/.snapshot.XXXXXX")"
 trap 'rm -f "$tmp" "$final_tmp"' EXIT
 
 if curl --silent --show-error --fail --connect-timeout 5 --max-time 15 \
-  -H "x-debug-token: ${DEBUG_API_TOKEN:-}" "$METRICS_URL" >"$tmp" &&
+  -H "x-debug-token: ${DEBUG_API_TOKEN}" "$METRICS_URL" >"$tmp" &&
   jq -e --arg label "$label" --arg rev "$rev" --arg t "$now" '
     if (type == "object") then . + {_label: $label, _gitRev: $rev, _snapshotAt: $t}
     else error("metrics is not an object")

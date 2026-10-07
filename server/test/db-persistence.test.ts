@@ -19,7 +19,7 @@ import { createStores } from '../src/stores/index.ts';
 import { createMemoryCache } from '../src/cache.ts';
 import { hydrateCallsAndEventsFromDb } from '../src/callPersistence.ts';
 import * as schema from '../db/schema.ts';
-import { asDatabase, closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
+import { asDatabase, closeTestServer, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -819,6 +819,58 @@ test('createCallRecord persists call_events only after the parent call row', asy
 });
 
 // ─── loadPersistedState() – hydrates users and devices from DB ───────────────
+
+for (const [step, failingTable] of [
+  ['none', null], ['calls', schema.callParticipants], ['callEvents', schema.callEvents],
+  ['devices', schema.devices], ['blocks', schema.blocks],
+] as const) {
+  test(`health reports hydration outcomes for ${step} failure (zero rows are healthy)`, async () => {
+    const db = buildMockDb({
+      selectRowsByTable: new Map<any, any>([
+        [schema.calls, failingTable ? [{
+          callId: '00000000-0000-4000-8000-000000000111',
+          callerId: 'caller', calleeId: 'callee', status: 'ended',
+          createdAt: new Date(), updatedAt: new Date(),
+        }] : []],
+      ]),
+    });
+    const originalSelect = db.select.bind(db);
+    const failingDb = {
+      ...db,
+      select: () => ({
+        from: (table: any) => {
+          if (table === failingTable) throw new Error('missing table');
+          return originalSelect().from(table);
+        },
+      }),
+    };
+    const server = await startServer({ db: asDatabase(failingDb) });
+    try {
+      const initial = await readJson(await fetch(`${server.url}/health`));
+      assert.equal(initial.hydration.calls.status, 'pending');
+      await server.loadPersistedState();
+      const health = await readJson(await fetch(`${server.url}/health`));
+      assert.equal(health.status, 'ok');
+      assert.equal(server.getMetrics().counters.calls_initiated, 0);
+      assert.equal(server.getMetrics().counters.calls_ended, 0);
+      if (!failingTable) {
+        for (const outcome of Object.values(health.hydration) as any[]) {
+          assert.equal(outcome.status, 'succeeded');
+          assert.equal(outcome.loaded, 0);
+          assert.ok(Number.isFinite(Date.parse(outcome.completedAt)));
+        }
+      } else {
+        assert.equal(health.hydration[step].status, 'failed');
+        assert.equal(health.hydration[step].loaded, null);
+        assert.ok(Number.isFinite(Date.parse(health.hydration[step].completedAt)));
+        assert.ok(!JSON.stringify(health.hydration).includes('missing table'));
+        if (step === 'calls') assert.equal(health.hydration.callEvents.status, 'failed');
+      }
+    } finally {
+      await server.teardown();
+    }
+  });
+}
 
 test('loadPersistedState() populates state.users from DB rows', async () => {
   const userRows = [

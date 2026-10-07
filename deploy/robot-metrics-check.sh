@@ -15,8 +15,10 @@ if [ -r "$ENV_FILE" ]; then
   set +a
 fi
 if [ -z "${DEBUG_API_TOKEN:-}" ]; then
-  mkdir -p "$LOG_DIR"
-  printf '%s FAIL DEBUG_API_TOKEN_not_set\n' "$now" >>"$CHECK_LOG"
+  printf '%s FAIL DEBUG_API_TOKEN_not_set (load /etc/robot-metrics.env via systemd)\n' "$now" >&2
+  if mkdir -p "$LOG_DIR" && [ -w "$LOG_DIR" ]; then
+    printf '%s FAIL DEBUG_API_TOKEN_not_set\n' "$now" >>"$CHECK_LOG"
+  fi
   exit 1
 fi
 
@@ -108,8 +110,10 @@ fi
 
 if ! statuses="$(jq -r '
   [
-    (if (.counters.calls_ended // 0) > (.counters.calls_initiated // 0)
-      then "ANOMALY calls_ended_exceeds_calls_initiated" else empty end),
+    (if .metricScopes.counters.calls_ended_for_initiated == "process-local-initiated-cohort"
+         and .metricScopes.counters.calls_initiated == "process-local-initiated-cohort"
+         and (.counters.calls_ended_for_initiated // 0) > (.counters.calls_initiated // 0)
+      then "ANOMALY calls_ended_for_initiated_exceeds_calls_initiated" else empty end),
     (if (.counters.message_persist_errors // 0) > 0
       then "ANOMALY message_persist_errors=\(.counters.message_persist_errors)" else empty end),
     (if (.counters.db_query_errors_total // 0) > 0

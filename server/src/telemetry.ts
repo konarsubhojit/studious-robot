@@ -54,6 +54,13 @@ export type QueryOperationSnapshot = {
 };
 
 export type MetricsSnapshot = {
+  metricScopes: {
+    counters: Record<string, string>;
+    histograms: string;
+    derived: Record<string, string>;
+    dbQueries: string;
+    signalingErrors: string;
+  };
   collectedAt: string;
   counters: Record<string, number>;
   /**
@@ -316,6 +323,7 @@ function createTelemetry(): Telemetry {
     calls_cancelled: 0, // caller cancelled during ringing
     calls_in_call: 0, // successfully reached in_call
     calls_ended: 0, // reached terminal ended state
+    calls_ended_for_initiated: 0, // endings of calls created by this recorder
     calls_failed: 0, // ended with endReason=failed
     call_participants_total: 0, // call initiators plus each invited peer
     call_participants_joined_total: 0, // participants that accepted/joined
@@ -752,6 +760,7 @@ function createTelemetry(): Telemetry {
     nowMs: number,
   ) {
     counters.calls_ended += 1;
+    if (ts) counters.calls_ended_for_initiated += 1;
     if (call.endReason === 'failed') counters.calls_failed += 1;
     if (call.endReason === 'cancelled') counters.calls_cancelled += 1;
     if (!ts) return;
@@ -1041,6 +1050,13 @@ function createTelemetry(): Telemetry {
   function getSnapshot(): MetricsSnapshot {
     const snap = ({
       collectedAt: new Date().toISOString(),
+      metricScopes: {
+        counters: {},
+        histograms: 'process-observed-events',
+        derived: {},
+        dbQueries: 'process-observed-events',
+        signalingErrors: 'process-observed-events',
+      },
       counters: { ...counters },
       signaling_errors_by_code: Object.fromEntries(signalingErrorsByCode),
       signaling_errors_stale_call_state_by_event: Object.fromEntries(staleCallStateByEvent),
@@ -1095,6 +1111,16 @@ function createTelemetry(): Telemetry {
       messages_persisted_total > 0
         ? Number((messages_delivery_marks_issued_total / messages_persisted_total).toFixed(4))
         : null;
+
+    snap.metricScopes.counters = Object.fromEntries(Object.keys(counters).map(name => [
+      name,
+      name === 'calls_initiated' || name === 'calls_ended_for_initiated'
+        ? 'process-local-initiated-cohort'
+        : 'process-observed-events',
+    ]));
+    snap.metricScopes.derived = Object.fromEntries(
+      Object.keys(snap.derived).map(name => [name, 'process-observed-events'])
+    );
 
     return snap;
   }

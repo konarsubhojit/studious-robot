@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createServer } from '../src/index.ts';
+import { closeTestServer, listenOnRandomPort } from './helpers.ts';
 
 const thisDir = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(thisDir, '..', '..', 'deploy', 'robot-metrics-check.sh');
@@ -30,6 +32,7 @@ function healthyMetrics(counters: Counters = {}) {
     calls_accepted: 11,
     calls_in_call: 11,
     calls_ended: 19,
+    calls_ended_for_initiated: 19,
     calls_cancelled: 7,
     calls_busy: 2,
     messages_persisted_total: 24,
@@ -38,6 +41,12 @@ function healthyMetrics(counters: Counters = {}) {
     ...counters,
   };
   return {
+    metricScopes: {
+      counters: {
+        calls_initiated: 'process-local-initiated-cohort',
+        calls_ended_for_initiated: 'process-local-initiated-cohort',
+      },
+    },
     counters: merged,
     histograms: {},
     derived: {
@@ -126,12 +135,28 @@ test('a healthy server with completion rate above 1 and a negative marking gap i
   }
 });
 
-test('calls_ended exceeding calls_initiated is still an ANOMALY', async () => {
+test('hydrated or remote call endings exceeding local initiations are not an anomaly', async () => {
   const h = createHarness();
   try {
-    const result = await h.run(healthyMetrics({ calls_ended: 21 }));
+    const metrics = healthyMetrics({ calls_initiated: 1, calls_ended: 331, calls_ended_for_initiated: 1 });
+    const result = await h.run(metrics);
     assert.equal(result.code, 0, result.stderr);
-    assert.deepEqual(result.checks.map(body), ['ANOMALY calls_ended_exceeds_calls_initiated']);
+    assert.deepEqual(result.checks.map(body), ['OK calls=1 msgs=24']);
+    const legacy = { ...metrics, metricScopes: undefined };
+    const legacyResult = await h.run(legacy);
+    assert.equal(legacyResult.code, 0, legacyResult.stderr);
+    assert.ok(!legacyResult.checks.some(line => line.includes('ANOMALY')));
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('same-cohort endings exceeding initiations are a genuine anomaly', async () => {
+  const h = createHarness();
+  try {
+    const result = await h.run(healthyMetrics({ calls_ended_for_initiated: 21 }));
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(result.checks.map(body), ['ANOMALY calls_ended_for_initiated_exceeds_calls_initiated']);
   } finally {
     h.cleanup();
   }
@@ -156,6 +181,7 @@ test('an idle process with all-zero counters keeps a stable restart marker', asy
       calls_accepted: 0,
       calls_in_call: 0,
       calls_ended: 0,
+      calls_ended_for_initiated: 0,
       calls_cancelled: 0,
       calls_busy: 0,
       messages_persisted_total: 0,
@@ -186,6 +212,7 @@ test('a restarted all-zero call and message sample is RESET with non-zero db que
         calls_accepted: 0,
         calls_in_call: 0,
         calls_ended: 0,
+        calls_ended_for_initiated: 0,
         calls_cancelled: 0,
         calls_busy: 0,
         messages_persisted_total: 0,
@@ -203,5 +230,63 @@ test('a restarted all-zero call and message sample is RESET with non-zero db que
     assert.equal(lastSnapshot(h.logDir).reset, true);
   } finally {
     h.cleanup();
+  }
+});
+
+test('missing token fails clearly even without a writable log directory', async () => {
+  const h = createHarness();
+  try {
+    fs.writeFileSync(path.join(h.dir, 'env'), '');
+    fs.writeFileSync(h.logDir, 'not a directory');
+    const result = await h.run(healthyMetrics());
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /FAIL DEBUG_API_TOKEN_not_set/);
+    assert.deepEqual(result.checks, []);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('current expanded metrics shape is accepted but invalid shapes fail explicitly', async () => {
+  const h = createHarness();
+  try {
+    const result = await h.run({ ...healthyMetrics(), devices: { total: 6 }, callQuality: null });
+    assert.equal(result.code, 0, result.stderr);
+    for (const invalid of [null, [], { counters: {}, histograms: {}, derived: {}, dbQueries: {} }]) {
+      const failed = await h.run(invalid);
+      assert.notEqual(failed.code, 0);
+      assert.match(failed.checks.at(-1) ?? '', /FAIL metrics_invalid_json/);
+    }
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('checker reports OK against the live authenticated metrics route', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'robot-live-metrics-'));
+  const previousToken = process.env.DEBUG_API_TOKEN;
+  process.env.DEBUG_API_TOKEN = 'live-fixture-token';
+  const server = createServer();
+  const port = await listenOnRandomPort(server.httpServer);
+  try {
+    const result = await new Promise<{ code: number; stderr: string }>(resolve => {
+      execFile('/bin/bash', [SCRIPT], {
+        env: {
+          PATH: process.env.PATH,
+          DEBUG_API_TOKEN: 'live-fixture-token',
+          ROBOT_METRICS_ENV_FILE: path.join(dir, 'absent-env'),
+          ROBOT_METRICS_LOG_DIR: dir,
+          ROBOT_METRICS_URL: `http://127.0.0.1:${port}/metrics`,
+        },
+      }, (error, _stdout, stderr) => resolve({ code: error ? 1 : 0, stderr }));
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(fs.readFileSync(path.join(dir, 'checks.log'), 'utf8'), /OK calls=0 msgs=0/);
+    assert.ok(!fs.readFileSync(path.join(dir, 'checks.log'), 'utf8').includes('ANOMALY'));
+  } finally {
+    await closeTestServer(server);
+    if (previousToken === undefined) delete process.env.DEBUG_API_TOKEN;
+    else process.env.DEBUG_API_TOKEN = previousToken;
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

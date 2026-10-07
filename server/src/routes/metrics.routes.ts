@@ -75,8 +75,15 @@ function createMetricsRouter({ state }: { state: import('../stores/contracts.ts'
       console.error(`[metrics] call-quality query failed: ${describeError(error)}`);
       callQuality = null;
     }
+    const snapshot = state.telemetry.getSnapshot();
     res.status(200).json({
-      ...state.telemetry.getSnapshot(),
+      ...snapshot,
+      metricScopes: {
+        ...snapshot.metricScopes,
+        devices: 'current-instance-device-cache',
+        callQuality: state.db ? 'database-retained-history' : 'disabled-empty',
+      },
+      historical: { scope: 'hydration-window', hydration: state.hydration },
       devices: summarizeDeviceFanout(state),
       callQuality,
     });

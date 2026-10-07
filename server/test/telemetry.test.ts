@@ -4,11 +4,51 @@ import { io as ioClient } from 'socket.io-client';
 import { createServer, CALL_END_REASONS } from '../src/index.ts';
 import { createTelemetry } from '../src/telemetry.ts';
 import { DEFAULT_RINGING_TIMEOUT_MS } from '../src/config.ts';
-import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
+import { asDatabase, closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
+import { hydrateCallsAndEventsFromDb } from '../src/callPersistence.ts';
+import { createMemoryStores } from '../src/stores/index.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const METRICS_TOKEN = 'test-metrics-token';
+
+test('hydration does not rebuild telemetry totals; endings retain explicit cohort scope', async () => {
+  const telemetry = createTelemetry();
+  const stores = Object.assign(createMemoryStores(), { telemetry });
+  const row = {
+    callId: 'historical-call', callerId: 'caller', calleeId: 'callee',
+    status: 'ended', createdAt: new Date('2026-01-01'), updatedAt: new Date('2026-01-01'),
+  };
+  const db = asDatabase({
+    select: () => ({
+      from: () => {
+        const chain = {
+          orderBy: () => chain, limit: () => chain, where: () => chain,
+          then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([row]).then(resolve),
+        };
+        return chain;
+      },
+    }),
+  });
+  await hydrateCallsAndEventsFromDb(db, stores);
+  assert.equal(stores.calls.get('historical-call')?.status, 'ended');
+  assert.equal(telemetry.getSnapshot().counters.calls_initiated, 0);
+  assert.equal(telemetry.getSnapshot().counters.calls_ended, 0);
+
+  telemetry.recordCallTransition({ callId: 'restored-active-call', status: 'ended' }, 'in_call');
+  const local = { callId: 'local-call', status: 'ringing', createdAt: new Date().toISOString() };
+  telemetry.recordCallCreated(local);
+  telemetry.recordCallTransition({ ...local, status: 'ended', endReason: 'cancelled' }, 'ringing');
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.counters.calls_initiated, 1);
+  assert.equal(snap.counters.calls_ended, 2);
+  assert.equal(snap.counters.calls_ended_for_initiated, 1);
+  assert.equal(snap.metricScopes.counters.calls_initiated, 'process-local-initiated-cohort');
+  assert.equal(snap.metricScopes.counters.calls_ended_for_initiated, snap.metricScopes.counters.calls_initiated);
+  assert.equal(snap.metricScopes.counters.calls_ended, 'process-observed-events');
+  assert.deepEqual(Object.keys(snap.metricScopes.counters).sort(), Object.keys(snap.counters).sort());
+  assert.deepEqual(Object.keys(snap.metricScopes.derived).sort(), Object.keys(snap.derived).sort());
+});
 
 async function startServer() {
   const previousDebugToken = process.env.DEBUG_API_TOKEN;
@@ -51,6 +91,9 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     const res = await getMetricsHttp(url);
     assert.equal(res.status, 200);
     const snap = res.body;
+    assert.equal(snap.metricScopes.devices, 'current-instance-device-cache');
+    assert.equal(snap.metricScopes.callQuality, 'disabled-empty');
+    assert.equal(snap.historical.scope, 'hydration-window');
 
     // Top-level shape
     assert.equal(typeof snap.collectedAt, 'string');

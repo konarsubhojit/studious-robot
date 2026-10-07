@@ -3,6 +3,7 @@ import express from 'express';
 import { Server } from 'socket.io';
 import { SERVER_EVENTS, SIGNALING_VERSION } from '../../../shared/index.ts';
 import { createTelemetry } from '../telemetry.ts';
+import { createHydration, recordHydration } from '../lib/hydration.ts';
 import { createSharedRateLimiter, createRateLimiter, createAuditLog, isDirectoryVisibleAsync } from '../security.ts';
 import { createPgSharedBlocks } from '../stores/security.ts';
 import { createStores } from '../stores/index.ts';
@@ -313,6 +314,7 @@ function createServer(opts: CreateServerOptions = {}) {
     profileUpdateRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
+    hydration: createHydration(Boolean(db)),
     /** Persistent store for text-chat messages (in-memory unless Postgres is configured). */
     messageStore,
     conversationStore,
@@ -806,10 +808,12 @@ function createServer(opts: CreateServerOptions = {}) {
       // restart would silently cancel every erasure in flight.
       try {
         const queued = await hydrateAccountDeletions(state);
+        if (db) recordHydration(state, 'accountDeletions', queued);
         if (queued > 0) {
           console.log(`[account-deletion] hydrated ${queued} queued erasure(s) from DB`);
         }
       } catch (error) {
+        recordHydration(state, 'accountDeletions', null);
         console.error(
           `[account-deletion] failed to hydrate queued erasures: ${describeError(error)}`
         );
