@@ -112,6 +112,7 @@ export type AccountDeletionRecord = {
 };
 export type AccountDeletionStore = Map<string, AccountDeletionRecord>;
 export type Stores = {
+  hydration?: import('../lib/hydration.ts').Hydration;
   users: UserStore;
   sessions: SessionStore;
   userSessions: UserSessionStore;
@@ -188,6 +189,7 @@ export type RateLimiter = {
   ) => RateLimitResult | Promise<RateLimitResult>;
 };
 export type ServerState = Stores & {
+  hydration: import('../lib/hydration.ts').Hydration;
   db: import('../../db/client.ts').Database | null;
   auditLog: AuditLog;
   callInitRateLimiter: RateLimiter;

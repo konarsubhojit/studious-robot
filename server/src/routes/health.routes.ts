@@ -34,11 +34,17 @@ import { getRedisHealth } from '../lib/redisHealth.ts';
  * for.  Database reachability is observable through the query-timing and error
  * counters on `/metrics`.
  *
+ * `hydration` records each startup read independently. Zero loaded rows are
+ * successful; pending/failed reads are not. Status remains a liveness signal
+ * so a partial hydration outage does not remove every instance from service.
+ * Deployment readiness must explicitly check these outcomes.
+ *
  * @param ctx
  */
 function createHealthRouter({ state }: {
         state: {
             draining: boolean;
+            hydration: import('../lib/hydration.ts').Hydration;
             messageStore: { type: string; };
             stateAffinity?: 'sticky' | 'shared';
             security?: import('../stores/contracts.ts').SecurityTransport;
@@ -64,6 +70,7 @@ function createHealthRouter({ state }: {
     }
     res.status(200).json({
       status: 'ok',
+      hydration: state.hydration,
       service: 'wetalk-signaling',
       stateAffinity: state.stateAffinity ?? 'sticky',
       instanceId: state.instanceId ?? `${process.pid}`,

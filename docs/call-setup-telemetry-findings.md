@@ -58,6 +58,34 @@ storage/queueing contributor to a latency tail.
 
 ## Cross-instance ratios: retain the caveat
 
+### Restart scope decision (2026-10-07)
+
+Keep counters **process-scoped**, as the telemetry recorder's contract already
+specifies. Hydration restores a bounded, newest-first call cache and its events,
+not the entire database; rebuilding "lifetime" totals from that page would be
+incorrect. Hydration itself must not replay historical transitions into telemetry.
+Transitions of restored or remotely initiated calls during this process still
+count as observed events, but are not part of its locally initiated cohort.
+
+The supplied production evidence showed 331 restored calls and 1,338 events,
+with `calls_ended` exceeding process-local `calls_initiated` after restart.
+That comparison is **not an invariant**. `/metrics.metricScopes` labels each
+counter and derived rate; `historical` separately reports hydration counts
+(loaded rows, not lifetime totals). Device counts are labelled as the current
+instance's cache, while call-quality aggregates are retained database history
+(or disabled/empty without a database). The checker compares
+`calls_ended_for_initiated` with `calls_initiated`: both refer only to calls
+created by this recorder. Legacy payloads without that cohort counter are not
+compared. This also avoids false alarms from cross-instance endings.
+
+The actual completion denominator is `calls_in_call`, not `calls_accepted`;
+the supplied samples happened to have matching accepted/connected counts.
+Cancelled and busy calls can end without connecting, so completion above one
+is valid. Delivery marks count idempotent marking operations, including reads
+of older messages, not unique persisted messages or recipient devices. The
+supplied 24 persisted / 32 marks sample is healthy; only a positive gap warrants
+the existing warning, not an equality assertion.
+
 `telemetry.ts` still derives:
 
 ```text

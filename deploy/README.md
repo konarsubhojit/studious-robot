@@ -1137,8 +1137,23 @@ The `robot-signal.service` unit must also contain
 `EnvironmentFile=-/etc/robot-metrics.env`; install the tracked unit or add
 that line to the deployed unit before restarting it. Install
 `deploy/redeploy.sh` on the host and invoke it for the production redeploy.
-It snapshots before pulling, applies locked dependencies and pending Drizzle
-migrations, restarts the service, then snapshots again. Node 22 strips the
+It applies locked dependencies and Drizzle migrations, verifies the database
+journal has no pending migrations, restarts the service, and requires
+`/health.status == "ok"` plus successful hydration outcomes (zero rows are
+healthy; absent database steps are skipped). It then starts a read-only metrics
+HTTP-200 probe via systemd, **not** the trend checker. Install the probe:
+
+```bash
+sudo install -m 0755 deploy/robot-deploy-metrics-probe.sh /usr/local/bin/
+sudo install -m 0644 deploy/robot-deploy-metrics-probe.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+The probe uses `EnvironmentFile=/etc/robot-metrics.env`, so the root-readable
+token never needs to enter CI or the deploy user's shell. Allow the deploy user
+to start this unit through the host's sudo policy. Neither probe nor redeploy
+writes snapshots or metrics logs. Manual snapshots remain a separate operator
+action. Node 22 strips the
 server's TypeScript types at runtime, so no compile step is needed.
 
 ### Reading the history
@@ -1173,7 +1188,8 @@ single `OK calls=… msgs=…` line when there are none:
   **not** treated as a restart on its own: an idle, freshly started process
   would otherwise log `RESET` and move the marker on every run.
 * `ANOMALY` — reserved for states that are impossible on a healthy server:
-  `calls_ended > calls_initiated`, any `message_persist_errors`, any
+  `calls_ended_for_initiated > calls_initiated` when both counters explicitly
+  advertise `process-local-initiated-cohort`, any `message_persist_errors`, any
   `db_query_errors_total`.
 * `WARN` — worth a look but legitimately non-zero: `rtc_relays_no_recipient`,
   `signaling_errors`, `db_slow_queries_total`, and a **positive**
@@ -1181,6 +1197,12 @@ single `OK calls=… msgs=…` line when there are none:
 * `PERF` — latency, event-loop lag and cache-hit thresholds.
 
 Two derived fields are deliberately not invariants:
+
+`calls_ended > calls_initiated` is also not an invariant: endings of restored
+or remotely initiated calls do not belong to this instance's initiation
+cohort. Only the dedicated same-cohort ending counter is compared; legacy
+payloads lacking it are not compared. `/metrics.metricScopes` labels every
+counter and rate, and `historical.hydration` reports loaded history separately.
 
 * `derived.call_completion_rate` is `calls_ended / calls_in_call`.
   `calls_ended` also counts calls that ended without ever connecting (for

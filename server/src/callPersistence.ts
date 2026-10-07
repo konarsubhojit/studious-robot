@@ -1,4 +1,5 @@
 import { desc, inArray } from 'drizzle-orm';
+import { recordHydration } from './lib/hydration.ts';
 import { invalidateCache, callHistoryCachePrefix } from './cache.ts';
 import { calls as callsTable } from '../db/schema.ts';
 import { callEvents as callEventsTable } from '../db/schema.ts';
@@ -153,7 +154,7 @@ function persistCallEvent(db: Database | null, event: import('./stores/contracts
  * @returns the hydrated call ids, so the event hydration can scope itself to
  *   the same set instead of reading every event ever recorded.
  */
-async function hydrateCallRecords(db: Database, state: import('./stores/contracts.ts').Stores): Promise<string[]> {
+async function hydrateCallRecords(db: Database, state: import('./stores/contracts.ts').Stores): Promise<string[] | null> {
   try {
     const rows = await db
       .select()
@@ -187,10 +188,12 @@ async function hydrateCallRecords(db: Database, state: import('./stores/contract
       }
     }
     console.log(`[signaling] hydrated ${rows.length} call record(s) from DB`);
+    recordHydration(state, 'calls', rows.length);
     return callIds;
   } catch (err) {
     console.error('[signaling] failed to hydrate calls from DB:', describeError(err));
-    return [];
+    recordHydration(state, 'calls', null);
+    return null;
   }
 }
 
@@ -203,6 +206,7 @@ async function hydrateCallRecords(db: Database, state: import('./stores/contract
  */
 async function hydrateCallEvents(db: Database, state: import('./stores/contracts.ts').Stores, callIds: string[]) {
   if (callIds.length === 0) {
+    recordHydration(state, 'callEvents', 0);
     console.log('[signaling] hydrated 0 call event(s) from DB');
     return;
   }
@@ -232,14 +236,20 @@ async function hydrateCallEvents(db: Database, state: import('./stores/contracts
       );
     }
     console.log(`[signaling] hydrated ${rows.length} call event(s) from DB`);
+    recordHydration(state, 'callEvents', rows.length);
   } catch (err) {
     console.error('[signaling] failed to hydrate call events from DB:', describeError(err));
+    recordHydration(state, 'callEvents', null);
   }
 }
 
 async function hydrateCallsAndEventsFromDb(db: Database | null, state: import('./stores/contracts.ts').Stores) {
   if (!db) return;
   const callIds = await hydrateCallRecords(db, state);
+  if (callIds === null) {
+    recordHydration(state, 'callEvents', null);
+    return;
+  }
   await hydrateCallEvents(db, state, callIds);
 }
 

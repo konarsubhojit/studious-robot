@@ -23,6 +23,9 @@ test('GET /health returns ok status', async () => {
     assert.deepEqual(body.sharedState, { calls: false, messageBus: false });
     assert.equal(typeof body.uptime, 'number');
     assert.equal(typeof body.timestamp, 'string');
+    for (const outcome of Object.values(body.hydration)) {
+      assert.deepEqual(outcome, { status: 'skipped', loaded: null, completedAt: null });
+    }
   } finally {
     await new Promise((resolve) => httpServer.close(() => resolve(undefined)));
   }
