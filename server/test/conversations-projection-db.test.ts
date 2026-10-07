@@ -46,7 +46,7 @@ test('Postgres conversation projection invariants', { skip: !HAS_DB }, async (t)
   const store = createPgMessageStore({ db });
 
   async function resetProjection() {
-    await pool.query('TRUNCATE TABLE "messages", "conversations"');
+    await pool.query('TRUNCATE TABLE "message_changes", "messages", "conversations"');
   }
 
   async function projectionBytes() {
@@ -61,6 +61,27 @@ test('Postgres conversation projection invariants', { skip: !HAS_DB }, async (t)
 
   try {
     await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+
+    await t.test('reset clears messages, their change log, and the projection together', async () => {
+      await store.saveMessage({
+        messageId: 'reset-me',
+        senderId: 'alice',
+        recipientId: 'bob',
+        body: 'fixture reset',
+      });
+
+      const countsSql = `SELECT
+        (SELECT count(*)::int FROM messages) AS messages,
+        (SELECT count(*)::int FROM message_changes) AS changes,
+        (SELECT count(*)::int FROM conversations) AS conversations`;
+      const { rows: [before] } = await pool.query(countsSql);
+      assert.deepEqual(before, { messages: 1, changes: 1, conversations: 1 });
+
+      await resetProjection();
+
+      const { rows: [after] } = await pool.query(countsSql);
+      assert.deepEqual(after, { messages: 0, changes: 0, conversations: 0 });
+    });
 
     await t.test('incremental maintenance is byte-identical to a rebuild', async () => {
       await resetProjection();
