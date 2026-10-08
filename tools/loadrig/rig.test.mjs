@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ConfigError, createLatencyBucket, loadConfig, recordLatency, summarize, sweepDeliveryTimeouts } from './rig.mjs';
+import {
+  ConfigError,
+  createLatencyBucket,
+  holdDeadline,
+  loadConfig,
+  phaseFor,
+  rampUsers,
+  recordLatency,
+  summarize,
+  sweepDeliveryTimeouts,
+} from './rig.mjs';
 
 const baseEnv = { TARGET: 'https://example.test' };
 
@@ -21,6 +31,40 @@ test('loadConfig rejects an explicit ramp batch that cannot finish in time', () 
     () => loadConfig({ ...baseEnv, USERS: '1000', RAMP_SECS: '120', RAMP_BATCH: '8' }),
     /minimum required value is 9/
   );
+});
+
+test('ramp batches start on absolute deadlines without waiting for prior connections', async () => {
+  const timing = { rampStartedAt: 1_000, rampCompletedAt: null };
+  const opened = [];
+  const deadlines = [];
+  const pendingOpens = [];
+  const rampPromise = rampUsers(null, { users: 3, rampBatch: 1 }, {}, timing, {
+    open: (_io, _config, index) => {
+      opened.push(index);
+      return new Promise((resolve) => pendingOpens.push(resolve));
+    },
+    waitForDeadline: async (deadline) => deadlines.push(deadline),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(opened, [0, 1, 2]);
+  assert.deepEqual(deadlines, [1_000, 2_000, 3_000]);
+  assert.equal(phaseFor(timing, 5_000), 'ramp');
+
+  pendingOpens.forEach((resolve, index) => resolve({ index }));
+  assert.deepEqual(await rampPromise, [{ index: 0 }, { index: 1 }, { index: 2 }]);
+  timing.rampCompletedAt = 5_000;
+  assert.equal(phaseFor(timing, 4_999), 'ramp');
+  assert.equal(phaseFor(timing, 5_000), 'steady');
+});
+
+test('hold deadline preserves the configured duration after a late ramp and setup', () => {
+  const rampCompletedAt = 7_000;
+  const setupCompletedAt = 9_000;
+
+  assert.equal(holdDeadline(setupCompletedAt, 10), 19_000);
+  assert.equal(holdDeadline(setupCompletedAt, 10) - setupCompletedAt, 10_000);
+  assert.ok(holdDeadline(setupCompletedAt, 10) > rampCompletedAt + 10_000);
 });
 
 test('loadConfig requires TARGET', () => {

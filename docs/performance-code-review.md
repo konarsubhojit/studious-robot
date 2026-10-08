@@ -19,9 +19,9 @@ establish production latency, live database query plans or physical-device
 behavior. Existing test references below describe source coverage; database-gated
 coverage was not exercised by the reported server run.
 
-The actionable, open correctness finding is the load rig's phase/hold timing
-(§6). The other sections distinguish remaining performance risks from paths
-that are already mitigated or not reachable through normal production startup.
+The load rig's phase/hold timing finding (§6) was corrected in a follow-up;
+the other sections distinguish remaining performance risks from paths that
+are already mitigated or not reachable through normal production startup.
 
 ## Alert contract and interpretation
 
@@ -253,34 +253,22 @@ cardinality and overflow accounting. Preserve the backend/kind allowlist
 backend values would create new overflow rows. Production snapshot overhead
 and physical-device serialization/SQLite timing remain unvalidated.
 
-## 6. Open measurement-validity bug — Medium
+## 6. Corrected measurement-validity bug — Medium
 
-**Serial awaited batches can contaminate "steady" results and erase the hold.**
-`tools/loadrig/rig.mjs:631-640` opens users concurrently *within* a batch,
-awaits that batch's sessions/socket connects, then sleeps a fixed second
-before starting the next batch. Batch connection duration is additive; the
-minimum batch-size calculation (`tools/loadrig/rig.mjs:79-88`) does not
-guarantee completion by `RAMP_SECS`.
+**Original issue:** Serial awaited batches could contaminate "steady" results
+and erase the hold. `rampUsers` opened users concurrently within a batch, then
+awaited those sessions/socket connects before sleeping a fixed second. Slow
+connections made batch duration additive; a nominal minimum batch size could
+not guarantee completion by `RAMP_SECS`.
 
-Meanwhile `phaseFor` switches on elapsed wall time alone (lines 183-185).
-Each connected user immediately starts its sender (lines 294-310), and
-messages retain their send-time phase for acknowledgment/delivery buckets
-(lines 299-302,334-354). Slow connection batches can therefore still be
-running when messages and reports are labeled **steady**, at less than the
-intended connected-user load. The hold deadline is also anchored to initial
-startup, not actual ramp completion (lines 713-719): ramp overrun shortens,
-or completely consumes, the post-ramp hold. The call scheduler starts only
-after ramp completion (line 714), so its available test window shrinks too.
+**Correction:** `tools/loadrig/rig.mjs` schedules batch starts against absolute
+one-second deadlines and awaits all connection attempts before setting
+`rampCompletedAt`. Send-time phase labels and reports remain `ramp` until then.
+The configured hold begins after ramp and enabled group-call setup, preserving
+its full duration even when connections are slow. Call generation is active for
+that hold as well.
 
-**Current mitigations:** Batch-size validation prevents an obviously
-undersized nominal schedule, and reports include connected/failure counts
-(lines 590-606). Neither fixes this timing defect.
-
-**Required follow-up:** Schedule batches against absolute ramp deadlines,
-record actual ramp completion, begin steady classification only after the
-intended connection attempt phase finishes, and hold for the full configured
-duration from that point. Add slow-session/socket tests that assert phase
-purity and hold length. This is an open documentation follow-up for a
-source-level harness defect, not an application latency regression or a code
-fix in this audit; no issue was filed as part of this task.
-No new load run or production/device measurement validates the reported phases.
+Regression coverage in `tools/loadrig/rig.test.mjs` verifies absolute batch
+deadlines while earlier opens are unresolved, and that phase classification
+does not transition before attempts settle. This validates harness timing logic,
+not production latency: no load run or production/device measurement was made.

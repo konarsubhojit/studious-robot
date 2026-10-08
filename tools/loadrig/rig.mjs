@@ -26,6 +26,7 @@ const SERVER_EVENTS = Object.freeze({
 const SIGNALING_VERSION = 3;
 const REPORT_INTERVAL_MS = 15_000;
 const SWEEP_INTERVAL_MS = 5_000;
+const RAMP_BATCH_INTERVAL_MS = 1_000;
 const LATENCY_SAMPLE_LIMIT = 10_000;
 const CALL_RING_CLEANUP_MS = 130_000;
 
@@ -97,7 +98,7 @@ function loadConfig(env = process.env, now = new Date()) {
 
   if (rampBatch < minRampBatch) {
     throw new ConfigError(
-      `RAMP_BATCH=${rampBatch} is too small to connect ${users} users in ${rampSecs}s; ` +
+      `RAMP_BATCH=${rampBatch} is too small for the nominal ${rampSecs}s ramp schedule for ${users} users; ` +
         `minimum required value is ${minRampBatch}.`
     );
   }
@@ -196,8 +197,13 @@ function increment(errors, reason) {
   errors[key] = (errors[key] ?? 0) + 1;
 }
 
-function phaseFor(startedAt, rampSecs) {
-  return Date.now() - startedAt < rampSecs * 1000 ? 'ramp' : 'steady';
+function phaseFor(timing, now = Date.now()) {
+  return timing.rampCompletedAt === null || timing.rampCompletedAt === undefined ||
+    now < timing.rampCompletedAt ? 'ramp' : 'steady';
+}
+
+function holdDeadline(steadyStartedAt, holdSecs) {
+  return steadyStartedAt + holdSecs * 1000;
 }
 
 function makeBody(bytes) {
@@ -287,7 +293,7 @@ async function waitForConnect(socket) {
   });
 }
 
-async function openUser(io, config, index, state, startedAt) {
+async function openUser(io, config, index, state, timing) {
   const userId = userIdAt(config, index);
   const session = await createSession(config, userId);
   if (!session.ok) {
@@ -323,15 +329,15 @@ async function openUser(io, config, index, state, startedAt) {
   socket.on(SERVER_EVENTS.CALL_INCOMING, (payload) => {
     handleIncomingCall(config, state, user, payload);
   });
-  startSender(config, state, user, startedAt);
+  startSender(config, state, user, timing);
   return user;
 }
 
-function startSender(config, state, user, startedAt) {
+function startSender(config, state, user, timing) {
   if (config.msgPerMin === 0) return;
 
   const intervalMs = 60_000 / config.msgPerMin;
-  const sendOnce = () => sendMessage(config, state, user, startedAt);
+  const sendOnce = () => sendMessage(config, state, user, timing);
   const firstDelay = Math.floor(Math.random() * intervalMs);
   const timeout = setTimeout(() => {
     sendOnce();
@@ -340,7 +346,7 @@ function startSender(config, state, user, startedAt) {
   addTimer(user, timeout);
 }
 
-function sendMessage(config, state, user, startedAt) {
+function sendMessage(config, state, user, timing) {
   if (!user.socket.connected) return;
   if (state.inFlight.size >= config.maxInFlightMessages) {
     increment(state.errors, 'message_backpressure');
@@ -348,7 +354,7 @@ function sendMessage(config, state, user, startedAt) {
   }
 
   const id = messageId(user.userId, user.sendSequence++);
-  const currentPhase = phaseFor(startedAt, config.rampSecs);
+  const currentPhase = phaseFor(timing);
   const payload = {
     version: SIGNALING_VERSION,
     recipientId: userIdAt(config, peerIndex(user.index)),
@@ -390,7 +396,7 @@ function releaseCall(state, key, reason) {
   if (reason) increment(state.errors, reason);
 }
 
-function startCallScheduler(config, state, users, startedAt) {
+function startCallScheduler(config, state, users, timing) {
   if (config.callsPerMin === 0) return null;
 
   const callers = users
@@ -404,7 +410,7 @@ function startCallScheduler(config, state, users, startedAt) {
     for (let attempted = 0; attempted < callers.length; attempted += 1) {
       const user = callers[cursor % callers.length];
       cursor += 1;
-      if (startScheduledCall(config, state, user, users, startedAt)) return;
+      if (startScheduledCall(config, state, user, users, timing)) return;
     }
     increment(state.errors, 'call_pair_backpressure');
   };
@@ -417,16 +423,16 @@ function startCallScheduler(config, state, users, startedAt) {
   return timeout;
 }
 
-function startScheduledCall(config, state, caller, users, startedAt) {
+function startScheduledCall(config, state, caller, users, timing) {
   if (config.groupCallRate > 0 &&
     (state.callsStarted * config.groupCallRate) % 100 < config.groupCallRate) {
     const group = state.groupPools.find((candidate) =>
       candidate.users.includes(caller) &&
       candidate.users.every((user) => user.socket.connected && !state.busyUsers.has(user.userId))
     );
-    if (group && startGroupCall(config, state, group, caller, startedAt)) return true;
+    if (group && startGroupCall(config, state, group, caller, timing)) return true;
   }
-  return startCall(config, state, caller, startedAt);
+  return startCall(config, state, caller, timing);
 }
 
 function callPairKey(left, right) {
@@ -498,7 +504,7 @@ function emitAck(socket, eventName, payload, timeoutMs) {
   });
 }
 
-function startGroupCall(config, state, group, caller, startedAt) {
+function startGroupCall(config, state, group, caller, timing) {
   const participants = group.users;
   if (state.groupCallStates.size + state.callStates.size >= config.maxInFlightCalls) {
     increment(state.errors, 'call_backpressure');
@@ -512,7 +518,7 @@ function startGroupCall(config, state, group, caller, startedAt) {
     key: `group:${state.callsStarted}`,
     participants,
     pairKeys,
-    phase: phaseFor(startedAt, config.rampSecs),
+    phase: phaseFor(timing),
     callId: null,
   };
   state.callsStarted += 1;
@@ -617,7 +623,7 @@ function startGroupCall(config, state, group, caller, startedAt) {
   return true;
 }
 
-function startCall(config, state, caller, startedAt) {
+function startCall(config, state, caller, timing) {
   if (!caller.socket.connected) return false;
   if (state.callStates.size + state.groupCallStates.size >= config.maxInFlightCalls) {
     increment(state.errors, 'call_backpressure');
@@ -632,7 +638,7 @@ function startCall(config, state, caller, startedAt) {
 
   const sequence = state.callsStarted;
   const key = `pending:${caller.userId}:${sequence}`;
-  const phase = phaseFor(startedAt, config.rampSecs);
+  const phase = phaseFor(timing);
   const now = Date.now();
   const record = {
     key,
@@ -820,8 +826,8 @@ function sweepDeliveryTimeouts(inFlight, now, timeoutMs, errors) {
   return removed;
 }
 
-function snapshot(tag, config, state, startedAt) {
-  const phase = phaseFor(startedAt, config.rampSecs);
+function snapshot(tag, config, state, timing) {
+  const phase = phaseFor(timing);
   const line = {
     tag,
     ts: new Date().toISOString(),
@@ -870,17 +876,33 @@ function emitLine(stream, line) {
   stream.write(text);
 }
 
-async function rampUsers(io, config, state, startedAt) {
-  const users = [];
-  for (let next = 0; next < config.users;) {
+async function waitUntil(deadline) {
+  const delay = deadline - Date.now();
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+async function rampUsers(io, config, state, timing, {
+  open = openUser,
+  waitForDeadline = waitUntil,
+} = {}) {
+  const openings = [];
+  let next = 0;
+  let batchIndex = 0;
+  while (next < config.users) {
+    await waitForDeadline(timing.rampStartedAt + batchIndex * RAMP_BATCH_INTERVAL_MS);
     const batch = [];
     for (let count = 0; count < config.rampBatch && next < config.users; count += 1, next += 1) {
-      batch.push(openUser(io, config, next, state, startedAt));
+      batch.push(next);
     }
-    users.push(...(await Promise.all(batch)).filter(Boolean));
-    if (next < config.users) await new Promise((resolve) => setTimeout(resolve, 1000));
+    openings.push(...batch.map((index) => Promise.resolve()
+      .then(() => open(io, config, index, state, timing))
+      .then((user) => ({ ok: true, user }), (error) => ({ ok: false, error }))));
+    batchIndex += 1;
   }
-  return users;
+  const results = await Promise.all(openings);
+  const failure = results.find((result) => !result.ok);
+  if (failure) throw failure.error;
+  return results.map((result) => result.user).filter(Boolean);
 }
 
 async function closeStream(stream) {
@@ -890,7 +912,7 @@ async function closeStream(stream) {
 
 async function run(config) {
   const { io } = await import('socket.io-client');
-  const startedAt = Date.now();
+  const timing = { rampStartedAt: Date.now(), rampCompletedAt: null };
   const stream = createWriteStream(config.out, { flags: 'a' });
   const state = {
     connected: 0,
@@ -940,7 +962,7 @@ async function run(config) {
     sweepDeliveryTimeouts(state.inFlight, Date.now(), config.deliveryTimeoutMs, state.errors);
   }, SWEEP_INTERVAL_MS);
   const reporter = setInterval(() => {
-    emitLine(stream, snapshot('hold', config, state, startedAt));
+    emitLine(stream, snapshot('hold', config, state, timing));
   }, REPORT_INTERVAL_MS);
 
   async function finalize(exitCode) {
@@ -956,7 +978,7 @@ async function run(config) {
       user.socket.disconnect();
     }
     for (const record of state.callStates.values()) clearTimeout(record.cleanupTimer);
-    emitLine(stream, snapshot('final', config, state, startedAt));
+    emitLine(stream, snapshot('final', config, state, timing));
     await closeStream(stream);
     process.exitCode = exitCode;
   }
@@ -965,17 +987,17 @@ async function run(config) {
     void finalize(0).then(() => process.exit(0));
   });
 
-  // The default batch is derived from USERS/RAMP_SECS so the ramp completes
-  // before the steady hold window begins, instead of silently measuring connect churn.
-  users.push(...await rampUsers(io, config, state, startedAt));
+  // The default batch paces connection attempts; actual completion defines the ramp boundary.
+  users.push(...await rampUsers(io, config, state, timing));
+  timing.rampCompletedAt = Date.now();
   if (config.groupCallRate > 0 && config.callsPerMin > 0) {
     await prepareGroupPools(config, state, users);
   }
-  startCallScheduler(config, state, users, startedAt);
-  const elapsed = Date.now() - startedAt;
-  const holdUntil = config.rampSecs * 1000 + config.holdSecs * 1000;
-  if (elapsed < holdUntil) {
-    await new Promise((resolve) => setTimeout(resolve, holdUntil - elapsed));
+  startCallScheduler(config, state, users, timing);
+  const holdUntil = holdDeadline(Date.now(), config.holdSecs);
+  const remainingHoldMs = holdUntil - Date.now();
+  if (remainingHoldMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, remainingHoldMs));
   }
   const failed = state.connectFail > 0 || Object.keys(state.errors).length > 0;
   await finalize(failed ? 1 : 0);
@@ -1002,4 +1024,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   main();
 }
 
-export { ConfigError, createLatencyBucket, defaultOutputPath, loadConfig, recordLatency, summarize, sweepDeliveryTimeouts };
+export {
+  ConfigError,
+  createLatencyBucket,
+  defaultOutputPath,
+  holdDeadline,
+  loadConfig,
+  phaseFor,
+  rampUsers,
+  recordLatency,
+  summarize,
+  sweepDeliveryTimeouts,
+};

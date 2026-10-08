@@ -73,6 +73,7 @@ are separate from implementation.
 | B4 | Optimistic attachment progress / cancel / retry | ✅ `mobile/src/hooks/useMessaging.ts` creates the bubble before upload, tracks progress and retains failures for retry; `hooks/useMessaging.test.tsx` covers the attachment lifecycle. |
 | P1.2 | Decompose `useCallFlow` | 🚧 Pure rules and concern-hooks are extracted; `mobile/src/hooks/useCallFlow.ts` is **2,442 lines** at this audit. CP1–CP6 are implemented, CP7 retains ordered teardown in the root; device QA remains outstanding. See the note below and [extraction decision record](CALLFLOW_EXTRACTION.md). |
 | P1.7 | Replace the JSON chat document with SQLite | ✅ Implemented through `mobile/src/storage/chatDb.ts`, `chatRecords.ts` and `localDatabase.ts`; no longer deferred. Incremental serialization still depends on producer identity preservation, which has remaining gaps below. Device startup/flush latency is unmeasured. |
+| — | Load-rig phase and hold validity | ✅ `tools/loadrig/rig.mjs` schedules ramp batches against absolute deadlines, labels traffic using actual connection-attempt completion, and starts the full hold after setup; `tools/loadrig/rig.test.mjs` covers delayed connections. No production load run was performed. |
 
 ### Still deferred or gated
 
