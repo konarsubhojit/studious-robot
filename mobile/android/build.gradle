@@ -22,7 +22,7 @@ buildscript {
         // source context. It is only applied when credentials are present (see
         // app/build.gradle), but the classpath entry must be unconditional for
         // that `apply plugin` to resolve.
-        classpath("io.sentry:sentry-android-gradle-plugin:6.23.0")
+        classpath("io.sentry:sentry-android-gradle-plugin:6.24.0")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
     }
 }
