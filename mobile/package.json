@@ -56,7 +56,7 @@
     "@react-native-community/cli-platform-ios": "20.2.0",
     "@react-native/babel-preset": "0.87.1",
     "@react-native/codegen": "0.87.1",
-    "@react-native/eslint-config": "0.87.1",
+    "@react-native/eslint-config": "0.88.0",
     "@react-native/eslint-plugin": "^0.87.1",
     "@react-native/jest-preset": "0.87.1",
     "@react-native/metro-config": "0.87.1",
