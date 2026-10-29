@@ -2206,43 +2206,6 @@ function ChatConversationScreen({
     return () => clearTimeout(timer);
   }, [showAttachmentsUnavailable]);
 
-  const ensureComposerVisible = useCallback(() => {
-  const keyboardVisible = typeof Keyboard.isVisible === 'function' ? Keyboard.isVisible() : false;
-  if (!isComposerFocused && !keyboardVisible) return;
-  requestAnimationFrame(() => {
-    scrollToBottom(false);
-  });
-}, [isComposerFocused, scrollToBottom]);
-
-useEffect(() => {
-  const subscriptions = [
-    Keyboard.addListener('keyboardWillShow', ensureComposerVisible),
-    Keyboard.addListener('keyboardDidShow', ensureComposerVisible),
-    Keyboard.addListener('keyboardWillChangeFrame', ensureComposerVisible),
-    Keyboard.addListener('keyboardDidChangeFrame', ensureComposerVisible),
-  ];
-
-  return () => {
-    subscriptions.forEach(subscription => subscription.remove());
-  };
-}, [ensureComposerVisible]);
-
-useEffect(() => {
-  const subscription = AppState.addEventListener?.('change', nextState => {
-    if (nextState !== 'active') {
-      persistDraftNow();
-      return;
-    }
-
-    ensureComposerVisible();
-  });
-
-  return () => {
-    subscription?.remove?.();
-    persistDraftNow();
-  };
-}, [ensureComposerVisible, persistDraftNow]);
-
   const reportTyping = useCallback(
       (isTyping: boolean) => {
       clearTimeout(typingIdleTimerRef.current);
@@ -2330,6 +2293,44 @@ useEffect(() => {
     onSaveDraftRef.current?.(text, replyToId);
   }, []);
 
+  const ensureComposerVisible = useCallback(() => {
+  const keyboardVisible = typeof Keyboard.isVisible === 'function' ? Keyboard.isVisible() : false;
+  if (!isComposerFocused && !keyboardVisible) return;
+
+  requestAnimationFrame(() => {
+    scrollToBottom(false);
+  });
+}, [isComposerFocused, scrollToBottom]);
+
+useEffect(() => {
+  const subscriptions = [
+    Keyboard.addListener('keyboardWillShow', ensureComposerVisible),
+    Keyboard.addListener('keyboardDidShow', ensureComposerVisible),
+    Keyboard.addListener('keyboardWillChangeFrame', ensureComposerVisible),
+    Keyboard.addListener('keyboardDidChangeFrame', ensureComposerVisible),
+  ];
+
+  return () => {
+    subscriptions.forEach(subscription => subscription.remove());
+  };
+}, [ensureComposerVisible]);
+
+useEffect(() => {
+  const subscription = AppState.addEventListener?.('change', nextState => {
+    if (nextState !== 'active') {
+      persistDraftNow();
+      return;
+    }
+
+    ensureComposerVisible();
+  });
+
+  return () => {
+    subscription?.remove?.();
+    persistDraftNow();
+  };
+}, [ensureComposerVisible, persistDraftNow]);
+  
   useEffect(() => {
     if (!didMountDraftPersistRef.current) {
       didMountDraftPersistRef.current = true;
