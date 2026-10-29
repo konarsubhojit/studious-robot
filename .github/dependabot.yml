@@ -5,9 +5,9 @@ updates:
   - package-ecosystem: npm
     directory: /server
     schedule:
-      interval: weekly
+      interval: monthly
     target-branch: master
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -17,9 +17,9 @@ updates:
   - package-ecosystem: npm
     directory: /mobile
     schedule:
-      interval: weekly
+      interval: monthly
     target-branch: master
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -41,9 +41,9 @@ updates:
   - package-ecosystem: gradle
     directory: /mobile/android
     schedule:
-      interval: weekly
+      interval: monthly
     target-branch: master
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -52,9 +52,9 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     target-branch: master
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     groups:
       minor-and-patch:
         update-types: [minor, patch]
