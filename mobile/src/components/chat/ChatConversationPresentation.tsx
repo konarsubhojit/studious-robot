@@ -2287,13 +2287,19 @@ function ChatConversationScreen({
   }, [onSaveDraft]);
 
   const persistDraftNow = useCallback(() => {
-    clearTimeout(draftPersistTimerRef.current);
-    draftPersistTimerRef.current = undefined;
-    const { text, replyToId } = draftStateRef.current;
-    onSaveDraftRef.current?.(text, replyToId);
-  }, []);
+  clearTimeout(draftPersistTimerRef.current);
+  draftPersistTimerRef.current = undefined;
+  const { text, replyToId } = draftStateRef.current;
+  onSaveDraftRef.current?.(text, replyToId);
+}, []);
 
-  const ensureComposerVisible = useCallback(() => {
+const ensureComposerVisible = useCallback(() => {
+  requestAnimationFrame(() => {
+    scrollToBottom(false);
+  });
+}, [scrollToBottom]);
+
+const ensureComposerVisibleIfNeeded = useCallback(() => {
   const keyboardVisible = typeof Keyboard.isVisible === 'function' ? Keyboard.isVisible() : false;
   if (!isComposerFocused && !keyboardVisible) return;
 
@@ -2322,14 +2328,14 @@ useEffect(() => {
       return;
     }
 
-    ensureComposerVisible();
+    ensureComposerVisibleIfNeeded();
   });
 
   return () => {
     subscription?.remove?.();
     persistDraftNow();
   };
-}, [ensureComposerVisible, persistDraftNow]);
+}, [ensureComposerVisibleIfNeeded, persistDraftNow]);
   
   useEffect(() => {
     if (!didMountDraftPersistRef.current) {
@@ -2340,22 +2346,6 @@ useEffect(() => {
     draftPersistTimerRef.current = setTimeout(persistDraftNow, DRAFT_PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(draftPersistTimerRef.current);
   }, [draft, persistDraftNow, replyTarget]);
-
-  useEffect(() => {
-  const sub = AppState.addEventListener?.('change', nextState => {
-    if (nextState === 'active') {
-      requestAnimationFrame(() => {
-        if (isComposerFocused || Keyboard.isVisible?.()) {
-          scrollToBottom();
-        }
-      });
-    }
-  });
-
-  return () => {
-    sub?.remove?.();
-  };
-}, [isComposerFocused, scrollToBottom]);
 
   const handleAttachPress = useCallback(() => {
     if (!attachmentsAvailable) {
