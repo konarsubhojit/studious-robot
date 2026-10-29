@@ -37,7 +37,8 @@ updates:
           - "@babel/*"
           - react
           - react-test-renderer
-          - "metro*"
+          - "metro*
+          - "@babel/*"
   - package-ecosystem: gradle
     directory: /mobile/android
     schedule:
