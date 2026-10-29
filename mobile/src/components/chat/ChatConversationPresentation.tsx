@@ -2206,25 +2206,42 @@ function ChatConversationScreen({
     return () => clearTimeout(timer);
   }, [showAttachmentsUnavailable]);
 
-  // Keep the composer and the latest message visible above the keyboard: on
-  // Android in particular, the on-screen keyboard can otherwise cover both
-  // the text being typed and the send button until the keyboard is dismissed.
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const subscription = Keyboard.addListener(showEvent, () => {
-      scrollToBottom();
-    });
-    return () => subscription.remove();
-  }, [scrollToBottom]);
+  const ensureComposerVisible = useCallback(() => {
+  const keyboardVisible = typeof Keyboard.isVisible === 'function' ? Keyboard.isVisible() : false;
+  if (!isComposerFocused && !keyboardVisible) return;
+  requestAnimationFrame(() => {
+    scrollToBottom(false);
+  });
+}, [isComposerFocused, scrollToBottom]);
 
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-      clearTimeout(typingIdleTimerRef.current);
-      clearTimeout(draftPersistTimerRef.current);
-    };
-  }, []);
+useEffect(() => {
+  const subscriptions = [
+    Keyboard.addListener('keyboardWillShow', ensureComposerVisible),
+    Keyboard.addListener('keyboardDidShow', ensureComposerVisible),
+    Keyboard.addListener('keyboardWillChangeFrame', ensureComposerVisible),
+    Keyboard.addListener('keyboardDidChangeFrame', ensureComposerVisible),
+  ];
+
+  return () => {
+    subscriptions.forEach(subscription => subscription.remove());
+  };
+}, [ensureComposerVisible]);
+
+useEffect(() => {
+  const subscription = AppState.addEventListener?.('change', nextState => {
+    if (nextState !== 'active') {
+      persistDraftNow();
+      return;
+    }
+
+    ensureComposerVisible();
+  });
+
+  return () => {
+    subscription?.remove?.();
+    persistDraftNow();
+  };
+}, [ensureComposerVisible, persistDraftNow]);
 
   const reportTyping = useCallback(
       (isTyping: boolean) => {
@@ -2324,14 +2341,20 @@ function ChatConversationScreen({
   }, [draft, persistDraftNow, replyTarget]);
 
   useEffect(() => {
-    const subscription = AppState.addEventListener?.('change', nextState => {
-      if (nextState !== 'active') persistDraftNow();
-    });
-    return () => {
-      subscription?.remove?.();
-      persistDraftNow();
-    };
-  }, [persistDraftNow]);
+  const sub = AppState.addEventListener?.('change', nextState => {
+    if (nextState === 'active') {
+      requestAnimationFrame(() => {
+        if (isComposerFocused || Keyboard.isVisible?.()) {
+          scrollToBottom();
+        }
+      });
+    }
+  });
+
+  return () => {
+    sub?.remove?.();
+  };
+}, [isComposerFocused, scrollToBottom]);
 
   const handleAttachPress = useCallback(() => {
     if (!attachmentsAvailable) {
