@@ -121,15 +121,6 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
       <View style={styles.actions}>
         {isAnswering ? (
           <>
-            <IconButton
-              icon="callAccept"
-              label="Connecting…"
-              loading
-              variant="success"
-              size={72}
-              accessibilityLabel={`Connecting to ${profile.name}`}
-              testID="incoming-connecting"
-            />
             {/* Media negotiation can stall (no network, a peer that never
                 answers), and without this the answered call is a spinner with
                 no way out until the server's own timeout fires. Declining is
@@ -147,6 +138,15 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
                 testID="incoming-cancel-answer"
               />
             ) : null}
+            <IconButton
+              icon="callAccept"
+              label="Connecting…"
+              loading
+              variant="success"
+              size={72}
+              accessibilityLabel={`Connecting to ${profile.name}`}
+              testID="incoming-connecting"
+            />
           </>
         ) : (
           <>
