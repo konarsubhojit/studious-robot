@@ -26,7 +26,7 @@
     "express": "^5.3.0",
     "firebase-admin": "^14.5.0",
     "pg": "^8.23.1",
-    "redis": "^6.3.0",
+    "redis": "^6.3.1",
     "socket.io": "^4.8.4"
   },
   "license": "MIT",
@@ -40,6 +40,6 @@
     "eslint-plugin-sonarjs": "^4.2.2",
     "socket.io-client": "^4.8.4",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.72.0"
+    "typescript-eslint": "^8.72.1"
   }
 }
