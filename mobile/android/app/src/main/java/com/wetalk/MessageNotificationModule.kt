@@ -71,6 +71,61 @@ class MessageNotificationModule(
       .build()
   }
 
+  /** Remember every attempted shortcut, including ones later evicted from the dynamic list. */
+  private fun rememberShortcutId(conversationId: String) {
+    synchronized(shortcutIdsLock) {
+      val preferences = reactContext.getSharedPreferences(SHORTCUT_PREFS, Context.MODE_PRIVATE)
+      val ids = preferences.getStringSet(SHORTCUT_IDS_KEY, emptySet()).orEmpty().toMutableSet()
+      ids.add(conversationId)
+      preferences.edit().putStringSet(SHORTCUT_IDS_KEY, ids).apply()
+    }
+  }
+
+  /** Publish the shortcut, then verify the platform retained it within its dynamic limit. */
+  private fun publishConversationShortcut(
+    conversationId: String,
+    senderName: String,
+    deepLink: String,
+  ): Boolean =
+    try {
+      rememberShortcutId(conversationId)
+      ShortcutManagerCompat.pushDynamicShortcut(
+        reactContext,
+        createConversationShortcut(conversationId, senderName, deepLink),
+      )
+      ShortcutManagerCompat
+        .getDynamicShortcuts(reactContext)
+        .any { shortcut -> shortcut.id == conversationId }
+    } catch (error: Exception) {
+      Log.w(TAG, "Could not publish bubble shortcut for conversationId=$conversationId", error)
+      false
+    }
+
+  /** Remove all current and previously evicted account chat shortcuts at sign-out. */
+  @ReactMethod
+  fun clearConversationShortcuts(promise: Promise) {
+    try {
+      val preferences = reactContext.getSharedPreferences(SHORTCUT_PREFS, Context.MODE_PRIVATE)
+      val trackedIds = synchronized(shortcutIdsLock) {
+        preferences.getStringSet(SHORTCUT_IDS_KEY, emptySet()).orEmpty().toSet()
+      }
+      val dynamicIds = ShortcutManagerCompat.getDynamicShortcuts(reactContext).map { it.id }
+      val allIds = (trackedIds + dynamicIds).toList()
+      if (allIds.isNotEmpty()) {
+        ShortcutManagerCompat.removeLongLivedShortcuts(reactContext, allIds)
+      }
+      ShortcutManagerCompat.removeAllDynamicShortcuts(reactContext)
+      preferences.edit().remove(SHORTCUT_IDS_KEY).apply()
+      stackedMessages.clear()
+      notificationIds.clear()
+      nextNotificationId.set(1)
+      promise.resolve(null)
+    } catch (error: Exception) {
+      Log.e(TAG, "Failed to clear conversation shortcuts", error)
+      promise.reject("MESSAGE_SHORTCUTS_CLEAR_FAILED", error)
+    }
+  }
+
   /**
    * Post (or extend) the notification for one conversation.
    *
@@ -115,25 +170,6 @@ class MessageNotificationModule(
       promise.reject("MESSAGE_NOTIFICATION_SHOW_FAILED", error)
     }
   }
-
-  /** Publish the shortcut, then verify the platform retained it within its dynamic limit. */
-  private fun publishConversationShortcut(
-    conversationId: String,
-    senderName: String,
-    deepLink: String,
-  ): Boolean =
-    try {
-      ShortcutManagerCompat.pushDynamicShortcut(
-        reactContext,
-        createConversationShortcut(conversationId, senderName, deepLink),
-      )
-      ShortcutManagerCompat
-        .getDynamicShortcuts(reactContext)
-        .any { shortcut -> shortcut.id == conversationId }
-    } catch (error: Exception) {
-      Log.w(TAG, "Could not publish bubble shortcut for conversationId=$conversationId", error)
-      false
-    }
 
   /** Dismiss a conversation's notification and forget its stacked messages. */
   @ReactMethod
@@ -291,6 +327,9 @@ class MessageNotificationModule(
     private val OBSOLETE_CHANNEL_IDS = listOf("wetalk_messages.v1", "wetalk_messages.v2")
 
     private const val TAG = "WeTalkMessageNotification"
+    private const val SHORTCUT_PREFS = "wetalk_message_shortcuts"
+    private const val SHORTCUT_IDS_KEY = "conversation_ids"
+    private val shortcutIdsLock = Any()
 
     /** Shade group so several conversations bundle instead of listing flat. */
     private const val GROUP_KEY = "com.wetalk.MESSAGES"

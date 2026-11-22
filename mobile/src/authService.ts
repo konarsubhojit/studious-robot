@@ -10,6 +10,7 @@ import {
   signOut as firebaseSignOut,
 } from '@react-native-firebase/auth';
 import type { Auth, AuthProvider, User } from '@react-native-firebase/auth';
+import { NativeModules, Platform } from 'react-native';
 import { errorMessage } from './errors';
 
 const FIREBASE_APP_UNAVAILABLE_MESSAGE =
@@ -141,6 +142,13 @@ export async function getIdToken(forceRefresh = false) {
 }
 
 export async function signOut() {
+  if (Platform.OS === 'android') {
+    try {
+      await NativeModules?.MessageNotification?.clearConversationShortcuts?.();
+    } catch {
+      // Do not block sign-out if shortcut cleanup is unavailable.
+    }
+  }
   await firebaseSignOut(getAuth());
 }
 

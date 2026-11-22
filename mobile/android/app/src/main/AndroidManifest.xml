@@ -77,6 +77,7 @@
         android:windowSoftInputMode="adjustResize"
         android:supportsPictureInPicture="true"
         android:resizeableActivity="true"
+        android:allowEmbedded="true"
         android:exported="true">
         <intent-filter>
             <action android:name="android.intent.action.MAIN" />
