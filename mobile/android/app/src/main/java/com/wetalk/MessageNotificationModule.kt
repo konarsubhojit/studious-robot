@@ -27,6 +27,28 @@ import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 
+
+private fun createConversationShortcut(
+  conversationId: String,
+  senderName: String,
+): ShortcutInfoCompat {
+  val bubbleIntent =
+    Intent(reactContext, MainActivity::class.java).apply {
+      action = Intent.ACTION_VIEW
+      data = Uri.parse("wetalk://chat/$conversationId")
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    }
+
+  return ShortcutInfoCompat.Builder(reactContext, conversationId)
+    .setShortLabel(senderName)
+    .setLongLabel(senderName)
+    .setIntent(bubbleIntent)
+    .build()
+}
+
+val shortcut = createConversationShortcut(conversationId, senderName)
+ShortcutManagerCompat.pushDynamicShortcut(reactContext, shortcut)
+
 /**
  * Native module behind WeTalk's chat-message notification.
  *
@@ -162,6 +184,32 @@ class MessageNotificationModule(
       style.addMessage(line.body, line.receivedAt, Person.Builder().setName(line.sender).build())
     }
 
+    val bubbleIntent =
+  Intent(reactContext, MainActivity::class.java).apply {
+    action = Intent.ACTION_VIEW
+    data = Uri.parse(deepLink)
+  }
+
+val bubblePendingIntent =
+  PendingIntent.getActivity(
+    reactContext,
+    notificationId(conversationId),
+    bubbleIntent,
+    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+  )
+
+val bubbleMetadata =
+  NotificationCompat.BubbleMetadata.Builder(
+    bubblePendingIntent,
+    IconCompat.createWithResource(
+      reactContext,
+      android.R.drawable.ic_dialog_email,
+    ),
+  )
+    .setDesiredHeight(600)
+    .setSuppressNotification(false)
+    .build()
+
     return NotificationCompat
       .Builder(reactContext, CHANNEL_ID)
       .setContentTitle(senderName)
@@ -174,6 +222,8 @@ class MessageNotificationModule(
       .setGroup(GROUP_KEY)
       .setAutoCancel(true)
       .setContentIntent(contentPendingIntent(conversationId, deepLink))
+      .setBubbleMetadata(bubbleMetadata)
+      .setShortcutId(conversationId)
       .build()
   }
 
