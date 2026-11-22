@@ -13,6 +13,9 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -44,6 +47,31 @@ class MessageNotificationModule(
   override fun getName(): String = NAME
 
   /**
+   * Create/update the long-lived conversation shortcut required for bubbles.
+   */
+  private fun createConversationShortcut(
+    conversationId: String,
+    senderName: String,
+    deepLink: String,
+  ): ShortcutInfoCompat {
+    val intent =
+      Intent(reactContext, MainActivity::class.java).apply {
+        action = Intent.ACTION_VIEW
+        data = Uri.parse(deepLink)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      }
+
+    return ShortcutInfoCompat
+      .Builder(reactContext, conversationId)
+      .setShortLabel(senderName)
+      .setLongLabel(senderName)
+      .setIcon(IconCompat.createWithResource(reactContext, android.R.drawable.ic_dialog_email))
+      .setIntent(intent)
+      .setLongLived(true)
+      .build()
+  }
+
+  /**
    * Post (or extend) the notification for one conversation.
    *
    * Resolves with the channel's *effective* importance and sound so the JS side
@@ -63,6 +91,10 @@ class MessageNotificationModule(
       val manager = notificationManager()
       createNotificationChannel(manager)
       val lines = appendMessage(conversationId, senderName, body)
+      ShortcutManagerCompat.pushDynamicShortcut(
+        reactContext,
+        createConversationShortcut(conversationId, senderName, deepLink),
+      )
       manager.notify(
         conversationId,
         notificationId(conversationId),
@@ -160,6 +192,12 @@ class MessageNotificationModule(
       style.addMessage(line.body, line.receivedAt, Person.Builder().setName(line.sender).build())
     }
 
+    val bubbleMetadata =
+      NotificationCompat.BubbleMetadata
+        .Builder(conversationId)
+        .setDesiredHeight(BUBBLE_HEIGHT)
+        .build()
+
     return NotificationCompat
       .Builder(reactContext, CHANNEL_ID)
       .setContentTitle(senderName)
@@ -170,6 +208,8 @@ class MessageNotificationModule(
       .setDefaults(NotificationCompat.DEFAULT_ALL)
       .setStyle(style)
       .setGroup(GROUP_KEY)
+      .setShortcutId(conversationId)
+      .setBubbleMetadata(bubbleMetadata)
       .setAutoCancel(true)
       .setContentIntent(contentPendingIntent(conversationId, deepLink))
       .build()
@@ -231,6 +271,8 @@ class MessageNotificationModule(
 
     /** Shade group so several conversations bundle instead of listing flat. */
     private const val GROUP_KEY = "com.wetalk.MESSAGES"
+
+    private const val BUBBLE_HEIGHT = 600
 
     /** Upper bound on the lines kept in one conversation's stacked body. */
     private const val MAX_STACKED_MESSAGES = 6
