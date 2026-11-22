@@ -21,30 +21,9 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
-import androidx.core.app.NotificationCompat
-import androidx.core.app.Person
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
-
-
-private fun createConversationShortcut(
-  conversationId: String,
-  senderName: String,
-): ShortcutInfoCompat {
-  val bubbleIntent =
-    Intent(reactContext, MainActivity::class.java).apply {
-      action = Intent.ACTION_VIEW
-      data = Uri.parse("wetalk://chat/$conversationId")
-      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-    }
-
-  return ShortcutInfoCompat.Builder(reactContext, conversationId)
-    .setShortLabel(senderName)
-    .setLongLabel(senderName)
-    .setIntent(bubbleIntent)
-    .build()
-}
 
 val shortcut = createConversationShortcut(conversationId, senderName)
 ShortcutManagerCompat.pushDynamicShortcut(reactContext, shortcut)
@@ -70,6 +49,24 @@ class MessageNotificationModule(
 ) : ReactContextBaseJavaModule(reactContext) {
   override fun getName(): String = NAME
 
+  private fun createConversationShortcut(
+    conversationId: String,
+    senderName: String,
+  ): ShortcutInfoCompat {
+    val bubbleIntent =
+      Intent(reactContext, MainActivity::class.java).apply {
+        action = Intent.ACTION_VIEW
+        data = Uri.parse("wetalk://chat/$conversationId")
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      }
+
+    return ShortcutInfoCompat.Builder(reactContext, conversationId)
+      .setShortLabel(senderName)
+      .setLongLabel(senderName)
+      .setIntent(bubbleIntent)
+      .build()
+  }
+
   /**
    * Post (or extend) the notification for one conversation.
    *
@@ -90,6 +87,10 @@ class MessageNotificationModule(
       val manager = notificationManager()
       createNotificationChannel(manager)
       val lines = appendMessage(conversationId, senderName, body)
+      ShortcutManagerCompat.pushDynamicShortcut(
+        reactContext,
+        createConversationShortcut(conversationId, senderName),
+      )
       manager.notify(
         conversationId,
         notificationId(conversationId),
