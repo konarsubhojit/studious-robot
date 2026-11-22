@@ -94,14 +94,11 @@ class MessageNotificationModule(
       val manager = notificationManager()
       createNotificationChannel(manager)
       val lines = appendMessage(conversationId, senderName, body)
-      ShortcutManagerCompat.pushDynamicShortcut(
-        reactContext,
-        createConversationShortcut(conversationId, senderName, deepLink),
-      )
+      val shortcutAvailable = publishConversationShortcut(conversationId, senderName, deepLink)
       manager.notify(
         conversationId,
         notificationId(conversationId),
-        buildNotification(conversationId, senderName, deepLink, lines),
+        buildNotification(conversationId, senderName, deepLink, lines, shortcutAvailable),
       )
 
       val result = channelAudioState(manager)
@@ -112,7 +109,8 @@ class MessageNotificationModule(
         "Posted message notification conversationId=$conversationId" +
           " importance=${result.getInt("channelImportance")}" +
           " hasSound=${result.getBoolean("channelHasSound")}" +
-          " messageCount=${lines.size}",
+          " messageCount=${lines.size}" +
+          " bubbleShortcutAvailable=$shortcutAvailable",
       )
       promise.resolve(result)
     } catch (error: Exception) {
@@ -120,6 +118,25 @@ class MessageNotificationModule(
       promise.reject("MESSAGE_NOTIFICATION_SHOW_FAILED", error)
     }
   }
+
+  /** Publish the shortcut, then verify the platform retained it within its dynamic limit. */
+  private fun publishConversationShortcut(
+    conversationId: String,
+    senderName: String,
+    deepLink: String,
+  ): Boolean =
+    try {
+      ShortcutManagerCompat.pushDynamicShortcut(
+        reactContext,
+        createConversationShortcut(conversationId, senderName, deepLink),
+      )
+      ShortcutManagerCompat
+        .getDynamicShortcuts(reactContext)
+        .any { shortcut -> shortcut.id == conversationId }
+    } catch (error: Exception) {
+      Log.w(TAG, "Could not publish bubble shortcut for conversationId=$conversationId", error)
+      false
+    }
 
   /** Dismiss a conversation's notification and forget its stacked messages. */
   @ReactMethod
@@ -189,35 +206,39 @@ class MessageNotificationModule(
     senderName: String,
     deepLink: String,
     lines: List<StackedMessage>,
+    bubbleShortcutAvailable: Boolean,
   ): Notification {
     val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
     for (line in lines) {
       style.addMessage(line.body, line.receivedAt, Person.Builder().setName(line.sender).build())
     }
 
-    val bubbleMetadata =
-      NotificationCompat.BubbleMetadata
-        .Builder(conversationId)
-        .setDesiredHeight(BUBBLE_HEIGHT)
-        .build()
+    val builder =
+      NotificationCompat
+        .Builder(reactContext, CHANNEL_ID)
+        .setContentTitle(senderName)
+        .setContentText(lines.lastOrNull()?.body ?: "")
+        .setSmallIcon(android.R.drawable.ic_dialog_email)
+        .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setDefaults(NotificationCompat.DEFAULT_ALL)
+        .setStyle(style)
+        .setGroup(GROUP_KEY)
+        .setAutoCancel(true)
+        .setContentIntent(contentPendingIntent(conversationId, deepLink))
 
-    return NotificationCompat
-      .Builder(reactContext, CHANNEL_ID)
-      .setContentTitle(senderName)
-      .setContentText(lines.lastOrNull()?.body ?: "")
-      .setSmallIcon(android.R.drawable.ic_dialog_email)
-      .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-      .setPriority(NotificationCompat.PRIORITY_HIGH)
-      .setDefaults(NotificationCompat.DEFAULT_ALL)
-      .setStyle(style)
-      .setGroup(GROUP_KEY)
-      .setShortcutId(conversationId)
-      .setBubbleMetadata(bubbleMetadata)
-      .setAutoCancel(true)
-      .setContentIntent(contentPendingIntent(conversationId, deepLink))
-      .setBubbleMetadata(bubbleMetadata)
-      .setShortcutId(conversationId)
-      .build()
+    if (bubbleShortcutAvailable) {
+      val bubbleMetadata =
+        NotificationCompat.BubbleMetadata
+          .Builder(conversationId)
+          .setDesiredHeight(BUBBLE_HEIGHT)
+          .build()
+      builder
+        .setShortcutId(conversationId)
+        .setBubbleMetadata(bubbleMetadata)
+    }
+
+    return builder.build()
   }
 
   /** Opens [MainActivity] on the conversation the notification belongs to. */
