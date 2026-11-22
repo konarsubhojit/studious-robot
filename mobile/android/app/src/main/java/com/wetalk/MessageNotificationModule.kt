@@ -28,9 +28,6 @@ import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 
-val shortcut = createConversationShortcut(conversationId, senderName)
-ShortcutManagerCompat.pushDynamicShortcut(reactContext, shortcut)
-
 /**
  * Native module behind WeTalk's chat-message notification.
  *
@@ -51,24 +48,6 @@ class MessageNotificationModule(
   private val reactContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactContext) {
   override fun getName(): String = NAME
-
-  private fun createConversationShortcut(
-    conversationId: String,
-    senderName: String,
-  ): ShortcutInfoCompat {
-    val bubbleIntent =
-      Intent(reactContext, MainActivity::class.java).apply {
-        action = Intent.ACTION_VIEW
-        data = Uri.parse("wetalk://chat/$conversationId")
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-      }
-
-    return ShortcutInfoCompat.Builder(reactContext, conversationId)
-      .setShortLabel(senderName)
-      .setLongLabel(senderName)
-      .setIntent(bubbleIntent)
-      .build()
-  }
 
   /**
    * Create/update the long-lived conversation shortcut required for bubbles.
