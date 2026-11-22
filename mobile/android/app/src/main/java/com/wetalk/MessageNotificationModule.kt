@@ -135,6 +135,9 @@ class MessageNotificationModule(
     channel.description = "New WeTalk chat messages"
     channel.enableVibration(true)
     channel.setShowBadge(true)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      channel.setAllowBubbles(true)
+    }
     val notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
     val audioAttributes =
       AudioAttributes
@@ -215,14 +218,14 @@ class MessageNotificationModule(
     const val NAME = "MessageNotification"
 
     /**
-     * Versioned channel id — bump it whenever the channel's importance, sound
-     * or vibration settings change, since Android ignores changes made to an
-     * existing channel.
+     * Versioned channel id — bump it whenever the channel's importance, sound,
+     * vibration or bubble eligibility changes, since Android ignores changes
+     * made to an existing channel.
      */
-    const val CHANNEL_ID = "wetalk_messages.v2"
+    const val CHANNEL_ID = "wetalk_messages.v3"
 
     /** Superseded channel ids, deleted on first use of the current channel. */
-    private val OBSOLETE_CHANNEL_IDS = listOf("wetalk_messages.v1")
+    private val OBSOLETE_CHANNEL_IDS = listOf("wetalk_messages.v1", "wetalk_messages.v2")
 
     private const val TAG = "WeTalkMessageNotification"
 
