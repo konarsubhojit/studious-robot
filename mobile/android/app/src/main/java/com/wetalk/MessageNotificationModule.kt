@@ -13,6 +13,9 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -68,6 +71,31 @@ class MessageNotificationModule(
   }
 
   /**
+   * Create/update the long-lived conversation shortcut required for bubbles.
+   */
+  private fun createConversationShortcut(
+    conversationId: String,
+    senderName: String,
+    deepLink: String,
+  ): ShortcutInfoCompat {
+    val intent =
+      Intent(reactContext, MainActivity::class.java).apply {
+        action = Intent.ACTION_VIEW
+        data = Uri.parse(deepLink)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      }
+
+    return ShortcutInfoCompat
+      .Builder(reactContext, conversationId)
+      .setShortLabel(senderName)
+      .setLongLabel(senderName)
+      .setIcon(IconCompat.createWithResource(reactContext, android.R.drawable.ic_dialog_email))
+      .setIntent(intent)
+      .setLongLived(true)
+      .build()
+  }
+
+  /**
    * Post (or extend) the notification for one conversation.
    *
    * Resolves with the channel's *effective* importance and sound so the JS side
@@ -89,7 +117,7 @@ class MessageNotificationModule(
       val lines = appendMessage(conversationId, senderName, body)
       ShortcutManagerCompat.pushDynamicShortcut(
         reactContext,
-        createConversationShortcut(conversationId, senderName),
+        createConversationShortcut(conversationId, senderName, deepLink),
       )
       manager.notify(
         conversationId,
@@ -163,6 +191,9 @@ class MessageNotificationModule(
     channel.description = "New WeTalk chat messages"
     channel.enableVibration(true)
     channel.setShowBadge(true)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      channel.setAllowBubbles(true)
+    }
     val notificationUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
     val audioAttributes =
       AudioAttributes
@@ -185,31 +216,11 @@ class MessageNotificationModule(
       style.addMessage(line.body, line.receivedAt, Person.Builder().setName(line.sender).build())
     }
 
-    val bubbleIntent =
-  Intent(reactContext, MainActivity::class.java).apply {
-    action = Intent.ACTION_VIEW
-    data = Uri.parse(deepLink)
-  }
-
-val bubblePendingIntent =
-  PendingIntent.getActivity(
-    reactContext,
-    notificationId(conversationId),
-    bubbleIntent,
-    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-  )
-
-val bubbleMetadata =
-  NotificationCompat.BubbleMetadata.Builder(
-    bubblePendingIntent,
-    IconCompat.createWithResource(
-      reactContext,
-      android.R.drawable.ic_dialog_email,
-    ),
-  )
-    .setDesiredHeight(600)
-    .setSuppressNotification(false)
-    .build()
+    val bubbleMetadata =
+      NotificationCompat.BubbleMetadata
+        .Builder(conversationId)
+        .setDesiredHeight(BUBBLE_HEIGHT)
+        .build()
 
     return NotificationCompat
       .Builder(reactContext, CHANNEL_ID)
@@ -221,6 +232,8 @@ val bubbleMetadata =
       .setDefaults(NotificationCompat.DEFAULT_ALL)
       .setStyle(style)
       .setGroup(GROUP_KEY)
+      .setShortcutId(conversationId)
+      .setBubbleMetadata(bubbleMetadata)
       .setAutoCancel(true)
       .setContentIntent(contentPendingIntent(conversationId, deepLink))
       .setBubbleMetadata(bubbleMetadata)
@@ -271,19 +284,21 @@ val bubbleMetadata =
     const val NAME = "MessageNotification"
 
     /**
-     * Versioned channel id — bump it whenever the channel's importance, sound
-     * or vibration settings change, since Android ignores changes made to an
-     * existing channel.
+     * Versioned channel id — bump it whenever the channel's importance, sound,
+     * vibration or bubble eligibility changes, since Android ignores changes
+     * made to an existing channel.
      */
-    const val CHANNEL_ID = "wetalk_messages.v2"
+    const val CHANNEL_ID = "wetalk_messages.v3"
 
     /** Superseded channel ids, deleted on first use of the current channel. */
-    private val OBSOLETE_CHANNEL_IDS = listOf("wetalk_messages.v1")
+    private val OBSOLETE_CHANNEL_IDS = listOf("wetalk_messages.v1", "wetalk_messages.v2")
 
     private const val TAG = "WeTalkMessageNotification"
 
     /** Shade group so several conversations bundle instead of listing flat. */
     private const val GROUP_KEY = "com.wetalk.MESSAGES"
+
+    private const val BUBBLE_HEIGHT = 600
 
     /** Upper bound on the lines kept in one conversation's stacked body. */
     private const val MAX_STACKED_MESSAGES = 6
