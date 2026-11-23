@@ -64,6 +64,7 @@ class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(null)
     registerPictureInPictureActionReceiver()
+    handleChatBubbleIntent(intent)
     handleIncomingCallIntent(intent)
   }
 
@@ -98,9 +99,23 @@ class MainActivity : ReactActivity() {
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
+    handleChatBubbleIntent(intent)
     handleIncomingCallIntent(intent)
   }
 
+  private fun handleChatBubbleIntent(intent: Intent?) {
+    val uri = intent?.data ?: return
+    if (uri.scheme != "wetalk" || uri.host != "chat") return
+
+    val conversationId = uri.lastPathSegment?.trim().orEmpty()
+    if (conversationId.isEmpty()) return
+
+    Log.i(TAG, "Chat bubble tapped conversationId=$conversationId")
+    // onCreate/onNewIntent run before React Native is ready; the existing
+    // Linking.getInitialURL/addEventListener code consumes this URI.
+    setIntent(intent)
+  }
+  
   /**
    * Handle a launch from WeTalk's branded incoming-call notification: record
    * an Accept tap for the JS call flow to replay, then apply the wake flags.
